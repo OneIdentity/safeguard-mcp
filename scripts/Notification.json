@@ -1,0 +1,725 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Safeguard Notification API",
+    "version": "v4"
+  },
+  "servers": [
+    {
+      "url": "/service/Notification"
+    }
+  ],
+  "paths": {
+    "/v4/Status": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return the current status of the appliance.",
+        "operationId": "Status_Get",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v4/Status/Availability": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return the current status of the appliance.",
+        "operationId": "Status_GetAvailability",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v4/Status/Cluster": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return the current status of all cluster members.",
+        "operationId": "Status_GetClusterStatusAsync",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Status"
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Status"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v4/Status/ClusterPatch": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return the current state of cluster patch operation.",
+        "operationId": "Status_GetClusterPatchStatusAsync",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterPatchStatus"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterPatchStatus"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No cluster patch in progress."
+          }
+        }
+      }
+    },
+    "/v4/Status/Maintenance": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return the current maintenance status.",
+        "operationId": "Status_GetMaintenanceStatus",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceStatus"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v4/Status/State": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Return the current state of the appliance.",
+        "operationId": "Status_GetState",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplianceState"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplianceState"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AppliancePatchState": {
+        "enum": [
+          "Unknown",
+          "Waiting",
+          "InProgress",
+          "Complete",
+          "Error"
+        ],
+        "type": "string",
+        "description": "Represents the patch states of an appliance while a cluster is patching.",
+        "format": "string"
+      },
+      "AppliancePatchStatus": {
+        "type": "object",
+        "properties": {
+          "Id": {
+            "type": "string",
+            "nullable": true
+          },
+          "Name": {
+            "type": "string",
+            "nullable": true
+          },
+          "NetworkAddress": {
+            "type": "string",
+            "nullable": true
+          },
+          "Role": {
+            "$ref": "#/components/schemas/ClusterMemberRole"
+          },
+          "State": {
+            "$ref": "#/components/schemas/AppliancePatchState"
+          },
+          "ErrorMessage": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Provided to persist to file the status of an appliance during a cluster patch."
+      },
+      "ApplianceState": {
+        "enum": [
+          "Unknown",
+          "EnrollingReplica",
+          "Initializing",
+          "LeavingCluster",
+          "Maintenance",
+          "Offline",
+          "Online",
+          "PendingPatch",
+          "PendingPrimaryReboot",
+          "PrimaryNoQuorum",
+          "Quarantine",
+          "ReplicaDisconnected",
+          "ReplicaNoQuorum",
+          "ReplicaWithQuorum",
+          "ShuttingDown",
+          "StandaloneReadOnly",
+          "TransitioningToPrimary",
+          "TransitioningToReplica",
+          "Isolated",
+          "InitialSetupRequired",
+          "HardwareSecurityModuleError"
+        ],
+        "type": "string",
+        "format": "string"
+      },
+      "Availability": {
+        "type": "object",
+        "properties": {
+          "ApplianceCurrentState": {
+            "$ref": "#/components/schemas/ApplianceState"
+          },
+          "ApplianceId": {
+            "type": "string",
+            "description": "The appliance unique identifier.",
+            "nullable": true
+          },
+          "ApplianceName": {
+            "type": "string",
+            "description": "The appliance name.",
+            "nullable": true
+          },
+          "AppliancePreviousState": {
+            "$ref": "#/components/schemas/ApplianceState"
+          },
+          "ApplianceVersion": {
+            "type": "string",
+            "description": "The version number of the appliance.",
+            "nullable": true
+          },
+          "CurrentTime": {
+            "type": "string",
+            "description": "The current UTC time on the appliance.",
+            "format": "date-time"
+          },
+          "LastStateChangeTime": {
+            "type": "string",
+            "description": "Last UTC time the appliance changed state.",
+            "format": "date-time"
+          },
+          "IsIsolated": {
+            "type": "boolean",
+            "description": "True if the appliance is in an isolated state allowing access requests\r\nseparate from the cluster to which it belongs. False if not or unknown."
+          },
+          "IsMaintenance": {
+            "type": "boolean",
+            "description": "True if the appliance is in a maintenance state. False if not or unknown."
+          },
+          "IsPrimary": {
+            "type": "boolean",
+            "description": "True if this appliance is configured as a primary. False if not or unknown."
+          },
+          "IsQuarantine": {
+            "type": "boolean",
+            "description": "True if the appliance is in a quarantine state. False if not or unknown."
+          },
+          "IsReadOnly": {
+            "type": "boolean",
+            "description": "True if the appliance is in a read only state. False if not or unknown."
+          },
+          "IsReplica": {
+            "type": "boolean",
+            "description": "True if this appliance is configured as a replica. False if not or unknown."
+          },
+          "IsSessionsExternal": {
+            "type": "boolean",
+            "description": "True if a sessions module has been successfully linked to this cluster at one time.",
+            "readOnly": true
+          },
+          "LcdStatus": {
+            "type": "string",
+            "description": "The message displayed on the hardware LCD.",
+            "nullable": true
+          },
+          "MaintenanceOperation": {
+            "$ref": "#/components/schemas/MaintenanceTaskType"
+          },
+          "IpAddress": {
+            "type": "string",
+            "description": "The IP address of the appliance.",
+            "nullable": true
+          },
+          "IsVirtual": {
+            "type": "boolean",
+            "description": "True if the appliance is a virtual machine."
+          },
+          "IsOperatingSystemLicensed": {
+            "type": "boolean",
+            "description": "True if the Operating System has been licensed."
+          },
+          "IsCloud": {
+            "type": "boolean",
+            "description": "True if the appliance is a virtual machine built for a cloud environment."
+          },
+          "OsPatchLevel": {
+            "type": "integer",
+            "description": "Os Patch Level.",
+            "format": "int32"
+          },
+          "OperatingSystemVersion": {
+            "type": "string",
+            "description": "Includes UBR/Revision number.",
+            "nullable": true
+          },
+          "HostDnsSuffix": {
+            "type": "string",
+            "description": "The appliance host dns suffix.",
+            "nullable": true
+          },
+          "IsSessionModuleJoined": {
+            "type": "boolean",
+            "description": "True if have at least one linked and trusted session module.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsStaAccepted": {
+            "type": "boolean",
+            "description": "True if Software Transaction Agreement has been accepted, false or null otherwise\r\nfalse if the STA Acceptance has been revoked due to a license update or removal,\r\nnull if no STA transactions have occurred yet (i.e. the appliance is basically unusable).",
+            "nullable": true
+          },
+          "PrimaryApplianceIpv4": {
+            "type": "string",
+            "description": "The IPv4 address of the primary appliance.",
+            "nullable": true
+          },
+          "PrimaryApplianceIpv6": {
+            "type": "string",
+            "description": "The IPv6 address of the primary appliance.",
+            "nullable": true
+          },
+          "IsChangePasswordManagementAvailable": {
+            "type": "boolean",
+            "description": "True if PasswordChange is enabled and access request workflow is running.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsCheckPasswordManagementAvailable": {
+            "type": "boolean",
+            "description": "True if PasswordCheck is enabled and access request workflow is running.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsClustered": {
+            "type": "boolean",
+            "description": "True if the appliance belongs to a cluster with more than one member.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsPasswordRequestAvailable": {
+            "type": "boolean",
+            "description": "True if PasswordRequests is enabled and access request workflow is running.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsPolicyChangeAvailable": {
+            "type": "boolean",
+            "description": "True if policy configuration changes are available.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsProcessingScheduledTasks": {
+            "type": "boolean",
+            "description": "True if the cluster is processing scheduled tasks.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsSessionRequestAvailable": {
+            "type": "boolean",
+            "description": "True if SessionRequests is enabled, access request workflow is running,\r\nwe are internal sessions or we are external sessions and have at least one\r\nlinked and trusted session module.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "LastSuccessfulAuditLogsSync": {
+            "type": "string",
+            "description": "Last successful timestamp of the cluster-wide synchronization of the audit logs.\r\nNull if the status cannot be determined at this time.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "LastSuccessfulDataSync": {
+            "type": "string",
+            "description": "Last successful timestamp of the cluster-wide synchronization of  data.\r\nNull if the status cannot be determined at this time.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "IsSshKeyRequestAvailable": {
+            "type": "boolean",
+            "description": "True if SshKeyRequests is enabled and access request workflow is running.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsApiKeyRequestAvailable": {
+            "type": "boolean",
+            "description": "True if ApiKeyRequests is enabled and access request workflow is running.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClusterMemberRole": {
+        "enum": [
+          "Unknown",
+          "Primary",
+          "Replica"
+        ],
+        "type": "string",
+        "format": "string"
+      },
+      "ClusterPatchStatus": {
+        "type": "object",
+        "properties": {
+          "StartTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "OriginalVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "TargetVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "PatchTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "Appliances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppliancePatchStatus"
+            },
+            "nullable": true
+          },
+          "PrimaryServicesConfigRestored": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Provided to persist to file the status of appliances during a cluster patch."
+      },
+      "MaintenanceStatus": {
+        "type": "object",
+        "properties": {
+          "StartTime": {
+            "type": "string",
+            "description": "Maintenance start time.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "Type": {
+            "$ref": "#/components/schemas/MaintenanceTaskType"
+          },
+          "TaskData": {
+            "type": "string",
+            "description": "Task-specific data.",
+            "nullable": true
+          },
+          "IsComplete": {
+            "type": "boolean",
+            "description": "True if maintenance completed."
+          },
+          "Steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaintenanceStep"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "MaintenanceStep": {
+        "type": "object",
+        "properties": {
+          "Id": {
+            "type": "string",
+            "nullable": true
+          },
+          "State": {
+            "$ref": "#/components/schemas/MaintenanceStepState"
+          },
+          "Message": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReportsProgress": {
+            "type": "boolean",
+            "description": "True if step reports progress."
+          },
+          "PercentProgress": {
+            "type": "integer",
+            "description": "Percent progress of the step.",
+            "format": "int32"
+          },
+          "StartTime": {
+            "type": "string",
+            "description": "The time the step was started.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "EndTime": {
+            "type": "string",
+            "description": "The time the step was completed.",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "MaintenanceStepState": {
+        "enum": [
+          "Unknown",
+          "Pending",
+          "Running",
+          "Complete",
+          "Error"
+        ],
+        "type": "string",
+        "format": "string"
+      },
+      "MaintenanceTaskType": {
+        "enum": [
+          "Unknown",
+          "None",
+          "Patch",
+          "Backup",
+          "Restore",
+          "Configuration",
+          "Cleanup",
+          "FactoryReset",
+          "ChangeIpAddress",
+          "Isolate",
+          "Reintegrate",
+          "LeaveCluster",
+          "Enroll",
+          "Failover",
+          "ClusterReset",
+          "JoinReset",
+          "InitialSetup",
+          "AuditLogPurge",
+          "ExternalHardwareSecurityModuleIntegration"
+        ],
+        "type": "string",
+        "format": "string"
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "ApplianceCurrentState": {
+            "$ref": "#/components/schemas/ApplianceState"
+          },
+          "ApplianceId": {
+            "type": "string",
+            "description": "The appliance unique identifier.",
+            "nullable": true
+          },
+          "ApplianceName": {
+            "type": "string",
+            "description": "The appliance name.",
+            "nullable": true
+          },
+          "AppliancePreviousState": {
+            "$ref": "#/components/schemas/ApplianceState"
+          },
+          "ApplianceVersion": {
+            "type": "string",
+            "description": "The version number of the appliance.",
+            "nullable": true
+          },
+          "CurrentTime": {
+            "type": "string",
+            "description": "The current UTC time on the appliance.",
+            "format": "date-time"
+          },
+          "LastStateChangeTime": {
+            "type": "string",
+            "description": "Last UTC time the appliance changed state.",
+            "format": "date-time"
+          },
+          "IsIsolated": {
+            "type": "boolean",
+            "description": "True if the appliance is in an isolated state allowing access requests\r\nseparate from the cluster to which it belongs. False if not or unknown."
+          },
+          "IsMaintenance": {
+            "type": "boolean",
+            "description": "True if the appliance is in a maintenance state. False if not or unknown."
+          },
+          "IsPrimary": {
+            "type": "boolean",
+            "description": "True if this appliance is configured as a primary. False if not or unknown."
+          },
+          "IsQuarantine": {
+            "type": "boolean",
+            "description": "True if the appliance is in a quarantine state. False if not or unknown."
+          },
+          "IsReadOnly": {
+            "type": "boolean",
+            "description": "True if the appliance is in a read only state. False if not or unknown."
+          },
+          "IsReplica": {
+            "type": "boolean",
+            "description": "True if this appliance is configured as a replica. False if not or unknown."
+          },
+          "IsSessionsExternal": {
+            "type": "boolean",
+            "description": "True if a sessions module has been successfully linked to this cluster at one time.",
+            "readOnly": true
+          },
+          "LcdStatus": {
+            "type": "string",
+            "description": "The message displayed on the hardware LCD.",
+            "nullable": true
+          },
+          "MaintenanceOperation": {
+            "$ref": "#/components/schemas/MaintenanceTaskType"
+          },
+          "IpAddress": {
+            "type": "string",
+            "description": "The IP address of the appliance.",
+            "nullable": true
+          },
+          "IsVirtual": {
+            "type": "boolean",
+            "description": "True if the appliance is a virtual machine."
+          },
+          "IsOperatingSystemLicensed": {
+            "type": "boolean",
+            "description": "True if the Operating System has been licensed."
+          },
+          "IsCloud": {
+            "type": "boolean",
+            "description": "True if the appliance is a virtual machine built for a cloud environment."
+          },
+          "OsPatchLevel": {
+            "type": "integer",
+            "description": "Os Patch Level.",
+            "format": "int32"
+          },
+          "OperatingSystemVersion": {
+            "type": "string",
+            "description": "Includes UBR/Revision number.",
+            "nullable": true
+          },
+          "HostDnsSuffix": {
+            "type": "string",
+            "description": "The appliance host dns suffix.",
+            "nullable": true
+          },
+          "IsSessionModuleJoined": {
+            "type": "boolean",
+            "description": "True if have at least one linked and trusted session module.\r\nNull if the status cannot be determined at this time.",
+            "nullable": true
+          },
+          "IsStaAccepted": {
+            "type": "boolean",
+            "description": "True if Software Transaction Agreement has been accepted, false or null otherwise\r\nfalse if the STA Acceptance has been revoked due to a license update or removal,\r\nnull if no STA transactions have occurred yet (i.e. the appliance is basically unusable).",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Appliance States:\r\nUnknown: The current appliance state cannot be determined. (default)\r\nDisconnected: The current appliance has lost communication to the cluster primary appliance for an unexpected reason.\r\nEnrollingReplica: The current appliance is in the process of enrolling a cluster replica appliance.\r\nInitializing: The current appliance is transitioning to 'Online'.\r\nLeavingCluster: The current appliance is in the process of leaving a cluster.\r\nMaintenance: The appliance is performing maintenance.\r\nOffline: Initial state after being powered on and final state before being powered off.\r\nOnline: Normal Operating State\r\nPendingPatch: The current appliance is waiting for a signal from the cluster primary appliance to install a distributed patch.\r\nPendingPrimaryReboot: The current appliance is waiting for a signal from the cluster primary appliance that it has finished a planned reboot.\r\nPrimaryReadOnly: The current appliance failed to renew its lease as the cluster primary and is in a read only state.\r\nQuarantine: An error has occurred which requires user intervention.\r\nShuttingDown: The current appliance is transitioning to 'Offline'.\r\nStandaloneReadOnly: The current appliance has left a cluster and is read-only pending user intervention.\r\nTransitioningToPrimary: The current appliance is in the process of becoming the primary appliance in the current cluster.\r\nTransitioningToReplica: The current appliance is in the process of becoming a replica in the current cluster."
+      }
+    },
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "/RSTS/Login",
+            "tokenUrl": "/RSTS/oauth2/token",
+            "scopes": {
+
+            }
+          }
+        }
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "Bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "oauth2": []
+    },
+    {
+      "BearerAuth": []
+    }
+  ]
+}
