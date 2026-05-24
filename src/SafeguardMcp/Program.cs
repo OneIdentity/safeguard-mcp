@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,8 @@ namespace SafeguardMcp
         {
             var builder = Host.CreateEmptyApplicationBuilder(settings: null);
 
+            builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
+
             // Configure all logs to go to stderr (stdout is used for the MCP protocol messages).
             builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
@@ -22,7 +25,7 @@ namespace SafeguardMcp
             builder.Logging.AddProvider(new FileLoggerProvider(
                 Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
 
-            builder.Services.AddSingleton<SafeguardAuth>();
+            builder.Services.AddSingleton<SafeguardConnectionManager>();
 
             builder.Services.AddMcpServer()
                 .WithStdioServerTransport()
