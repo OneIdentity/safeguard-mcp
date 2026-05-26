@@ -52,6 +52,36 @@ so the tool surface always matches the actual API of the connected appliance —
 running Safeguard 7.5, 8.2, or a future release. A compiled static catalog is included as a
 fallback for airgapped environments where Swagger isn't reachable.
 
+#### How it works
+
+When `Safeguard_Connect` authenticates to an appliance, it triggers a background catalog
+load. The loader fetches three OpenAPI specs in parallel:
+
+```
+https://{host}/service/Core/swagger/v4/swagger.json
+https://{host}/service/Appliance/swagger/v4/swagger.json
+https://{host}/service/Notification/swagger/v4/swagger.json
+```
+
+These are public endpoints (no auth required on most versions). The loader parses each spec
+to extract:
+
+- **Endpoints** — method, path, service, summary, query parameters, whether it accepts a body
+- **Schemas** — request and response body structures with property names, types, required
+  flags, and descriptions (extracted from `components/schemas` and `requestBody` refs)
+
+The result is cached per-host in memory. Each connection gets its own catalog, so connecting
+to two appliances running different Safeguard versions gives each one the correct endpoint
+list and schemas for its version.
+
+The SSL policy used for swagger fetch matches the connection's SSL policy — if you set
+`SAFEGUARD_IGNORE_SSL=true` for self-signed lab certs, the catalog loader respects that too.
+
+**Fallback**: If swagger fetch fails (airgapped network, firewall rules, older appliance
+version), the server falls back to a compiled static catalog (~1,070 endpoints from a
+reference installation). The static catalog has no schemas — `Safeguard_Schema` will report
+"no schema available" but discovery and execution still work.
+
 ### Schema Tool: Enabling Write Operations
 
 For read operations (GET), an agent just needs Discover and Execute. But **write operations**
@@ -98,6 +128,55 @@ Safeguard's three services (Core, Appliance, Notification) each handle different
 families. Agents and users often don't know — or shouldn't need to know — which service owns
 a given endpoint. The unified `Safeguard_Execute` tool resolves the correct service
 automatically by looking up the path in the API catalog. One tool handles everything.
+
+#### Service resolution
+
+When you call `Safeguard_Execute` with a path like `/v4/AssetAccounts`, the dispatcher:
+
+1. **Catalog lookup** — scans the dynamic catalog (or static fallback) for an endpoint
+   whose path template matches the request path, accounting for `{id}` placeholders.
+   If found, uses that endpoint's service.
+
+2. **Heuristic fallback** — if no catalog match (e.g., a new endpoint on a newer appliance
+   not yet in the static catalog), applies keyword-based routing:
+   - `ApplianceStatus`, `Backup`, `Network`, `DiagnosticPackage` → Appliance service
+   - `/v4/Status` → Notification service
+   - Everything else → Core service (handles ~80% of endpoints)
+
+#### Response intelligence
+
+The dispatcher adds guardrails to prevent context window overflow and guide the agent:
+
+- **Auto-limit injection** — collection GETs without an explicit `limit` parameter get
+  `limit=50` injected automatically (configurable). This prevents accidental retrieval of
+  10,000+ records that would overwhelm an agent's context.
+
+- **Array truncation** — if a response contains a JSON array with more items than
+  `MaxResultsBeforeTruncation` (default 100), only the first N items are returned, with a
+  note explaining how to filter or paginate for more.
+
+- **Character truncation** — responses exceeding `MaxResponseChars` (default 30,000) are
+  cut with a note suggesting `fields` selection or `format=csv` to reduce payload.
+
+- **Error enrichment** — HTTP errors get contextual hints:
+  - 400 → "Use Safeguard_Schema to see required fields"
+  - 401 → "Call Safeguard_Connect to re-authenticate"
+  - 404 → "Verify the ID exists using a GET call"
+
+#### Configuration
+
+All response thresholds are configurable in `appsettings.json`:
+
+```json
+{
+  "Safeguard": {
+    "MaxResultsBeforeTruncation": 100,
+    "MaxResponseChars": 30000,
+    "DefaultLimit": 50,
+    "AutoInjectLimit": true
+  }
+}
+```
 
 ## Status
 
