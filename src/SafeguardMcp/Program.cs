@@ -33,7 +33,8 @@ namespace SafeguardMcp
             builder.Services.AddMcpServer()
                 .WithStdioServerTransport()
                 .WithTools<SafeguardApiTool>()
-                .WithTools<RandomPasswordTool>();
+                .WithTools<RandomPasswordTool>()
+                .WithResourcesFromAssembly();
 
             var app = builder.Build();
 

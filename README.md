@@ -93,6 +93,32 @@ required fields, types, descriptions, nested object shapes, and a minimal workin
 An agent can call `Safeguard_Schema` for `POST /v4/AssetAccounts`, learn that `Name` and
 `Asset.Id` are required, and construct a valid request body without trial and error.
 
+### Terminology Mapping: Bridging Product and API Language
+
+Safeguard's REST API uses different names than the product UI in several important places.
+The most significant: what administrators know as **Entitlements** is the `/v4/Roles`
+endpoint in the API. An agent (or user) asking to "create an entitlement" would never find
+the right endpoint by searching the API literally — the word "entitlement" doesn't appear
+in the Roles endpoint path or summary.
+
+This is a common problem with enterprise products that evolved over many releases — UI
+terminology shifts but API paths remain stable for backward compatibility.
+
+The server addresses this with two layers:
+
+1. **Search-time expansion** — When `Safeguard_Discover` receives a search term, it checks
+   a terminology alias map and expands the search to include related API terms. Searching
+   "entitlement" automatically also searches for "roles." This works transparently — the
+   agent doesn't need to know the mapping exists.
+
+2. **MCP Resource** — The server exposes a `safeguard://terminology` resource that AI agents
+   can read for full context on product-to-API naming differences. This gives agents
+   proactive awareness of the terminology landscape before they even start searching.
+
+Current mappings include Entitlement→Roles, Managed Account→AssetAccounts,
+Partition→AssetPartitions, Platform→Platforms, and others. The map is designed to grow as
+real-world usage reveals additional gaps.
+
 ### Workflow Recipes: Domain Expertise for Agents
 
 Safeguard operations rarely involve a single API call. Diagnosing password rotation failures
