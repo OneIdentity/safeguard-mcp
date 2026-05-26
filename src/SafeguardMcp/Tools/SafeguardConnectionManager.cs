@@ -285,7 +285,7 @@ public class SafeguardConnectionManager : IDisposable
             "Successfully connected to '{Host}'. Token expires in {Minutes} minutes.",
             host, connection.GetAccessTokenLifetimeRemaining());
 
-        _ = Task.Run(() => _catalogProvider.LoadCatalogForHostAsync(host), CancellationToken.None);
+        _ = Task.Run(() => _catalogProvider.LoadCatalogForHostAsync(host, ignoreSsl), CancellationToken.None);
     }
 
     private bool ResolveSslPolicy()

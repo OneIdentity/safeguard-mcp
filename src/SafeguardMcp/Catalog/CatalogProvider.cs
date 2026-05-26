@@ -24,11 +24,11 @@ public class CatalogProvider
     /// Triggers dynamic catalog loading for a host. Called after successful connection.
     /// Runs in the background and does not block connection.
     /// </summary>
-    public async Task LoadCatalogForHostAsync(string host, CancellationToken ct = default)
+    public async Task LoadCatalogForHostAsync(string host, bool ignoreSsl, CancellationToken ct = default)
     {
         try
         {
-            var catalog = await _loader.LoadFromApplianceAsync(host, ct);
+            var catalog = await _loader.LoadFromApplianceAsync(host, ignoreSsl, ct);
             if (catalog != null)
             {
                 _perHostCatalogs[host] = catalog;

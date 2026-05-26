@@ -11,12 +11,12 @@ namespace SafeguardMcp.Catalog;
 /// </summary>
 public class CatalogLoader
 {
-    private static readonly HttpClientHandler IgnoreSslHandler = new()
+    private static readonly HttpClient IgnoreSslClient = new(new HttpClientHandler
     {
         ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-    };
+    }) { Timeout = TimeSpan.FromSeconds(30) };
 
-    private static readonly HttpClient HttpClient = new(IgnoreSslHandler)
+    private static readonly HttpClient StrictSslClient = new()
     {
         Timeout = TimeSpan.FromSeconds(30)
     };
@@ -32,10 +32,11 @@ public class CatalogLoader
     /// Loads the API catalog from a live appliance's swagger endpoints.
     /// Returns endpoints and schemas, or null if swagger is unavailable.
     /// </summary>
-    public async Task<DynamicCatalog> LoadFromApplianceAsync(string host, CancellationToken ct = default)
+    public async Task<DynamicCatalog> LoadFromApplianceAsync(string host, bool ignoreSsl, CancellationToken ct = default)
     {
         var endpoints = new List<ApiEndpoint>();
         var schemas = new Dictionary<string, ApiSchema>(StringComparer.OrdinalIgnoreCase);
+        var client = ignoreSsl ? IgnoreSslClient : StrictSslClient;
 
         foreach (var service in new[] { "Core", "Appliance", "Notification" })
         {
@@ -44,7 +45,7 @@ public class CatalogLoader
                 var url = $"https://{host}/service/{service}/swagger/v4/swagger.json";
                 _logger.LogInformation("Loading swagger from {Url}...", url);
 
-                var json = await HttpClient.GetStringAsync(url, ct);
+                var json = await client.GetStringAsync(url, ct);
                 using var doc = JsonDocument.Parse(json);
 
                 ParseSwaggerPaths(doc, service, endpoints);
