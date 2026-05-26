@@ -5,6 +5,7 @@ using System.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
+using SafeguardMcp.Catalog;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
@@ -24,11 +25,16 @@ public class SafeguardConnectionManager : IDisposable
     private readonly SemaphoreSlim _authLock = new(1, 1);
     private readonly ILogger<SafeguardConnectionManager> _logger;
     private readonly IConfiguration _configuration;
+    private readonly CatalogProvider _catalogProvider;
 
-    public SafeguardConnectionManager(ILogger<SafeguardConnectionManager> logger, IConfiguration configuration)
+    public SafeguardConnectionManager(
+        ILogger<SafeguardConnectionManager> logger,
+        IConfiguration configuration,
+        CatalogProvider catalogProvider)
     {
         _logger = logger;
         _configuration = configuration;
+        _catalogProvider = catalogProvider;
     }
 
     /// <summary>Gets all currently connected host names.</summary>
@@ -278,6 +284,8 @@ public class SafeguardConnectionManager : IDisposable
         _logger.LogInformation(
             "Successfully connected to '{Host}'. Token expires in {Minutes} minutes.",
             host, connection.GetAccessTokenLifetimeRemaining());
+
+        _ = Task.Run(() => _catalogProvider.LoadCatalogForHostAsync(host), CancellationToken.None);
     }
 
     private bool ResolveSslPolicy()
@@ -517,6 +525,8 @@ public class SafeguardConnectionManager : IDisposable
 
             try { connection.Dispose(); } catch { }
         }
+
+        _catalogProvider.RemoveCatalog(host);
     }
 
     private static SecureString ToSecureString(string str)

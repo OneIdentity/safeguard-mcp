@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SafeguardMcp.Catalog;
 using SafeguardMcp.Tools;
 
 namespace SafeguardMcp
@@ -25,6 +26,8 @@ namespace SafeguardMcp
             builder.Logging.AddProvider(new FileLoggerProvider(
                 Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
 
+            builder.Services.AddSingleton<CatalogLoader>();
+            builder.Services.AddSingleton<CatalogProvider>();
             builder.Services.AddSingleton<SafeguardConnectionManager>();
 
             builder.Services.AddMcpServer()

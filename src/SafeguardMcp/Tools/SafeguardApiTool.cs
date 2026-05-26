@@ -3,11 +3,12 @@ using System.Text;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
+using SafeguardMcp.Catalog;
 
 namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
-public class SafeguardApiTool(SafeguardConnectionManager connectionManager)
+public class SafeguardApiTool(SafeguardConnectionManager connectionManager, CatalogProvider catalogProvider)
 {
     [McpServerTool(Name = "Safeguard_Connect", Title = "Connect to Safeguard",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
@@ -40,7 +41,16 @@ public class SafeguardApiTool(SafeguardConnectionManager connectionManager)
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null)
     {
-        var results = SafeguardCatalog.Endpoints.AsSpan();
+        string host = null;
+        try
+        {
+            host = connectionManager.ResolveHost(null);
+        }
+        catch (McpException)
+        {
+        }
+
+        var results = catalogProvider.GetEndpoints(host);
         var sb = new StringBuilder();
         int matched = 0;
         const int limit = 80;
