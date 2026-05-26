@@ -13,7 +13,7 @@ operations like migrations.
 
 ### The Problem: Large API Surfaces and AI Agents
 
-Safeguard has over 500 REST endpoints across three services (Core, Appliance, Notification).
+Safeguard has over 1,000 REST endpoints across three services (Core, Appliance, Notification).
 The naive approach to exposing this to AI would be to register one MCP tool per endpoint —
 `Get_Users`, `Create_AssetAccount`, `Delete_AccessRequest`, and so on. This fails in
 practice: MCP clients choke on hundreds of tools, agents can't reason about which tool to
@@ -21,9 +21,9 @@ pick, and every Safeguard version change requires regenerating the tool surface.
 
 ### The Solution: Navigate → Understand → Execute
 
-Instead of 500 individual tools, this server provides a small, stable set of **meta-tools**
+Instead of 1,000+ individual tools, this server provides a small, stable set of **meta-tools**
 that give the agent the ability to navigate, understand, and execute against any endpoint
-dynamically. Think of it as providing a map and a car rather than building 500 individual
+dynamically. Think of it as providing a map and a car rather than building 1,000 individual
 roads.
 
 The complete tool surface is **7 tools**:
@@ -134,12 +134,15 @@ step-by-step instructions the agent follows. They specify which endpoints to cal
 parameters to use, how to interpret results, and what to do next. Pre-built recipes cover:
 
 - Appliance & cluster health assessment
-- Password/SSH key task failure triage
-- Access request activity audit
+- Password/SSH key rotation status and task failure triage
+- Access request workflows (password checkout, RDP/SSH sessions, emergency breakglass)
 - Bulk asset and account onboarding
-- User permission audit
-- Entitlement review
-- Appliance diagnostics
+- User permission and entitlement audit
+- Backup/restore and patch/upgrade procedures
+- Directory integration (LDAP/AD import)
+- Certificate and SSH key management
+- A2A credential retrieval setup
+- Personal password vault configuration
 
 ### MCP Resources: Preloadable Context
 
@@ -154,8 +157,7 @@ agent "day-one knowledge" of Safeguard's API without consuming tool-call round t
 | `safeguard://common-patterns` | Lookup-by-name, create-with-deps, bulk ops, error handling |
 | `safeguard://terminology` | Product UI terms → API endpoint name mappings |
 
-Clients that support resource preloading (e.g., Claude Desktop's `preloadResources` config)
-can inject all four at session start. Clients that don't can still access the same content
+Clients that support MCP resource preloading can inject all four at session start. Clients that don't can still access the same content
 via tool calls (`Safeguard_QueryHelp`, `Safeguard_Discover`).
 
 ### Multi-Server Support
@@ -184,7 +186,7 @@ When you call `Safeguard_Execute` with a path like `/v4/AssetAccounts`, the disp
    not yet in the static catalog), applies keyword-based routing:
    - `ApplianceStatus`, `Backup`, `Network`, `DiagnosticPackage` → Appliance service
    - `/v4/Status` → Notification service
-   - Everything else → Core service (handles ~80% of endpoints)
+   - Everything else → Core service (handles ~90% of endpoints)
 
 #### Response intelligence
 
@@ -281,6 +283,73 @@ Configure the certificate in `appsettings.json`:
 
 Or via environment variables: `ASPNETCORE_Kestrel__Certificates__Default__Path` and
 `ASPNETCORE_Kestrel__Certificates__Default__Password`.
+
+## Quick Start
+
+### Claude Desktop
+
+Add to your Claude Desktop MCP configuration (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "safeguard": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/path/to/safeguard-mcp/src/SafeguardMcp"],
+      "env": {
+        "SAFEGUARD_HOST": "safeguard.corp.example.com",
+        "SAFEGUARD_IGNORE_SSL": "true"
+      }
+    }
+  }
+}
+```
+
+### VS Code (GitHub Copilot)
+
+Add to `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "safeguard": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/path/to/safeguard-mcp/src/SafeguardMcp"],
+      "env": {
+        "SAFEGUARD_HOST": "safeguard.corp.example.com",
+        "SAFEGUARD_IGNORE_SSL": "true"
+      }
+    }
+  }
+}
+```
+
+### Published Binary
+
+If using a published single-file binary:
+
+```json
+{
+  "mcpServers": {
+    "safeguard": {
+      "command": "/usr/local/bin/SafeguardMcp",
+      "env": {
+        "SAFEGUARD_HOST": "safeguard.corp.example.com"
+      }
+    }
+  }
+}
+```
+
+### HTTP Mode (Network Deployment)
+
+Start the server:
+
+```bash
+SafeguardMcp --http --urls "http://0.0.0.0:5000"
+```
+
+Then configure your MCP client to connect to `http://your-host:5000/mcp`.
 
 ## Status
 
