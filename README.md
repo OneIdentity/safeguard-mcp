@@ -9,6 +9,101 @@ Safeguard's REST API as MCP tools, so an AI agent can manage privileged access, 
 accounts, create assets, run reports, diagnose appliance health, and perform cross-server
 operations like migrations.
 
+## Installation
+
+Install via npm (no .NET SDK required):
+
+```bash
+npx safeguard-mcp
+```
+
+Or install globally:
+
+```bash
+npm install -g safeguard-mcp
+```
+
+> **Note:** npm distribution is coming soon. For now, see [Building from Source](#building-from-source) below.
+
+## Quick Start
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "safeguard": {
+      "command": "npx",
+      "args": ["-y", "safeguard-mcp"],
+      "env": {
+        "SAFEGUARD_HOST": "safeguard.corp.example.com",
+        "SAFEGUARD_IGNORE_SSL": "true"
+      }
+    }
+  }
+}
+```
+
+### VS Code (GitHub Copilot)
+
+Add to `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "safeguard": {
+      "command": "npx",
+      "args": ["-y", "safeguard-mcp"],
+      "env": {
+        "SAFEGUARD_HOST": "safeguard.corp.example.com",
+        "SAFEGUARD_IGNORE_SSL": "true"
+      }
+    }
+  }
+}
+```
+
+### HTTP Mode (Network/Container Deployment)
+
+```bash
+SafeguardMcp --http --urls "http://0.0.0.0:5000"
+```
+
+Clients connect to `http://your-host:5000/mcp`. See [Transport Modes](#transport-modes) for
+TLS and Kubernetes deployment options.
+
+## Authentication
+
+The server supports two authentication modes:
+
+### Interactive (Browser Login)
+
+When no credentials are provided via environment variables, the server opens a browser window
+for SSO login through your configured identity provider. This is the default behavior and
+works with any authentication method your appliance supports (LDAP, RADIUS, SAML, etc.).
+
+This mode is ideal for personal workstation use with Claude Desktop or VS Code.
+
+### Headless (Environment Variables)
+
+For unattended or CI/CD scenarios, set these environment variables:
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `SAFEGUARD_HOST` | Yes | Appliance hostname or IP |
+| `SAFEGUARD_USER` | Yes | Username |
+| `SAFEGUARD_PASSWORD` | Yes | Password |
+| `SAFEGUARD_PROVIDER` | No | Identity provider (default: `local`) |
+| `SAFEGUARD_IGNORE_SSL` | No | Set `true` for self-signed certificates |
+
+When all three of `SAFEGUARD_USER`, `SAFEGUARD_PASSWORD`, and `SAFEGUARD_PROVIDER` are set,
+the server authenticates automatically using PKCE without opening a browser.
+
+If only `SAFEGUARD_HOST` is set (without credentials), the server knows which appliance to
+target but will use interactive browser login for authentication.
+
 ## Architecture & Design
 
 ### The Problem: Large API Surfaces and AI Agents
@@ -284,72 +379,19 @@ Configure the certificate in `appsettings.json`:
 Or via environment variables: `ASPNETCORE_Kestrel__Certificates__Default__Path` and
 `ASPNETCORE_Kestrel__Certificates__Default__Password`.
 
-## Quick Start
+## Building from Source
 
-### Claude Desktop
+If you want to run from source or contribute:
 
-Add to your Claude Desktop MCP configuration (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "safeguard": {
-      "command": "dotnet",
-      "args": ["run", "--project", "/path/to/safeguard-mcp/src/SafeguardMcp"],
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com",
-        "SAFEGUARD_IGNORE_SSL": "true"
-      }
-    }
-  }
-}
-```
-
-### VS Code (GitHub Copilot)
-
-Add to `.vscode/mcp.json` in your workspace:
-
-```json
-{
-  "servers": {
-    "safeguard": {
-      "command": "dotnet",
-      "args": ["run", "--project", "/path/to/safeguard-mcp/src/SafeguardMcp"],
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com",
-        "SAFEGUARD_IGNORE_SSL": "true"
-      }
-    }
-  }
-}
-```
-
-### Published Binary
-
-If using a published single-file binary:
-
-```json
-{
-  "mcpServers": {
-    "safeguard": {
-      "command": "/usr/local/bin/SafeguardMcp",
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com"
-      }
-    }
-  }
-}
-```
-
-### HTTP Mode (Network Deployment)
-
-Start the server:
+**Prerequisites:** [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ```bash
-SafeguardMcp --http --urls "http://0.0.0.0:5000"
+git clone https://github.com/OneIdentity/safeguard-mcp.git
+cd safeguard-mcp/src/SafeguardMcp
+dotnet run
 ```
 
-Then configure your MCP client to connect to `http://your-host:5000/mcp`.
+For development workflow details, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 

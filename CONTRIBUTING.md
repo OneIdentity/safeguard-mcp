@@ -14,13 +14,32 @@ dotnet build
 
 ## Running Tests
 
+**Unit tests** (no appliance required):
+
 ```bash
-cd tests/SafeguardMcp.Tests
-dotnet test
+dotnet test tests/SafeguardMcp.Tests
 ```
 
-Tests cover pure logic (path matching, service routing, response truncation, error parsing,
-terminology expansion, workflow loading). They do not require a live appliance.
+**Integration tests** (requires a live SPP appliance):
+
+```bash
+export SPP_HOST=safeguard.example.com
+export SPP_PASSWORD=YourPassword
+export SPP_VERIFY=false          # for self-signed certs
+dotnet test tests/SafeguardMcp.IntegrationTests
+```
+
+Integration tests are automatically skipped when `SPP_HOST` is not set. Environment
+variables follow the same `SPP_*` convention used by PySafeguard, safeguard.js, and
+safeguard-ansible.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SPP_HOST` | *(required)* | Appliance hostname or IP |
+| `SPP_USERNAME` | `Admin` | Username |
+| `SPP_PASSWORD` | *(required)* | Password |
+| `SPP_PROVIDER` | `local` | Identity provider |
+| `SPP_VERIFY` | `true` | Set `false` for self-signed certs |
 
 ## Running Locally
 
@@ -43,7 +62,7 @@ Set environment variables before running:
 | Variable | Purpose |
 |----------|---------|
 | `SAFEGUARD_HOST` | Appliance hostname or IP |
-| `SAFEGUARD_USERNAME` | Login username |
+| `SAFEGUARD_USER` | Login username |
 | `SAFEGUARD_PASSWORD` | Login password |
 | `SAFEGUARD_PROVIDER` | Identity provider (default: `local`) |
 | `SAFEGUARD_IGNORE_SSL` | Set `true` for self-signed certs |
