@@ -204,6 +204,67 @@ All response thresholds are configurable in `appsettings.json`:
 }
 ```
 
+### Transport Modes
+
+The server supports two transport modes:
+
+**Stdio (default)** — the standard MCP transport used by VS Code, Claude Desktop, and most
+MCP clients. The server reads/writes JSON-RPC messages over stdin/stdout:
+
+```bash
+SafeguardMcp          # stdio mode (default)
+```
+
+**HTTP (Streamable HTTP)** — for network-accessible deployments, containers, or multi-client
+scenarios. The server starts a web endpoint that MCP clients connect to over HTTP:
+
+```bash
+SafeguardMcp --http   # HTTP mode, default port 5000
+```
+
+In HTTP mode, clients connect to the `/mcp` endpoint (e.g., `http://localhost:5000/mcp`).
+Configure the listening URL via standard ASP.NET Core mechanisms (`--urls`, `ASPNETCORE_URLS`
+environment variable, or `appsettings.json`).
+
+#### TLS / HTTPS
+
+For production deployments, TLS should protect the MCP transport. Two approaches:
+
+**Reverse proxy (recommended for Kubernetes / enterprise)** — terminate TLS at your existing
+ingress controller (nginx, Traefik, cloud load balancer) and proxy to the MCP server over
+plain HTTP internally:
+
+```
+Client → HTTPS → Ingress/LB (TLS termination) → HTTP → SafeguardMcp --http
+```
+
+No server configuration needed — this is the standard enterprise pattern.
+
+**Direct TLS via Kestrel** — for simpler single-host deployments, ASP.NET Core's built-in
+web server handles HTTPS natively:
+
+```bash
+SafeguardMcp --http --urls "https://+:8443"
+```
+
+Configure the certificate in `appsettings.json`:
+
+```json
+{
+  "Kestrel": {
+    "Certificates": {
+      "Default": {
+        "Path": "/certs/server.pfx",
+        "Password": "your-cert-password"
+      }
+    }
+  }
+}
+```
+
+Or via environment variables: `ASPNETCORE_Kestrel__Certificates__Default__Path` and
+`ASPNETCORE_Kestrel__Certificates__Default__Password`.
+
 ## Status
 
 Under active development.

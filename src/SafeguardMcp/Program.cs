@@ -15,31 +15,60 @@ namespace SafeguardMcp
     {
         public static async Task Main(string[] args)
         {
+            if (args.Contains("--http", StringComparer.OrdinalIgnoreCase))
+                await RunHttpAsync(args);
+            else
+                await RunStdioAsync(args);
+        }
+
+        private static async Task RunStdioAsync(string[] args)
+        {
             var builder = Host.CreateEmptyApplicationBuilder(settings: null);
 
             builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
 
             // Configure all logs to go to stderr (stdout is used for the MCP protocol messages).
             builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
-
-            // Also write to a log file for diagnosing MCP server issues.
             builder.Logging.AddProvider(new FileLoggerProvider(
                 Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
 
-            builder.Services.AddSingleton<CatalogLoader>();
-            builder.Services.AddSingleton<CatalogProvider>();
-            builder.Services.AddSingleton<SafeguardConnectionManager>();
+            RegisterServices(builder.Services);
 
             builder.Services.AddMcpServer()
                 .WithStdioServerTransport()
-                .WithTools<SafeguardApiTool>()
-                .WithTools<RandomPasswordTool>()
-                .WithTools<SafeguardWorkflows>()
+                .WithToolsFromAssembly()
                 .WithResourcesFromAssembly();
 
             var app = builder.Build();
-
             await app.RunAsync();
+        }
+
+        private static async Task RunHttpAsync(string[] args)
+        {
+            var builder = WebApplication.CreateBuilder(args);
+
+            builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
+
+            builder.Logging.AddProvider(new FileLoggerProvider(
+                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
+
+            RegisterServices(builder.Services);
+
+            builder.Services.AddMcpServer()
+                .WithHttpTransport()
+                .WithToolsFromAssembly()
+                .WithResourcesFromAssembly();
+
+            var app = builder.Build();
+            app.MapMcp();
+            await app.RunAsync();
+        }
+
+        private static void RegisterServices(IServiceCollection services)
+        {
+            services.AddSingleton<CatalogLoader>();
+            services.AddSingleton<CatalogProvider>();
+            services.AddSingleton<SafeguardConnectionManager>();
         }
     }
 }
