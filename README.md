@@ -141,6 +141,23 @@ parameters to use, how to interpret results, and what to do next. Pre-built reci
 - Entitlement review
 - Appliance diagnostics
 
+### MCP Resources: Preloadable Context
+
+MCP Resources are URI-addressable reference documents that clients can load into the
+agent's context at the start of a session — before any tool calls happen. This gives the
+agent "day-one knowledge" of Safeguard's API without consuming tool-call round trips.
+
+| Resource URI | Content |
+|---|---|
+| `safeguard://api-overview` | Service map — what endpoints exist, how objects relate |
+| `safeguard://query-syntax` | Complete filter, field, ordering, and pagination syntax |
+| `safeguard://common-patterns` | Lookup-by-name, create-with-deps, bulk ops, error handling |
+| `safeguard://terminology` | Product UI terms → API endpoint name mappings |
+
+Clients that support resource preloading (e.g., Claude Desktop's `preloadResources` config)
+can inject all four at session start. Clients that don't can still access the same content
+via tool calls (`Safeguard_QueryHelp`, `Safeguard_Discover`).
+
 ### Multi-Server Support
 
 The server maintains connections to multiple Safeguard appliances simultaneously. This
