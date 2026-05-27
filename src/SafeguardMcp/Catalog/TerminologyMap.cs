@@ -45,6 +45,51 @@ public static class TerminologyMap
 
         // "Session Recording" vs API "SessionRecordings" / "Sessions"
         ["session recording", "session recordings", "sessions", "sessionrecordings"],
+
+        // Password operations — agents say "checkout" or "check out a password"
+        ["checkout", "check out", "password release", "password checkout", "checkoutpassword"],
+
+        // Directory / AD / LDAP — agents may use any of these interchangeably
+        ["directory", "directories", "active directory", "ad", "ldap", "identityprovider", "identityproviders"],
+
+        // User groups
+        ["user group", "user groups", "usergroups", "usergroup"],
+
+        // Account groups
+        ["account group", "account groups", "accountgroups", "accountgroup"],
+
+        // Asset groups
+        ["asset group", "asset groups", "assetgroups", "assetgroup"],
+
+        // Audit / logging — agents looking for activity history
+        ["audit", "audit log", "auditlog", "activity", "activities", "event log"],
+
+        // Access requests — the full lifecycle term set
+        ["access request", "access requests", "accessrequests", "request", "requests"],
+
+        // Service accounts / dependent accounts
+        ["service account", "service accounts", "dependent account", "dependent accounts"],
+
+        // Cluster & appliance — infrastructure management terms
+        ["cluster", "cluster members", "node", "nodes", "appliance", "appliances"],
+
+        // Discovery — finding unmanaged assets/accounts
+        ["discovery", "discover", "discoveredassets", "discoveredaccounts", "discovery job"],
+
+        // Password management tasks — rotation, change, check
+        ["password change", "password check", "change password", "check password", "rotation"],
+
+        // SSH keys
+        ["ssh key", "ssh keys", "sshkey", "sshkeys"],
+
+        // Certificate management
+        ["certificate", "certificates", "cert", "certs", "ssl", "tls"],
+
+        // Backup / restore
+        ["backup", "backups", "restore", "archive"],
+
+        // Common PAM vocabulary — umbrella terms agents will try
+        ["privilege", "privileged", "pam", "privileged access"],
     ];
 
     /// <summary>
