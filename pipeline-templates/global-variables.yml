@@ -1,0 +1,11 @@
+variables:
+  - name: semanticVersion
+    value: '1.0.0'
+  - name: isTagBuild
+    value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/') }}
+  - name: dotnetVersion
+    value: '10.0.x'
+  - name: containerRegistry
+    value: 'ghcr.io/oneidentity'
+  - name: imageName
+    value: 'safeguard-mcp'

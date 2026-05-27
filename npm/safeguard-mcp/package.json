@@ -1,0 +1,27 @@
+{
+  "name": "@oneidentity/safeguard-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Official One Identity Safeguard MCP server — AI-powered privileged access management with 1,000+ API endpoints",
+  "keywords": ["mcp", "safeguard", "privileged-access", "ai", "one-identity", "pam"],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OneIdentity/safeguard-mcp"
+  },
+  "homepage": "https://github.com/OneIdentity/safeguard-mcp#readme",
+  "bin": {
+    "safeguard-mcp": "bin/safeguard-mcp.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "optionalDependencies": {
+    "@oneidentity/safeguard-mcp-linux-x64": "1.0.0",
+    "@oneidentity/safeguard-mcp-win-x64": "1.0.0",
+    "@oneidentity/safeguard-mcp-darwin-arm64": "1.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

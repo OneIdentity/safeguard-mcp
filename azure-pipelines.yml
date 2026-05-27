@@ -1,0 +1,169 @@
+trigger:
+  branches:
+    include:
+      - main
+  tags:
+    include:
+      - 'v*'
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  - template: pipeline-templates/global-variables.yml
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # PR Validation: build + unit test only
+  # ──────────────────────────────────────────────────────────────
+  - job: PRValidation
+    displayName: 'PR Validation'
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - template: pipeline-templates/build-steps.yml
+
+  # ──────────────────────────────────────────────────────────────
+  # Build, Publish & Release (non-PR builds)
+  # ──────────────────────────────────────────────────────────────
+  - job: BuildAndPublish
+    displayName: 'Build & Publish'
+    condition: ne(variables['Build.Reason'], 'PullRequest')
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - template: pipeline-templates/build-steps.yml
+
+      # Version stamping
+      - task: PowerShell@2
+        displayName: 'Set package version'
+        inputs:
+          filePath: 'pipeline-templates/versionnumber.ps1'
+          arguments: >
+            -BuildId $(Build.BuildId)
+            -TagName $(Build.SourceBranchName)
+            -IsTagBuild $(isTagBuild)
+            -SemanticVersion $(semanticVersion)
+
+      # Publish self-contained binaries for each platform
+      - script: |
+          dotnet publish src/SafeguardMcp -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o $(Build.ArtifactStagingDirectory)/linux-x64
+        displayName: 'Publish linux-x64'
+
+      - script: |
+          dotnet publish src/SafeguardMcp -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o $(Build.ArtifactStagingDirectory)/win-x64
+        displayName: 'Publish win-x64'
+
+      - script: |
+          dotnet publish src/SafeguardMcp -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -o $(Build.ArtifactStagingDirectory)/osx-arm64
+        displayName: 'Publish osx-arm64'
+
+      # Stage binaries into npm platform packages
+      - script: |
+          cp $(Build.ArtifactStagingDirectory)/linux-x64/SafeguardMcp npm/safeguard-mcp-linux-x64/safeguard-mcp
+          cp $(Build.ArtifactStagingDirectory)/win-x64/SafeguardMcp.exe npm/safeguard-mcp-win-x64/safeguard-mcp.exe
+          cp $(Build.ArtifactStagingDirectory)/osx-arm64/SafeguardMcp npm/safeguard-mcp-darwin-arm64/safeguard-mcp
+          chmod +x npm/safeguard-mcp-linux-x64/safeguard-mcp
+          chmod +x npm/safeguard-mcp-darwin-arm64/safeguard-mcp
+        displayName: 'Stage binaries into npm packages'
+
+      # Retrieve npm publish token from Key Vault
+      - task: AzureKeyVault@2
+        displayName: 'Get npm token'
+        inputs:
+          azureSubscription: 'SafeguardOpenSource'
+          KeyVaultName: 'SafeguardBuildSecrets'
+          SecretsFilter: 'NpmOrgApiKey'
+
+      # Publish npm packages (release on tag, pre-release otherwise)
+      - script: |
+          npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
+
+          # Publish platform packages first
+          cd npm/safeguard-mcp-linux-x64 && npm publish --access public && cd ../..
+          cd npm/safeguard-mcp-win-x64 && npm publish --access public && cd ../..
+          cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public && cd ../..
+
+          # Publish root package
+          cd npm/safeguard-mcp && npm publish --access public && cd ../..
+        displayName: 'npm publish (release)'
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+
+      - script: |
+          npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
+
+          # Publish platform packages first
+          cd npm/safeguard-mcp-linux-x64 && npm publish --access public --tag pre && cd ../..
+          cd npm/safeguard-mcp-win-x64 && npm publish --access public --tag pre && cd ../..
+          cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public --tag pre && cd ../..
+
+          # Publish root package
+          cd npm/safeguard-mcp && npm publish --access public --tag pre && cd ../..
+        displayName: 'npm publish (pre-release)'
+        condition: not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+
+      # Build & push Docker image
+      - task: AzureKeyVault@2
+        displayName: 'Get GHCR token'
+        inputs:
+          azureSubscription: 'SafeguardOpenSource'
+          KeyVaultName: 'SafeguardBuildSecrets'
+          SecretsFilter: 'GitHubContainerRegistryToken'
+
+      - script: |
+          echo $(GitHubContainerRegistryToken) | docker login ghcr.io -u OneIdentity --password-stdin
+          docker build -t $(containerRegistry)/$(imageName):$(PackageVersion) .
+          docker push $(containerRegistry)/$(imageName):$(PackageVersion)
+        displayName: 'Build & push Docker image'
+
+      - script: |
+          docker tag $(containerRegistry)/$(imageName):$(PackageVersion) $(containerRegistry)/$(imageName):latest
+          docker push $(containerRegistry)/$(imageName):latest
+        displayName: 'Tag & push :latest'
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+
+      # Stage release artifacts
+      - task: CopyFiles@2
+        displayName: 'Stage release artifacts'
+        inputs:
+          sourceFolder: $(Build.ArtifactStagingDirectory)
+          contents: |
+            linux-x64/SafeguardMcp
+            win-x64/SafeguardMcp.exe
+            osx-arm64/SafeguardMcp
+          targetFolder: $(Build.ArtifactStagingDirectory)/release
+
+      - script: |
+          cd $(Build.ArtifactStagingDirectory)
+          tar -czf release/safeguard-mcp-linux-x64.tar.gz -C linux-x64 SafeguardMcp
+          zip -j release/safeguard-mcp-win-x64.zip win-x64/SafeguardMcp.exe
+          tar -czf release/safeguard-mcp-darwin-arm64.tar.gz -C osx-arm64 SafeguardMcp
+        displayName: 'Archive release binaries'
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish pipeline artifact'
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/release
+          artifactName: 'release'
+
+      # GitHub Release
+      - task: GitHubRelease@1
+        displayName: 'Create GitHub Release'
+        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        inputs:
+          gitHubConnection: 'PangaeaBuild-GitHub'
+          repositoryName: 'OneIdentity/safeguard-mcp'
+          action: 'create'
+          target: '$(Build.SourceVersion)'
+          tagSource: 'userSpecifiedTag'
+          tag: '$(ReleaseTag)'
+          title: 'Safeguard MCP Server $(PackageVersion)'
+          assets: |
+            $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-linux-x64.tar.gz
+            $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-win-x64.zip
+            $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-darwin-arm64.tar.gz
+          isPreRelease: $(IsPreRelease)
+          addChangeLog: true

@@ -14,16 +14,33 @@ operations like migrations.
 Install via npm (no .NET SDK required):
 
 ```bash
-npx safeguard-mcp
+npx @oneidentity/safeguard-mcp
 ```
 
 Or install globally:
 
 ```bash
-npm install -g safeguard-mcp
+npm install -g @oneidentity/safeguard-mcp
+safeguard-mcp
 ```
 
-> **Note:** npm distribution is coming soon. For now, see [Building from Source](#building-from-source) below.
+### Docker
+
+```bash
+docker run -i --rm \
+  -e SAFEGUARD_HOST=safeguard.corp.example.com \
+  -e SAFEGUARD_PROVIDER=local \
+  -e SAFEGUARD_USER=admin \
+  -e SAFEGUARD_PASSWORD=secret \
+  -e SAFEGUARD_IGNORE_SSL=true \
+  ghcr.io/oneidentity/safeguard-mcp
+```
+
+### Binary Downloads
+
+Self-contained binaries (no runtime needed) are available from
+[GitHub Releases](https://github.com/OneIdentity/safeguard-mcp/releases)
+for Linux x64, Windows x64, and macOS ARM64.
 
 ## Quick Start
 
@@ -36,7 +53,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "safeguard": {
       "command": "npx",
-      "args": ["-y", "safeguard-mcp"],
+      "args": ["-y", "@oneidentity/safeguard-mcp"],
       "env": {
         "SAFEGUARD_HOST": "safeguard.corp.example.com",
         "SAFEGUARD_IGNORE_SSL": "true"
@@ -55,7 +72,7 @@ Add to `.vscode/mcp.json` in your workspace:
   "servers": {
     "safeguard": {
       "command": "npx",
-      "args": ["-y", "safeguard-mcp"],
+      "args": ["-y", "@oneidentity/safeguard-mcp"],
       "env": {
         "SAFEGUARD_HOST": "safeguard.corp.example.com",
         "SAFEGUARD_IGNORE_SSL": "true"
@@ -103,6 +120,15 @@ the server authenticates automatically using PKCE without opening a browser.
 
 If only `SAFEGUARD_HOST` is set (without credentials), the server knows which appliance to
 target but will use interactive browser login for authentication.
+
+### Future: Device Code Flow
+
+For Docker and other environments without a browser, the ideal authentication experience is
+[OAuth 2.0 Device Authorization](https://datatracker.ietf.org/doc/html/rfc8628) — the server
+displays a URL and code, you authenticate from any browser, and the token flows back
+automatically. Safeguard's RSTS supports this grant type (disabled by default; enable it in
+Safeguard Access settings). Support will be added to SafeguardDotNet and this server in a
+future release, making it the recommended auth mode for containers.
 
 ## Architecture & Design
 

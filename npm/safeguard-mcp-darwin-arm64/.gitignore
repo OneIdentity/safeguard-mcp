@@ -1,0 +1,2 @@
+# Ignore platform-specific binaries (added during build)
+safeguard-mcp

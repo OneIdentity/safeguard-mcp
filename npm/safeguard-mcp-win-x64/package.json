@@ -1,0 +1,15 @@
+{
+  "name": "@oneidentity/safeguard-mcp-win-x64",
+  "version": "1.0.0",
+  "description": "Safeguard MCP server binary for Windows x64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OneIdentity/safeguard-mcp"
+  },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": [
+    "safeguard-mcp.exe"
+  ]
+}

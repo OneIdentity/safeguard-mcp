@@ -1,0 +1,98 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicholasgasior/model-context-protocol/schema/registry/src/schema/server.schema.json",
+  "name": "oneidentity/safeguard-mcp",
+  "displayName": "Safeguard MCP Server",
+  "description": "Official One Identity Safeguard for Privileged Passwords MCP server. Exposes 1,000+ PAM API endpoints through dynamic discovery tools for AI agents.",
+  "version": "1.0.0",
+  "publisher": {
+    "name": "One Identity",
+    "url": "https://www.oneidentity.com"
+  },
+  "repository": {
+    "url": "https://github.com/OneIdentity/safeguard-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@oneidentity/safeguard-mcp",
+      "version": "latest",
+      "runtime": "node",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SAFEGUARD_HOST",
+          "description": "Appliance hostname or IP for non-interactive authentication",
+          "required": false
+        },
+        {
+          "name": "SAFEGUARD_USER",
+          "description": "Username for non-interactive authentication",
+          "required": false
+        },
+        {
+          "name": "SAFEGUARD_PASSWORD",
+          "description": "Password for non-interactive authentication",
+          "required": false
+        },
+        {
+          "name": "SAFEGUARD_PROVIDER",
+          "description": "Identity provider (e.g., 'local', 'ad-domain'). Defaults to 'local'",
+          "required": false
+        },
+        {
+          "name": "SAFEGUARD_IGNORE_SSL",
+          "description": "Set to 'true' to skip TLS certificate validation",
+          "required": false
+        }
+      ]
+    },
+    {
+      "registryType": "docker",
+      "identifier": "ghcr.io/oneidentity/safeguard-mcp",
+      "version": "latest",
+      "transport": {
+        "type": "http",
+        "port": 8080
+      },
+      "environmentVariables": [
+        {
+          "name": "SAFEGUARD_HOST",
+          "description": "Appliance hostname or IP (required for container mode)",
+          "required": true
+        },
+        {
+          "name": "SAFEGUARD_USER",
+          "description": "Username for authentication",
+          "required": true
+        },
+        {
+          "name": "SAFEGUARD_PASSWORD",
+          "description": "Password for authentication",
+          "required": true
+        },
+        {
+          "name": "SAFEGUARD_PROVIDER",
+          "description": "Identity provider. Defaults to 'local'",
+          "required": false
+        },
+        {
+          "name": "SAFEGUARD_IGNORE_SSL",
+          "description": "Set to 'true' to skip TLS certificate validation",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "tools": [
+    "Safeguard_Connect",
+    "Safeguard_Discover",
+    "Safeguard_Schema",
+    "Safeguard_QueryHelp",
+    "Safeguard_Workflows",
+    "Safeguard_Execute",
+    "RandomPassword"
+  ]
+}
