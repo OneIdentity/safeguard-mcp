@@ -664,6 +664,14 @@ public class SafeguardApiTool(
         else
             foreach (var property in optional)
                 AppendSchemaProperty(sb, property);
+
+        var hints = SchemaHints.GetHints(schema);
+        if (hints != null)
+        {
+            sb.AppendLine().AppendLine("  AGENT HINTS:");
+            foreach (var (propertyName, hint) in hints)
+                sb.Append("    ").Append(propertyName).Append(": ").AppendLine(hint);
+        }
     }
 
     private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property)
