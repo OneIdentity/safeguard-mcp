@@ -8,10 +8,27 @@
     <Nullable>disable</Nullable>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
+
+    <!-- dotnet tool packaging -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>safeguard-mcp</ToolCommandName>
+    <PackageId>OneIdentity.SafeguardMcp</PackageId>
+    <Description>Official One Identity Safeguard MCP server — AI-powered privileged access management</Description>
+    <Authors>One Identity LLC</Authors>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/OneIdentity/safeguard-mcp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/OneIdentity/safeguard-mcp</RepositoryUrl>
+    <PackageTags>mcp;safeguard;privileged-access;ai;one-identity;pam</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="SafeguardMcp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>

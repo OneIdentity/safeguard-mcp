@@ -36,6 +36,15 @@ docker run -i --rm \
   ghcr.io/oneidentity/safeguard-mcp
 ```
 
+### .NET Tool
+
+If you already have the .NET 10 runtime:
+
+```bash
+dotnet tool install -g OneIdentity.SafeguardMcp
+safeguard-mcp
+```
+
 ### Binary Downloads
 
 Self-contained binaries (no runtime needed) are available from

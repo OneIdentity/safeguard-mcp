@@ -70,13 +70,23 @@ jobs:
           chmod +x npm/safeguard-mcp-darwin-arm64/safeguard-mcp
         displayName: 'Stage binaries into npm packages'
 
-      # Retrieve npm publish token from Key Vault
+      # Pack as dotnet tool
+      - script: |
+          dotnet pack src/SafeguardMcp -c Release -p:PackageVersion=$(PackageVersion) -o $(Build.ArtifactStagingDirectory)/nuget
+        displayName: 'Pack dotnet tool'
+
+      # Retrieve secrets from Key Vault
       - task: AzureKeyVault@2
-        displayName: 'Get npm token'
+        displayName: 'Get publish tokens'
         inputs:
           azureSubscription: 'SafeguardOpenSource'
           KeyVaultName: 'SafeguardBuildSecrets'
-          SecretsFilter: 'NpmOrgApiKey'
+          SecretsFilter: 'NpmOrgApiKey,NugetOrgApiKey'
+
+      # Publish NuGet package
+      - script: |
+          dotnet nuget push $(Build.ArtifactStagingDirectory)/nuget/*.nupkg --source https://api.nuget.org/v3/index.json --api-key $(NugetOrgApiKey) --skip-duplicate
+        displayName: 'Publish to NuGet.org'
 
       # Publish npm packages (release on tag, pre-release otherwise)
       - script: |
