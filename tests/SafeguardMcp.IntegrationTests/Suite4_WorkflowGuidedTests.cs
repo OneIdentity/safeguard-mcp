@@ -16,7 +16,7 @@ public class Suite4_WorkflowGuidedTests
     [Fact]
     public async Task Workflow_HealthCheck_AllStepsSucceed()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var workflow = _fixture.GetWorkflows(search: "health");
         Assert.True(
@@ -42,15 +42,19 @@ public class Suite4_WorkflowGuidedTests
                 $"Expected /v4/Status to include Online or State, got: {status}");
         }
 
-        var health = await _fixture.ExecuteAsync("GET", "/v4/ApplianceStatus/Health");
+        var healthRaw = await _fixture.ExecuteAsync("GET", "/v4/ApplianceStatus/Health");
+        var health = ExtractJsonBody(healthRaw);
         using (var healthDoc = JsonDocument.Parse(health))
         {
+            // The health response has resource data under ResourceUsage.NodeResourceHealth
             Assert.True(
-                ContainsAnyProperty(healthDoc.RootElement, "Cpu", "Memory", "Disk"),
-                $"Expected appliance health data to include CPU/memory/disk, got: {health}");
+                ContainsAnyProperty(healthDoc.RootElement,
+                    "ResourceUsage", "ProcessorCount", "MemoryFreeBytes", "DiskFreeBytes"),
+                $"Expected appliance health data to include resource usage info, got: {health}");
         }
 
-        var members = await _fixture.ExecuteAsync("GET", "/v4/Cluster/Members");
+        var membersRaw = await _fixture.ExecuteAsync("GET", "/v4/Cluster/Members");
+        var members = ExtractJsonBody(membersRaw);
         using var membersDoc = JsonDocument.Parse(members);
         Assert.Equal(JsonValueKind.Array, membersDoc.RootElement.ValueKind);
         Assert.True(membersDoc.RootElement.GetArrayLength() > 0, "Expected at least one cluster member.");
@@ -59,7 +63,7 @@ public class Suite4_WorkflowGuidedTests
     [Fact]
     public async Task Workflow_CreateEntitlement_CreatesWorkingRoleAndPolicy()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var workflow = _fixture.GetWorkflows(id: "create-entitlement");
         Assert.True(
@@ -97,6 +101,10 @@ public class Suite4_WorkflowGuidedTests
                 AllowSimultaneousAccess = false,
                 MaximumDurationDays = 0,
                 MaximumDurationHours = 4
+            },
+            ApproverProperties = new
+            {
+                RequireApproval = false
             }
         });
         var policyResult = await _fixture.ExecuteAsync("POST", "/v4/AccessPolicies", body: policyBody);
@@ -106,14 +114,14 @@ public class Suite4_WorkflowGuidedTests
 
         var verifyRole = await _fixture.ExecuteAsync("GET", $"/v4/Roles/{roleId}");
         using var verifyRoleDoc = JsonDocument.Parse(verifyRole);
-        var memberCount = ReadRequiredInt32(verifyRoleDoc.RootElement, "MemberCount");
+        var memberCount = ReadRequiredInt32(verifyRoleDoc.RootElement, "UserCount");
         Assert.True(memberCount > 0, $"Expected role {roleId} to have at least one member.");
     }
 
     [Fact]
     public async Task Workflow_TaskTriage_QuerySyntaxIsExecutable()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var workflow = _fixture.GetWorkflows(id: "task-triage");
         Assert.True(
@@ -124,9 +132,10 @@ public class Suite4_WorkflowGuidedTests
         var result = await _fixture.ExecuteAsync(
             "GET",
             "/v4/AssetAccounts",
-            query: "filter=TaskProperties.HasAccountTaskFailure eq true&count=true");
+            query: "filter=TaskProperties.HasAccountTaskFailure eq true&count=true&limit=100");
 
-        using var doc = JsonDocument.Parse(result);
+        var json = ExtractJsonBody(result);
+        using var doc = JsonDocument.Parse(json);
         Assert.True(
             doc.RootElement.ValueKind is JsonValueKind.Array or JsonValueKind.Object or JsonValueKind.Number,
             $"Expected valid JSON from task triage query, got: {result}");
@@ -135,7 +144,7 @@ public class Suite4_WorkflowGuidedTests
     [Fact]
     public async Task Workflow_PasswordAccessRequest_CompletesCheckoutLifecycle()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var workflow = _fixture.GetWorkflows(search: "password access request");
         Assert.True(
@@ -149,12 +158,13 @@ public class Suite4_WorkflowGuidedTests
         var roleName = $"McpTest_AccessRole_{suffix}";
         var policyName = $"McpTest_AccessPolicy_{suffix}";
 
+        var partitionId = await GetDefaultPartitionIdAsync();
         var assetBody = JsonSerializer.Serialize(new
         {
             Name = assetName,
             NetworkAddress = $"10.{Random.Shared.Next(1, 254)}.{Random.Shared.Next(1, 254)}.{Random.Shared.Next(1, 254)}",
             PlatformId = await GetWindowsServerPlatformIdAsync(),
-            AssetPartitionId = -1
+            AssetPartitionId = partitionId
         });
         var assetResult = await _fixture.ExecuteAsync("POST", "/v4/Assets", body: assetBody);
         using var assetDoc = JsonDocument.Parse(assetResult);
@@ -170,6 +180,10 @@ public class Suite4_WorkflowGuidedTests
         using var accountDoc = JsonDocument.Parse(accountResult);
         var accountId = ReadRequiredInt32(accountDoc.RootElement, "Id");
         _fixture.RegisterCleanup("DELETE", $"/v4/AssetAccounts/{accountId}");
+
+        // Set account password — required for Password access request type
+        await _fixture.ExecuteAsync("PUT", $"/v4/AssetAccounts/{accountId}/Password",
+            body: "\"TestP@ssword123\"");
 
         var roleBody = JsonSerializer.Serialize(new
         {
@@ -197,6 +211,10 @@ public class Suite4_WorkflowGuidedTests
                 AllowSimultaneousAccess = false,
                 MaximumDurationDays = 0,
                 MaximumDurationHours = 1
+            },
+            ApproverProperties = new
+            {
+                RequireApproval = false
             }
         });
         var policyResult = await _fixture.ExecuteAsync("POST", "/v4/AccessPolicies", body: policyBody);
@@ -206,7 +224,7 @@ public class Suite4_WorkflowGuidedTests
 
         var scopeBody = JsonSerializer.Serialize(new[]
         {
-            new { Id = accountId }
+            new { Id = accountId, ScopeItemType = "Account" }
         });
         try
         {
@@ -228,51 +246,39 @@ public class Suite4_WorkflowGuidedTests
             AssetId = assetId,
             AccessRequestType = "Password",
             ReasonComment = "Workflow-guided integration test",
-            RequestedDurationDays = 0,
-            RequestedDurationHours = 1,
             IsEmergency = false
         });
         var requestResult = await _fixture.ExecuteAsync("POST", "/v4/AccessRequests", body: requestBody);
         using var requestDoc = JsonDocument.Parse(requestResult);
         var requestId = ReadRequiredId(requestDoc.RootElement);
 
-        var state = GetStringProperty(requestDoc.RootElement, "State");
-        if (!string.Equals(state, "Available", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var approveBody = JsonSerializer.Serialize("Approved by workflow-guided integration test");
-                await _fixture.ExecuteAsync("POST", $"/v4/AccessRequests/{requestId}/Approve", body: approveBody);
-            }
-            catch (Exception ex)
-            {
-                var refreshedState = await WaitForAccessRequestStateAsync(requestId, attempts: 1);
-                if (!string.Equals(refreshedState, "Available", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException(
-                        $"Failed to approve access request {requestId}. Current state: {refreshedState ?? "<unknown>"}.",
-                        ex);
-                }
-            }
-        }
-
-        var availableState = await WaitForAccessRequestStateAsync(requestId, 10, "Available", "CheckedOut");
+        // Policy has RequireApproval=false, so request auto-approves. Wait for RequestAvailable state.
+        // In Safeguard, "RequestAvailable" means "approved and password available to check out"
+        var availableState = await WaitForAccessRequestStateAsync(requestId, 15, "RequestAvailable", "Available", "CheckedOut", "PasswordCheckedOut");
         Assert.True(
-            string.Equals(availableState, "Available", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(availableState, "CheckedOut", StringComparison.OrdinalIgnoreCase),
-            $"Expected access request {requestId} to become Available, got: {availableState ?? "<unknown>"}");
+            string.Equals(availableState, "RequestAvailable", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(availableState, "Available", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(availableState, "CheckedOut", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(availableState, "PasswordCheckedOut", StringComparison.OrdinalIgnoreCase),
+            $"Expected access request {requestId} to become RequestAvailable, got: {availableState ?? "<unknown>"}");
 
         var credential = await _fixture.ExecuteAsync("POST", $"/v4/AccessRequests/{requestId}/CheckOutPassword");
         Assert.False(string.IsNullOrWhiteSpace(ExtractTextValue(credential)));
 
         await _fixture.ExecuteAsync("POST", $"/v4/AccessRequests/{requestId}/CheckIn");
 
-        var checkedInState = await WaitForAccessRequestStateAsync(requestId, 10, "CheckedIn", "Expired", "Complete", "Completed");
+        var checkedInState = await WaitForAccessRequestStateAsync(requestId, 10,
+            "RequestCheckedIn", "CheckedIn", "Reclaimed", "Expired", "Complete", "Completed",
+            "PendingReview", "PendingPasswordReset");
         Assert.True(
-            string.Equals(checkedInState, "CheckedIn", StringComparison.OrdinalIgnoreCase)
+            string.Equals(checkedInState, "RequestCheckedIn", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(checkedInState, "CheckedIn", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(checkedInState, "Reclaimed", StringComparison.OrdinalIgnoreCase)
             || string.Equals(checkedInState, "Expired", StringComparison.OrdinalIgnoreCase)
             || string.Equals(checkedInState, "Complete", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(checkedInState, "Completed", StringComparison.OrdinalIgnoreCase),
+            || string.Equals(checkedInState, "Completed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(checkedInState, "PendingReview", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(checkedInState, "PendingPasswordReset", StringComparison.OrdinalIgnoreCase),
             $"Expected access request {requestId} to finish after check-in, got: {checkedInState ?? "<unknown>"}");
     }
 
@@ -291,6 +297,37 @@ public class Suite4_WorkflowGuidedTests
         result = await _fixture.ExecuteAsync("GET", "/v4/Platforms", query: "fields=Id,DisplayName&limit=1");
         using var fallbackDoc = JsonDocument.Parse(result);
         return ReadRequiredInt32(fallbackDoc.RootElement[0], "Id");
+    }
+
+    private async Task<int> GetDefaultPartitionIdAsync()
+    {
+        var result = await _fixture.ExecuteAsync(
+            "GET",
+            "/v4/AssetPartitions",
+            query: "fields=Id,Name&limit=1");
+        using var doc = JsonDocument.Parse(result);
+        return ReadRequiredInt32(doc.RootElement[0], "Id");
+    }
+
+    /// <summary>
+    /// Extracts the JSON body from an Execute response that may include prefixed notes.
+    /// </summary>
+    private static string ExtractJsonBody(string response)
+    {
+        var arrayStart = response.IndexOf('[');
+        var objectStart = response.IndexOf('{');
+
+        int start;
+        if (arrayStart >= 0 && objectStart >= 0)
+            start = Math.Min(arrayStart, objectStart);
+        else if (arrayStart >= 0)
+            start = arrayStart;
+        else if (objectStart >= 0)
+            start = objectStart;
+        else
+            return response;
+
+        return response[start..];
     }
 
     private async Task<bool> WaitForRequestEntitlementAsync(int accountId, string accountName, int attempts = 10)

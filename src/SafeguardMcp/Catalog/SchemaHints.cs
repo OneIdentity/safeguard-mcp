@@ -14,17 +14,17 @@ public static class SchemaHints
     {
         // --- Identity & Auth ---
         ["PrimaryAuthenticationProvider"] =
-            "Nested object reference. Use {\"Id\": -1} for the built-in local provider. "
-            + "GET /v4/AuthenticationProviders to list all available providers.",
+            "Nested object reference. Use {\"Id\": -1} for the built-in local provider (confirmed constant). "
+            + "GET /v4/AuthenticationProviders?fields=Id,Name to list all available providers.",
 
         ["IdentityProvider"] =
-            "Nested object reference. Use {\"Id\": -1} for the built-in local identity provider. "
-            + "GET /v4/IdentityProviders to list all.",
+            "Nested object reference. Use {\"Id\": -1} for the built-in local identity provider (confirmed constant). "
+            + "GET /v4/IdentityProviders?fields=Id,Name to list all.",
 
         // --- Asset Partitions ---
         ["AssetPartitionId"] =
-            "Use -1 for the default asset partition. "
-            + "GET /v4/AssetPartitions to list available partitions.",
+            "Integer ID of an asset partition. Use -1 for the default partition (confirmed constant). "
+            + "GET /v4/AssetPartitions?fields=Id,Name to list all partitions.",
 
         // --- Platform Selection ---
         ["PlatformId"] =
@@ -41,13 +41,22 @@ public static class SchemaHints
         ["AssetAccounts.Asset"] =
             "Nested object reference. Use {\"Id\": <assetId>}. "
             + "GET /v4/Assets?fields=Id,Name,NetworkAddress to find asset IDs.",
+        ["AssetAccount.Asset"] =
+            "Nested object reference. Use {\"Id\": <assetId>}. "
+            + "GET /v4/Assets?fields=Id,Name,NetworkAddress to find asset IDs.",
 
         ["AccessRequests.Account"] =
+            "Nested object reference. Use {\"Id\": <accountId>}. "
+            + "GET /v4/AssetAccounts?fields=Id,Name,Asset.Name to find account IDs.",
+        ["AccessRequest.Account"] =
             "Nested object reference. Use {\"Id\": <accountId>}. "
             + "GET /v4/AssetAccounts?fields=Id,Name,Asset.Name to find account IDs.",
 
         // --- Entitlements & Policy ---
         ["AccessPolicies.RoleId"] =
+            "Id of an existing Role (called 'Entitlement' in the UI). "
+            + "Create one first via POST /v4/Roles, then reference it here.",
+        ["AccessPolicy.RoleId"] =
             "Id of an existing Role (called 'Entitlement' in the UI). "
             + "Create one first via POST /v4/Roles, then reference it here.",
 
@@ -88,8 +97,24 @@ public static class SchemaHints
     };
 
     /// <summary>
+    /// Fields that are effectively required for creation (POST) but are either:
+    /// - marked readOnly in swagger (so filtered from schema), or
+    /// - listed as Optional when they should be Required.
+    /// Keyed by schema TypeName; values are property names whose hints should carry
+    /// the "(Required for creation)" prefix so that SchemaBodyBuilder includes them.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> ImplicitRequiredFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["User"] = ["PrimaryAuthenticationProvider"],
+        ["NewUser"] = ["PrimaryAuthenticationProvider"],
+        ["Asset"] = ["AssetPartitionId"],
+    };
+
+    /// <summary>
     /// Gets all applicable hints for properties in the given schema.
     /// Checks both "TypeName.PropertyName" (context-specific) and "PropertyName" (global).
+    /// Also includes hints for implicit required fields that swagger marks as optional/readOnly
+    /// but are actually needed for creation.
     /// Returns null if no hints apply.
     /// </summary>
     public static IReadOnlyList<(string PropertyName, string Hint)> GetHints(ApiSchema schema)
@@ -97,22 +122,51 @@ public static class SchemaHints
         List<(string, string)> results = null;
         var typeName = schema.TypeName ?? "";
 
+        // Determine which fields are implicit-required for this type
+        HashSet<string> implicitSet = null;
+        if (ImplicitRequiredFields.TryGetValue(typeName, out var implicitFields))
+        {
+            implicitSet = new HashSet<string>(implicitFields, StringComparer.OrdinalIgnoreCase);
+        }
+
         foreach (var property in schema.Properties)
         {
+            string hint = null;
+
             // Try context-specific key first: "TypeName.PropertyName"
             var contextKey = $"{typeName}.{property.Name}";
-            if (Hints.TryGetValue(contextKey, out var hint))
+            if (!Hints.TryGetValue(contextKey, out hint))
             {
-                results ??= [];
-                results.Add((property.Name, hint));
-                continue;
+                // Fall back to global key: "PropertyName"
+                Hints.TryGetValue(property.Name, out hint);
             }
 
-            // Fall back to global key: "PropertyName"
-            if (Hints.TryGetValue(property.Name, out hint))
+            if (hint != null)
             {
+                // If this is an implicit-required field that's Optional in the schema,
+                // prefix the hint so SchemaBodyBuilder knows to include it in the body.
+                if (!property.Required && implicitSet != null && implicitSet.Contains(property.Name))
+                {
+                    hint = "(Required for creation) " + hint;
+                    implicitSet.Remove(property.Name); // Don't add again below
+                }
+
                 results ??= [];
                 results.Add((property.Name, hint));
+            }
+        }
+
+        // Include implicit required fields that are completely missing from the schema
+        // (e.g., filtered out by readOnly)
+        if (implicitSet != null && implicitSet.Count > 0)
+        {
+            foreach (var fieldName in implicitSet)
+            {
+                if (Hints.TryGetValue(fieldName, out var hint))
+                {
+                    results ??= [];
+                    results.Add((fieldName, "(Required for creation) " + hint));
+                }
             }
         }
 

@@ -252,32 +252,51 @@ public class SafeguardConnectionManager : IDisposable
         var envUser = Environment.GetEnvironmentVariable("SAFEGUARD_USER");
         var envPassword = Environment.GetEnvironmentVariable("SAFEGUARD_PASSWORD");
 
-        if (!string.IsNullOrEmpty(envProvider) && !string.IsNullOrEmpty(envUser) && !string.IsNullOrEmpty(envPassword))
+        try
         {
-            _logger.LogInformation("Using non-interactive PKCE authentication for '{Host}'.", host);
-            connection = await Task.Run(() =>
+            if (!string.IsNullOrEmpty(envProvider) && !string.IsNullOrEmpty(envUser) && !string.IsNullOrEmpty(envPassword))
             {
-                using var securePassword = ToSecureString(envPassword);
-                return PkceLogin.Connect(host, envProvider, envUser, securePassword, ignoreSsl: ignoreSsl);
-            }, ct);
-        }
-        else
-        {
-            _logger.LogInformation("Using interactive browser login for '{Host}'.", host);
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(120));
-
-            try
-            {
+                _logger.LogInformation("Using non-interactive PKCE authentication for '{Host}'.", host);
                 connection = await Task.Run(() =>
-                    BrowserLogin.Connect(host, ignoreSsl: ignoreSsl), cts.Token);
+                {
+                    using var securePassword = ToSecureString(envPassword);
+                    return PkceLogin.Connect(host, envProvider, envUser, securePassword, ignoreSsl: ignoreSsl);
+                }, ct);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            else
             {
-                throw new McpException(
-                    "Browser login timed out after 120 seconds. Please try again and complete the login promptly.");
+                _logger.LogInformation("Using interactive browser login for '{Host}'.", host);
+
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(120));
+
+                try
+                {
+                    connection = await Task.Run(() =>
+                        BrowserLogin.Connect(host, ignoreSsl: ignoreSsl), cts.Token);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    throw new McpException(
+                        "Browser login timed out after 120 seconds. Please try again and complete the login promptly.");
+                }
             }
+        }
+        catch (McpException)
+        {
+            throw; // Already wrapped
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException)
+        {
+            throw new McpException(
+                $"Cannot connect to '{host}': {ex.Message}. "
+                + "Verify the hostname/IP is correct and the appliance is reachable. Call Safeguard_Connect with the correct host.");
+        }
+        catch (SafeguardDotNetException ex)
+        {
+            throw new McpException(
+                $"Authentication failed for '{host}': {ex.Message}. "
+                + "Verify credentials are correct. Call Safeguard_Connect to re-authenticate.");
         }
 
         _connections[host] = connection;

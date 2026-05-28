@@ -89,7 +89,9 @@ public static class TerminologyMap
         ["backup", "backups", "restore", "archive"],
 
         // Common PAM vocabulary — umbrella terms agents will try
-        ["privilege", "privileged", "pam", "privileged access"],
+        // Maps to access requests since that's the primary PAM workflow endpoint
+        ["privilege", "privileged", "pam", "privileged access",
+         "access request", "access requests", "accessrequests"],
     ];
 
     /// <summary>
