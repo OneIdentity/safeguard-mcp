@@ -283,7 +283,10 @@ public class CatalogLoader
 
             var isReadOnly = propSchema.TryGetProperty("readOnly", out var readOnly)
                 && readOnly.ValueKind == JsonValueKind.True;
-            if (isReadOnly)
+            // Keep readOnly properties if they are in the required array — the swagger may mark
+            // navigation properties as readOnly for GET responses while they are still needed in
+            // POST/PUT request bodies (common in Safeguard API swagger documentation).
+            if (isReadOnly && !requiredSet.Contains(propName))
                 continue;
 
             props.Add(new SchemaProperty(

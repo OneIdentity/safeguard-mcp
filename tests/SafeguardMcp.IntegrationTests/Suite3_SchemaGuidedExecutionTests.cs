@@ -17,7 +17,7 @@ public class Suite3_SchemaGuidedExecutionTests
     [Fact]
     public async Task Execute_CreateUser_FullPipeline()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var discoverResult = _fixture.Discover(search: "users", method: "POST");
         DiscoverAssertions.AssertFindsEndpoint(discoverResult, "POST", "/v4/Users");
@@ -26,21 +26,37 @@ public class Suite3_SchemaGuidedExecutionTests
         Assert.Contains("Name", schema);
 
         var builder = new SchemaBodyBuilder(_fixture);
-        var body = await builder.BuildAsync(schema);
+        string body;
+        try
+        {
+            body = await builder.BuildAsync(schema);
+        }
+        catch (SchemaGapException ex)
+        {
+            Assert.Fail($"SchemaBodyBuilder could not resolve field '{ex.FieldName}' ({ex.FieldType}). Schema output:\n{schema}\n\nException: {ex.Message}");
+            return;
+        }
 
-        var result = await _fixture.ExecuteAsync("POST", "/v4/Users", body: body);
-        using var doc = JsonDocument.Parse(result);
-        var userId = doc.RootElement.GetProperty("Id").GetInt32();
-        _fixture.RegisterCleanup("DELETE", $"/v4/Users/{userId}");
+        try
+        {
+            var result = await _fixture.ExecuteAsync("POST", "/v4/Users", body: body);
+            using var doc = JsonDocument.Parse(result);
+            var userId = doc.RootElement.GetProperty("Id").GetInt32();
+            _fixture.RegisterCleanup("DELETE", $"/v4/Users/{userId}");
 
-        var getResult = await _fixture.ExecuteAsync("GET", $"/v4/Users/{userId}");
-        Assert.Contains("McpTest_", getResult);
+            var getResult = await _fixture.ExecuteAsync("GET", $"/v4/Users/{userId}");
+            Assert.Contains("McpTest_", getResult);
+        }
+        catch (Exception ex)
+        {
+            Assert.Fail($"Execute failed with body: {body}\n\nSchema:\n{schema}\n\nError: {ex.Message}");
+        }
     }
 
     [Fact]
     public async Task Execute_CreateAsset_PlatformDiscoveryByName()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var schema = _fixture.Schema("/v4/Assets", "POST");
 
@@ -65,14 +81,15 @@ public class Suite3_SchemaGuidedExecutionTests
     [Fact]
     public async Task Execute_CreateAccount_OnExistingAsset()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
+        var partitionId = await GetDefaultPartitionIdAsync();
         var assetBody = JsonSerializer.Serialize(new
         {
             Name = $"McpTest_Asset_{Random.Shared.Next(10000, 99999)}",
             NetworkAddress = "10.0.0.100",
             PlatformId = await GetWindowsServerPlatformIdAsync(),
-            AssetPartitionId = -1
+            AssetPartitionId = partitionId
         });
         var assetResult = await _fixture.ExecuteAsync("POST", "/v4/Assets", body: assetBody);
         using var assetDoc = JsonDocument.Parse(assetResult);
@@ -97,7 +114,7 @@ public class Suite3_SchemaGuidedExecutionTests
     [Fact]
     public async Task Execute_QueryWithFilters_ReturnsFilteredResults()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var help = _fixture.QueryHelp(path: "/v4/Users");
         Assert.Contains("filter", help);
@@ -120,7 +137,7 @@ public class Suite3_SchemaGuidedExecutionTests
     [Fact]
     public async Task Execute_UpdateUser_PutModifiedField()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var createBody = JsonSerializer.Serialize(new
         {
@@ -144,7 +161,7 @@ public class Suite3_SchemaGuidedExecutionTests
     [Fact]
     public async Task Execute_DeleteUser_ReturnsNotFoundAfter()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var createBody = JsonSerializer.Serialize(new
         {
@@ -186,6 +203,16 @@ public class Suite3_SchemaGuidedExecutionTests
         result = await _fixture.ExecuteAsync("GET", "/v4/Platforms", query: "fields=Id,DisplayName&limit=1");
         using var fallbackDoc = JsonDocument.Parse(result);
         return fallbackDoc.RootElement[0].GetProperty("Id").GetInt32();
+    }
+
+    private async Task<int> GetDefaultPartitionIdAsync()
+    {
+        var result = await _fixture.ExecuteAsync(
+            "GET",
+            "/v4/AssetPartitions",
+            query: "fields=Id,Name&limit=1");
+        using var doc = JsonDocument.Parse(result);
+        return doc.RootElement[0].GetProperty("Id").GetInt32();
     }
 
     private static string AddOrReplaceProperty(string json, string propertyName, string jsonValue)

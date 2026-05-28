@@ -15,7 +15,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_ListUsers_FindsGetUsers()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "users");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "/v4/Users");
@@ -24,7 +24,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_CreateAsset_FindsPostAssets()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "assets", method: "POST");
         DiscoverAssertions.AssertFindsEndpoint(result, "POST", "/v4/Assets");
@@ -33,7 +33,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_ManageEntitlements_FindsRolesEndpoint()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "entitlements");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "/v4/Roles");
@@ -42,7 +42,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_CheckHealth_FindsApplianceHealth()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "health");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "ApplianceStatus/Health");
@@ -51,7 +51,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_PasswordCheckout_FindsCheckoutPassword()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "password checkout");
         DiscoverAssertions.AssertFindsEndpoint(result, "POST", "CheckOutPassword");
@@ -60,7 +60,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_ManagedAccounts_FindsAssetAccounts()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "managed accounts");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "/v4/AssetAccounts");
@@ -69,7 +69,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_AccessRequest_FindsAccessRequests()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "access request");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "/v4/AccessRequests");
@@ -78,7 +78,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_ClusterStatus_FindsClusterMembers()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "cluster");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "Cluster/Members");
@@ -87,7 +87,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_FilterByService_ReturnsOnlyApplianceEndpoints()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(service: "Appliance");
 
@@ -99,7 +99,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_FilterByMethod_ReturnsOnlyDeleteEndpoints()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(method: "DELETE");
 
@@ -111,7 +111,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_NoResults_ReturnsHelpfulGuidance()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "xyzzy_nonexistent");
 
@@ -125,7 +125,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_NarrowBroadSearch_FindsPostUsersWithoutBroadGetUsers()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "users", method: "POST");
 
@@ -136,7 +136,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_BulkImport_FindsBatchCreate()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "batch");
         DiscoverAssertions.AssertFindsEndpoint(result, "POST", "BatchCreate");
@@ -145,7 +145,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_AuditTrail_FindsAuditLog()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "audit");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "AuditLog");
@@ -154,7 +154,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_PrivilegedAccess_FindsAccessRequests()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "privileged access");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "AccessRequests");
@@ -163,7 +163,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_UserGroups_FindsUserGroups()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "user group");
         DiscoverAssertions.AssertFindsEndpoint(result, "GET", "/v4/UserGroups");
@@ -172,7 +172,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_CheckoutSynonym_FindsCheckoutPassword()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "checkout");
         DiscoverAssertions.AssertFindsEndpoint(result, "POST", "CheckOutPassword");
@@ -181,7 +181,7 @@ public class Suite1_DiscoveryQualityTests
     [Fact]
     public void Discover_DiscoveryJobs_ReturnsDiscoveredEndpoints()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "discovery");
         Assert.Contains("Discovered", result);

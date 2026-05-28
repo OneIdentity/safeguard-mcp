@@ -63,9 +63,12 @@ public class SafeguardApiTool(
 
         var results = catalogProvider.GetEndpoints(host);
         var sb = new StringBuilder();
-        int matched = 0;
         const int limit = 80;
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
+
+        // Collect matching endpoints with relevance scores so that exact path-segment
+        // matches appear before substring/summary-only matches.
+        var matches = new List<(int Score, int Index)>();
 
         for (int i = 0; i < results.Length; i++)
         {
@@ -75,28 +78,36 @@ public class SafeguardApiTool(
                 continue;
             if (method != null && !ep.Method.Equals(method, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (search != null
-                && !TerminologyMap.MatchesAny(searchTerms, ep.Path)
-                && !TerminologyMap.MatchesAny(searchTerms, ep.Summary))
+
+            int score = ScoreMatch(searchTerms, ep.Path, ep.Summary);
+            if (search != null && score == 0)
                 continue;
 
-            matched++;
-            if (matched <= limit)
-            {
-                sb.Append(ep.Method.PadRight(7));
-                sb.Append(ep.Service.PadRight(13));
-                sb.Append(ep.Path);
-                if (ep.HasBody) sb.Append("  [body]");
-                if (!string.IsNullOrEmpty(ep.Params)) sb.Append("  params: ").Append(ep.Params);
-                sb.Append("  -- ").AppendLine(ep.Summary);
-            }
+            matches.Add((score, i));
         }
 
-        if (matched == 0)
+        if (matches.Count == 0)
             return "No endpoints matched the search criteria. Try broader search terms.\nTip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.";
 
-        if (matched > limit)
-            sb.AppendLine().Append("... and ").Append(matched - limit).Append(" more. Narrow your search with service, method, or more specific search text.");
+        // Sort by descending relevance; ties keep catalog order (stable sort).
+        matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
+
+        int shown = 0;
+        foreach (var (_, idx) in matches)
+        {
+            if (shown >= limit) break;
+            ref readonly var ep = ref results[idx];
+            sb.Append(ep.Method.PadRight(7));
+            sb.Append(ep.Service.PadRight(13));
+            sb.Append(ep.Path);
+            if (ep.HasBody) sb.Append("  [body]");
+            if (!string.IsNullOrEmpty(ep.Params)) sb.Append("  params: ").Append(ep.Params);
+            sb.Append("  -- ").AppendLine(ep.Summary);
+            shown++;
+        }
+
+        if (matches.Count > limit)
+            sb.AppendLine().Append("... and ").Append(matches.Count - limit).Append(" more. Narrow your search with service, method, or more specific search text.");
 
         sb.AppendLine();
         sb.Append("Tip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.");
@@ -608,6 +619,46 @@ public class SafeguardApiTool(
         if (long.TryParse(segment, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
             return true;
         return Guid.TryParse(segment, out _);
+    }
+
+    /// <summary>
+    /// Scores how well an endpoint matches the search terms.
+    /// Higher score = better relevance. Returns 0 if no match.
+    /// 3 = a search term matches an entire path segment exactly (e.g. "assets" → /v4/Assets)
+    /// 2 = a search term is a substring of the path
+    /// 1 = a search term matches only in the summary
+    /// </summary>
+    private static int ScoreMatch(IReadOnlyList<string> terms, string path, string summary)
+    {
+        if (terms == null || terms.Count == 0)
+            return 1; // No filter means everything matches equally
+
+        int best = 0;
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < terms.Count; i++)
+        {
+            var term = terms[i];
+            // Check for exact path-segment match (highest relevance)
+            foreach (var seg in segments)
+            {
+                if (seg.Equals(term, StringComparison.OrdinalIgnoreCase)
+                    || seg.Equals($"v4/{term}", StringComparison.OrdinalIgnoreCase))
+                {
+                    return 3; // Can't do better
+                }
+            }
+            // Check for path substring match
+            if (path.Contains(term, StringComparison.OrdinalIgnoreCase))
+            {
+                if (best < 2) best = 2;
+            }
+            // Check for summary match
+            else if (summary.Contains(term, StringComparison.OrdinalIgnoreCase))
+            {
+                if (best < 1) best = 1;
+            }
+        }
+        return best;
     }
 
     private static string NormalizePath(string path)

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using OneIdentity.SafeguardDotNet;
 using SafeguardMcp.Catalog;
 using SafeguardMcp.Tools;
+using Xunit;
 
 namespace SafeguardMcp.IntegrationTests;
 
@@ -33,6 +34,7 @@ public class AgentSimulationFixture : IAsyncLifetime
     public SafeguardWorkflows Workflows { get; private set; }
     public string Host { get; private set; }
     public bool Available { get; private set; }
+    public string UnavailableReason { get; private set; }
     public int TestAdminUserId { get; private set; }
 
     public async Task InitializeAsync()
@@ -41,6 +43,7 @@ public class AgentSimulationFixture : IAsyncLifetime
         if (string.IsNullOrWhiteSpace(Host))
         {
             Available = false;
+            UnavailableReason = "SPP_HOST environment variable is not set. Set it to run integration tests.";
             return;
         }
 
@@ -48,6 +51,7 @@ public class AgentSimulationFixture : IAsyncLifetime
         if (string.IsNullOrWhiteSpace(password))
         {
             Available = false;
+            UnavailableReason = "SPP_PASSWORD environment variable is not set. Set it to run integration tests.";
             return;
         }
 
@@ -71,40 +75,33 @@ public class AgentSimulationFixture : IAsyncLifetime
         ConnectionManager = new SafeguardConnectionManager(
             new NullLogger<SafeguardConnectionManager>(), config, CatalogProvider);
 
-        try
-        {
-            Environment.SetEnvironmentVariable("SAFEGUARD_PROVIDER", provider);
-            Environment.SetEnvironmentVariable("SAFEGUARD_USER", "admin");
-            Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
-            Environment.SetEnvironmentVariable("SAFEGUARD_HOST", Host);
-            Environment.SetEnvironmentVariable("SAFEGUARD_IGNORE_SSL", ignoreSsl.ToString());
+        // If SPP_HOST is configured, connection failures must propagate — not silently pass.
+        Environment.SetEnvironmentVariable("SAFEGUARD_PROVIDER", provider);
+        Environment.SetEnvironmentVariable("SAFEGUARD_USER", "admin");
+        Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", Host);
+        Environment.SetEnvironmentVariable("SAFEGUARD_IGNORE_SSL", ignoreSsl.ToString());
 
-            await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
-            await Task.Delay(4000);
+        await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
+        await Task.Delay(4000);
 
-            await PreCleanStaleObjectsAsync();
-            await CreateTestAdminAsync(password);
+        await PreCleanStaleObjectsAsync();
+        await CreateTestAdminAsync(password);
 
-            ConnectionManager.Dispose();
-            CatalogProvider = new CatalogProvider(catalogLoader, new NullLogger<CatalogProvider>());
-            ConnectionManager = new SafeguardConnectionManager(
-                new NullLogger<SafeguardConnectionManager>(), config, CatalogProvider);
+        ConnectionManager.Dispose();
+        CatalogProvider = new CatalogProvider(catalogLoader, new NullLogger<CatalogProvider>());
+        ConnectionManager = new SafeguardConnectionManager(
+            new NullLogger<SafeguardConnectionManager>(), config, CatalogProvider);
 
-            Environment.SetEnvironmentVariable("SAFEGUARD_USER", $"{TestPrefix}Admin");
-            Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
+        Environment.SetEnvironmentVariable("SAFEGUARD_USER", $"{TestPrefix}Admin");
+        Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
 
-            await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
-            await Task.Delay(3000);
+        await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
+        await Task.Delay(3000);
 
-            ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
-            Workflows = new SafeguardWorkflows();
-            Available = true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[AgentSimulationFixture] Setup failed: {ex.Message}");
-            Available = false;
-        }
+        ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
+        Workflows = new SafeguardWorkflows();
+        Available = true;
     }
 
     public async Task DisposeAsync()
@@ -153,6 +150,17 @@ public class AgentSimulationFixture : IAsyncLifetime
         }
 
         ConnectionManager?.Dispose();
+    }
+
+    /// <summary>
+    /// Call at the top of every test that requires a live appliance connection.
+    /// Throws Assert.Fail with a clear message if the fixture is unavailable,
+    /// ensuring the test FAILS rather than silently passing.
+    /// </summary>
+    public void RequireAvailable()
+    {
+        if (!Available)
+            Assert.Fail(UnavailableReason ?? "AgentSimulationFixture is not available (unknown reason).");
     }
 
     /// <summary>Calls Safeguard_Discover — searches for endpoints by keyword/method/service.</summary>
@@ -258,7 +266,6 @@ public class AgentSimulationFixture : IAsyncLifetime
             Name = $"{TestPrefix}Admin",
             AdminRoles = AllAdminRoles,
             PrimaryAuthenticationProvider = new { Id = -1 },
-            Password = password
         });
 
         var response = await ConnectionManager.InvokeAsync(
@@ -271,6 +278,16 @@ public class AgentSimulationFixture : IAsyncLifetime
         using var doc = JsonDocument.Parse(response.Body);
         TestAdminUserId = doc.RootElement.GetProperty("Id").GetInt32();
         Console.WriteLine($"[AgentSimulationFixture] Created test admin: {TestPrefix}Admin (Id={TestAdminUserId})");
+
+        // Password must be set separately via PUT — POST body Password field does not set local auth credentials.
+        var passwordBody = JsonSerializer.Serialize(password);
+        await ConnectionManager.InvokeAsync(
+            Host,
+            Service.Core,
+            "PUT",
+            $"Users/{TestAdminUserId}/Password",
+            body: passwordBody);
+        Console.WriteLine($"[AgentSimulationFixture] Set password for test admin (Id={TestAdminUserId})");
     }
 }
 

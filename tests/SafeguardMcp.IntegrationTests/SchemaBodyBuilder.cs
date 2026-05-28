@@ -68,6 +68,38 @@ public class SchemaBodyBuilder
             obj[field.Name] = value;
         }
 
+        // Also include hint-only fields marked as "(Required for creation)"
+        var existingFields = new HashSet<string>(
+            requiredFields.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, hint) in hints)
+        {
+            if (existingFields.Contains(name))
+                continue;
+            if (hint.Contains("(Required for creation)", StringComparison.OrdinalIgnoreCase))
+            {
+                if (_overrides.TryGetValue(name, out var overrideValue))
+                {
+                    obj[name] = JsonNode.Parse(overrideValue);
+                }
+                else
+                {
+                    var value = await ResolveValueAsync(name, "object", hint);
+                    obj[name] = value;
+                }
+                existingFields.Add(name);
+            }
+        }
+
+        // Always include any remaining overrides (fields the caller knows are needed
+        // but that may be Optional in the swagger schema)
+        foreach (var (name, jsonValue) in _overrides)
+        {
+            if (!existingFields.Contains(name))
+            {
+                obj[name] = JsonNode.Parse(jsonValue);
+            }
+        }
+
         return obj.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
     }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace SafeguardMcp.IntegrationTests;
@@ -16,14 +17,15 @@ public class Suite6_EdgeCasesTests
     [Fact]
     public async Task EdgeCase_EmptySearchResults_ReturnsEmptyArray()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = await _fixture.ExecuteAsync(
             "GET",
             "/v4/Users",
-            query: "filter=Name eq 'IMPOSSIBLE_VALUE_12345'");
+            query: "filter=Name eq 'IMPOSSIBLE_VALUE_12345'&limit=100");
 
-        using var doc = JsonDocument.Parse(result);
+        var json = ExtractJsonBody(result);
+        using var doc = JsonDocument.Parse(json);
         Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
         Assert.Equal(0, doc.RootElement.GetArrayLength());
     }
@@ -31,28 +33,47 @@ public class Suite6_EdgeCasesTests
     [Fact]
     public async Task EdgeCase_SpecialCharactersInFilter_ReturnsValidJson()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
+        // Valid filter with special characters (hyphens, spaces) in string value
         var result = await _fixture.ExecuteAsync(
             "GET",
             "/v4/Users",
-            query: "filter=Name eq 'O''Brien'");
+            query: "filter=Name eq 'Test-User 123'&limit=100");
 
-        using var doc = JsonDocument.Parse(result);
+        var json = ExtractJsonBody(result);
+        using var doc = JsonDocument.Parse(json);
         Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
+    }
+
+    [Fact]
+    public async Task EdgeCase_InvalidFilterSyntax_ReturnsHelpfulError()
+    {
+        _fixture.RequireAvailable();
+
+        // Single quotes within filter values break Safeguard's filter parser
+        var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(async () =>
+            await _fixture.ExecuteAsync(
+                "GET",
+                "/v4/Users",
+                query: "filter=Name eq 'O''Brien'&limit=100"));
+
+        Assert.Contains("400", ex.Message);
+        Assert.Contains("filter", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task EdgeCase_CountQuery_ReturnsIntegerOrValidArray()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = await _fixture.ExecuteAsync(
             "GET",
             "/v4/Users",
-            query: "count=true");
+            query: "count=true&limit=100");
 
-        using var doc = JsonDocument.Parse(result);
+        var json = ExtractJsonBody(result);
+        using var doc = JsonDocument.Parse(json);
         Assert.True(
             doc.RootElement.ValueKind is JsonValueKind.Number or JsonValueKind.Array,
             $"Expected count response to be a number or array, got: {result}");
@@ -66,7 +87,7 @@ public class Suite6_EdgeCasesTests
     [Fact]
     public async Task EdgeCase_LargeLimit_ReturnsValidJsonArray()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = await _fixture.ExecuteAsync(
             "GET",
@@ -80,7 +101,7 @@ public class Suite6_EdgeCasesTests
     [Fact]
     public async Task EdgeCase_AllQueryParameters_ReturnsValidJsonArray()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = await _fixture.ExecuteAsync(
             "GET",
@@ -94,7 +115,7 @@ public class Suite6_EdgeCasesTests
     [Fact]
     public async Task EdgeCase_CsvFormat_ReturnsCommaSeparatedData()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = await _fixture.ExecuteAsync(
             "GET",
@@ -108,25 +129,69 @@ public class Suite6_EdgeCasesTests
             $"Expected CSV output with commas and row/header delimiters, got: {result}");
     }
 
-    [Fact(Skip = "Cannot test disconnected state within connected fixture")]
-    public Task EdgeCase_SchemaBeforeConnect_IsSkipped()
-        => Task.CompletedTask;
+    [Fact]
+    public async Task EdgeCase_SchemaBeforeConnect_IsSkipped()
+    {
+        // Schema without a connection should return guidance mentioning Connect.
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new System.Collections.Generic.Dictionary<string, string>
+            {
+                ["Safeguard:IgnoreSsl"] = "true",
+            })
+            .Build();
+        var catalogLoader = new SafeguardMcp.Catalog.CatalogLoader(
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogLoader>());
+        var catalogProvider = new SafeguardMcp.Catalog.CatalogProvider(
+            catalogLoader, new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogProvider>());
+        using var disconnectedMgr = new SafeguardMcp.Tools.SafeguardConnectionManager(
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.SafeguardConnectionManager>(),
+            config, catalogProvider);
+        var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
 
-    [Fact(Skip = "Cannot test disconnected state within connected fixture")]
-    public Task EdgeCase_ExecuteBeforeConnect_IsSkipped()
-        => Task.CompletedTask;
+        var schema = tool.Safeguard_Schema(path: "/v4/Users", method: "POST");
+
+        // Without a connection, schema should guide the user to connect first
+        Assert.Contains("Connect", schema, StringComparison.OrdinalIgnoreCase);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task EdgeCase_ExecuteBeforeConnect_IsSkipped()
+    {
+        // Execute without connecting should throw with guidance to call Connect first.
+        var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new System.Collections.Generic.Dictionary<string, string>
+            {
+                ["Safeguard:IgnoreSsl"] = "true",
+            })
+            .Build();
+        var catalogLoader = new SafeguardMcp.Catalog.CatalogLoader(
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogLoader>());
+        var catalogProvider = new SafeguardMcp.Catalog.CatalogProvider(
+            catalogLoader, new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogProvider>());
+        using var disconnectedMgr = new SafeguardMcp.Tools.SafeguardConnectionManager(
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.SafeguardConnectionManager>(),
+            config, catalogProvider);
+        var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
+
+        var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(
+            () => tool.Safeguard_Execute(null, method: "GET", path: "/v4/Users", host: "disconnected-host"));
+
+        Assert.Contains("Connect", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
     public async Task EdgeCase_QuickSearchParam_ReturnsJsonArrayWithResults()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = await _fixture.ExecuteAsync(
             "GET",
             "/v4/Users",
-            query: "q=admin");
+            query: "q=admin&limit=100");
 
-        using var doc = JsonDocument.Parse(result);
+        var json = ExtractJsonBody(result);
+        using var doc = JsonDocument.Parse(json);
         Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
         Assert.True(doc.RootElement.GetArrayLength() > 0, "Expected at least one result for q=admin.");
     }
@@ -134,7 +199,7 @@ public class Suite6_EdgeCasesTests
     [Fact]
     public async Task EdgeCase_BatchEndpointDiscovery_ContainsBatchCreate()
     {
-        if (!_fixture.Available) return;
+        _fixture.RequireAvailable();
 
         var result = _fixture.Discover(search: "batch");
         if (!result.Contains("BatchCreate", StringComparison.OrdinalIgnoreCase))
@@ -147,5 +212,27 @@ public class Suite6_EdgeCasesTests
             $"Expected discovery output to contain BatchCreate, got: {result}");
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Extracts the JSON body from an Execute response that may include prefixed notes
+    /// (e.g., "Note: Auto-applied limit=100..."). Finds the first '[' or '{' and returns from there.
+    /// </summary>
+    private static string ExtractJsonBody(string response)
+    {
+        var arrayStart = response.IndexOf('[');
+        var objectStart = response.IndexOf('{');
+
+        int start;
+        if (arrayStart >= 0 && objectStart >= 0)
+            start = Math.Min(arrayStart, objectStart);
+        else if (arrayStart >= 0)
+            start = arrayStart;
+        else if (objectStart >= 0)
+            start = objectStart;
+        else
+            return response; // No JSON found, let the caller fail with a clear error
+
+        return response[start..];
     }
 }
