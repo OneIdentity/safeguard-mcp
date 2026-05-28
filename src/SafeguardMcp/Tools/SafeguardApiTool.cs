@@ -26,14 +26,16 @@ public class SafeguardApiTool(
     [Description("Connect and authenticate to a Safeguard appliance. "
         + "You will be prompted for the server DNS name or IP address, then a browser window will open for OAuth2 login. "
         + "Call this once per server. You can connect to multiple servers simultaneously for cross-server operations. "
-        + "Call without parameters to check the current connection status.")]
+        + "Call without parameters to check the current connection status. "
+        + "IMPORTANT: Only set ignoreSsl to true after the user has explicitly confirmed they want to skip certificate validation.")]
     public async Task<string> Safeguard_Connect(McpServer server,
-        [Description("DNS name or IP address of the Safeguard appliance to connect to. If omitted, you will be prompted.")] string host = null)
+        [Description("DNS name or IP address of the Safeguard appliance to connect to. If omitted, you will be prompted.")] string host = null,
+        [Description("Skip SSL certificate validation for this connection. Only use when the user has explicitly confirmed — never set this silently.")] bool? ignoreSsl = null)
     {
-        if (string.IsNullOrWhiteSpace(host) && connectionManager.ConnectedHosts.Count > 0)
+        if (string.IsNullOrWhiteSpace(host) && ignoreSsl == null && connectionManager.ConnectedHosts.Count > 0)
             return connectionManager.GetStatusSummary();
 
-        var resolvedHost = await connectionManager.EnsureAuthenticatedAsync(server, host, CancellationToken.None);
+        var resolvedHost = await connectionManager.EnsureAuthenticatedAsync(server, host, CancellationToken.None, ignoreSsl);
         var allHosts = connectionManager.ConnectedHosts;
         var minutes = connectionManager.GetTokenLifetimeMinutes(resolvedHost);
         var msg = $"Connected and authenticated to Safeguard appliance at {resolvedHost}. Token expires in {minutes} minutes.";
