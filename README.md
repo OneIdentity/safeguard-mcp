@@ -64,13 +64,14 @@ Add to `claude_desktop_config.json`:
       "command": "npx",
       "args": ["-y", "@oneidentity/safeguard-mcp"],
       "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com",
-        "SAFEGUARD_IGNORE_SSL": "true"
+        "SAFEGUARD_HOST": "safeguard.corp.example.com"
       }
     }
   }
 }
 ```
+
+On first use, a browser window opens for you to log in via your identity provider.
 
 ### VS Code (GitHub Copilot)
 
@@ -83,8 +84,7 @@ Add to `.vscode/mcp.json` in your workspace:
       "command": "npx",
       "args": ["-y", "@oneidentity/safeguard-mcp"],
       "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com",
-        "SAFEGUARD_IGNORE_SSL": "true"
+        "SAFEGUARD_HOST": "safeguard.corp.example.com"
       }
     }
   }
@@ -102,33 +102,58 @@ TLS and Kubernetes deployment options.
 
 ## Authentication
 
-The server supports two authentication modes:
+The server connects to your Safeguard appliance using **interactive browser login** by default.
+When you (or your agent) initiate a connection, a browser window opens for SSO through your
+configured identity provider — this works with any authentication method your appliance supports
+(LDAP, RADIUS, SAML, etc.).
 
-### Interactive (Browser Login)
+### Typical Setup
 
-When no credentials are provided via environment variables, the server opens a browser window
-for SSO login through your configured identity provider. This is the default behavior and
-works with any authentication method your appliance supports (LDAP, RADIUS, SAML, etc.).
+Most users simply set `SAFEGUARD_HOST` to tell the server which appliance to connect to.
+On first use, a browser window opens for you to log in — no passwords stored in config files:
 
-This mode is ideal for personal workstation use with Claude Desktop or VS Code.
+```json
+{
+  "env": {
+    "SAFEGUARD_HOST": "safeguard.corp.example.com"
+  }
+}
+```
 
-### Headless (Environment Variables)
+You can also omit `SAFEGUARD_HOST` entirely. In that case, the server starts with no connection
+and the agent will prompt you for the appliance address at runtime via `Safeguard_Connect`.
+See [Multi-Server Support](#multi-server-support) for details.
 
-For unattended or CI/CD scenarios, set these environment variables:
+### SSL Certificate Validation
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `SAFEGUARD_HOST` | Yes | Appliance hostname or IP |
-| `SAFEGUARD_USER` | Yes | Username |
-| `SAFEGUARD_PASSWORD` | Yes | Password |
-| `SAFEGUARD_PROVIDER` | No | Identity provider (default: `local`) |
-| `SAFEGUARD_IGNORE_SSL` | No | Set `true` for self-signed certificates |
+For appliances using self-signed or internal CA certificates, set `SAFEGUARD_IGNORE_SSL`:
 
-When all three of `SAFEGUARD_USER`, `SAFEGUARD_PASSWORD`, and `SAFEGUARD_PROVIDER` are set,
-the server authenticates automatically using PKCE without opening a browser.
+```json
+{
+  "env": {
+    "SAFEGUARD_HOST": "safeguard.corp.example.com",
+    "SAFEGUARD_IGNORE_SSL": "true"
+  }
+}
+```
 
-If only `SAFEGUARD_HOST` is set (without credentials), the server knows which appliance to
-target but will use interactive browser login for authentication.
+The agent can also pass `ignoreSsl` per-connection at runtime via `Safeguard_Connect`, but the
+server will always prompt you for confirmation before disabling SSL validation.
+
+### Headless / CI (Environment Variables)
+
+For unattended or CI/CD scenarios where no browser is available, provide all three credential
+variables to enable automatic PKCE authentication without user interaction:
+
+| Variable | Purpose |
+|----------|---------|
+| `SAFEGUARD_HOST` | Appliance hostname or IP |
+| `SAFEGUARD_USER` | Username |
+| `SAFEGUARD_PASSWORD` | Password |
+| `SAFEGUARD_PROVIDER` | Identity provider (default: `local`) |
+
+When all three of `SAFEGUARD_USER`, `SAFEGUARD_PASSWORD`, and `SAFEGUARD_HOST` are set,
+the server authenticates automatically on startup without opening a browser.
 
 ### Future: Device Code Flow
 
@@ -296,6 +321,59 @@ The server maintains connections to multiple Safeguard appliances simultaneously
 enables cross-server workflows — comparing configurations between production and DR,
 migrating assets from one appliance to another, or auditing multiple sites from a single
 agent conversation.
+
+#### How connections work
+
+You do **not** need to configure a host in advance. There are two ways to establish
+connections:
+
+1. **Auto-connect at startup** — Set `SAFEGUARD_HOST` (and optionally credentials) in your
+   config to connect automatically when the server starts. This is convenient when you
+   always work with the same appliance.
+
+2. **Agent-driven connect at runtime** — The agent calls `Safeguard_Connect` during the
+   conversation to connect on demand. This works with no environment variables at all —
+   just start the server and let the agent connect when needed.
+
+Both approaches can be combined. For example, auto-connect to your production appliance
+via config, then have the agent connect to a DR appliance mid-conversation for comparison.
+
+#### Minimal config (no pre-configured host)
+
+If you prefer to let the agent decide which appliance to connect to, omit `SAFEGUARD_HOST`
+entirely:
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "safeguard": {
+      "command": "npx",
+      "args": ["-y", "@oneidentity/safeguard-mcp"],
+      "env": {
+        "SAFEGUARD_IGNORE_SSL": "true"
+      }
+    }
+  }
+}
+```
+
+The agent will call `Safeguard_Connect` when it needs to interact with an appliance and
+a browser window will open for authentication.
+
+#### Multi-server example
+
+Once connected to multiple appliances, use the `host` parameter on `Safeguard_Execute`
+to target a specific server:
+
+```
+Agent: Safeguard_Connect host="prod.safeguard.corp.com"    → authenticates to prod
+Agent: Safeguard_Connect host="dr.safeguard.corp.com"      → authenticates to DR
+Agent: Safeguard_Execute path="/v4/Users" host="prod.safeguard.corp.com"
+Agent: Safeguard_Execute path="/v4/Users" host="dr.safeguard.corp.com"
+```
+
+When only one connection is active, the `host` parameter is optional.
 
 ### Unified Dispatcher with Service Auto-Routing
 

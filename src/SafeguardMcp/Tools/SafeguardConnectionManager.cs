@@ -22,6 +22,7 @@ namespace SafeguardMcp.Tools;
 public class SafeguardConnectionManager : IDisposable
 {
     private readonly ConcurrentDictionary<string, ISafeguardConnection> _connections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _sslOverrides = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _authLock = new(1, 1);
     private readonly ILogger<SafeguardConnectionManager> _logger;
     private readonly IConfiguration _configuration;
@@ -65,7 +66,7 @@ public class SafeguardConnectionManager : IDisposable
     /// Ensures a connection exists and is authenticated for the given host.
     /// Uses MCP elicitation to prompt for host if not provided.
     /// </summary>
-    public async Task<string> EnsureAuthenticatedAsync(McpServer server, string host, CancellationToken ct)
+    public async Task<string> EnsureAuthenticatedAsync(McpServer server, string host, CancellationToken ct, bool? ignoreSsl = null)
     {
         if (!string.IsNullOrWhiteSpace(host))
         {
@@ -96,7 +97,10 @@ public class SafeguardConnectionManager : IDisposable
                 return host;
             }
 
-            await ConnectAsync(host, ct);
+            if (ignoreSsl == true)
+                ignoreSsl = await ConfirmIgnoreSslAsync(server, host, ct);
+
+            await ConnectAsync(host, ignoreSsl, ct);
             return host;
         }
         finally
@@ -243,9 +247,11 @@ public class SafeguardConnectionManager : IDisposable
         _authLock.Dispose();
     }
 
-    private async Task ConnectAsync(string host, CancellationToken ct)
+    private async Task ConnectAsync(string host, bool? ignoreSslOverride, CancellationToken ct)
     {
-        var ignoreSsl = ResolveSslPolicy();
+        var ignoreSsl = ignoreSslOverride ?? ResolveSslPolicy();
+        if (ignoreSslOverride.HasValue)
+            _sslOverrides[host] = ignoreSslOverride.Value;
         ISafeguardConnection connection;
 
         var envProvider = Environment.GetEnvironmentVariable("SAFEGUARD_PROVIDER");
@@ -314,6 +320,17 @@ public class SafeguardConnectionManager : IDisposable
             return ignore;
 
         return _configuration.GetValue<bool>("Safeguard:IgnoreSsl");
+    }
+
+    /// <summary>
+    /// Returns the SSL policy for a specific host, checking per-host override first,
+    /// then falling back to the global policy.
+    /// </summary>
+    private bool ResolveSslPolicyForHost(string host)
+    {
+        if (!string.IsNullOrWhiteSpace(host) && _sslOverrides.TryGetValue(host, out var perHost))
+            return perHost;
+        return ResolveSslPolicy();
     }
 
     private void EnsureTokenFresh(string host)
@@ -395,6 +412,49 @@ public class SafeguardConnectionManager : IDisposable
         return resolvedHost;
     }
 
+    /// <summary>
+    /// Prompts the user to confirm that they want to skip SSL certificate validation.
+    /// Returns true if confirmed, false if declined.
+    /// </summary>
+    private async Task<bool> ConfirmIgnoreSslAsync(McpServer server, string host, CancellationToken ct)
+    {
+        _logger.LogInformation("Confirming SSL bypass with user for host '{Host}'...", host);
+
+        var result = await server.ElicitAsync(new ElicitRequestParams
+        {
+            Mode = "form",
+            Message = $"⚠️ Security Warning: The agent is requesting to skip SSL certificate validation for '{host}'. "
+                    + "This makes the connection vulnerable to man-in-the-middle attacks. "
+                    + "Only approve this for trusted lab/test environments.",
+            RequestedSchema = new ElicitRequestParams.RequestSchema
+            {
+                Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
+                {
+                    ["confirm"] = new ElicitRequestParams.BooleanSchema
+                    {
+                        Title = "Skip SSL Validation",
+                        Description = $"Allow connecting to {host} without verifying its SSL certificate"
+                    }
+                },
+                Required = ["confirm"]
+            }
+        }, ct);
+
+        var isAccepted = result.Action != null
+            && result.Action.StartsWith("accept", StringComparison.OrdinalIgnoreCase);
+
+        if (!isAccepted || result.Content == null
+            || !result.Content.TryGetValue("confirm", out var confirmElement))
+        {
+            _logger.LogInformation("User declined SSL bypass for '{Host}'", host);
+            return false;
+        }
+
+        var confirmed = confirmElement.GetBoolean();
+        _logger.LogInformation("User {Decision} SSL bypass for '{Host}'", confirmed ? "approved" : "declined", host);
+        return confirmed;
+    }
+
     private static string NormalizeMethod(string method) => method.Trim().ToUpperInvariant() switch
     {
         "GET" => "GET",
@@ -454,7 +514,7 @@ public class SafeguardConnectionManager : IDisposable
         CancellationToken ct)
     {
         using var handler = new HttpClientHandler();
-        if (ResolveSslPolicy())
+        if (ResolveSslPolicyForHost(host))
         {
             handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
         }
