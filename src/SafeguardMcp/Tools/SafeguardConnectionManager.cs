@@ -9,10 +9,8 @@ using SafeguardMcp.Catalog;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
-using DeviceCodeLogin = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeLogin;
 using DeviceCodeLoginParameters = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeLoginParameters;
 using DeviceCodeInfo = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeInfo;
-using PkceLogin = OneIdentity.SafeguardDotNet.PkceNoninteractiveLogin.PkceNoninteractiveLogin;
 
 namespace SafeguardMcp.Tools;
 
@@ -31,15 +29,26 @@ public class SafeguardConnectionManager : IDisposable
     private readonly ILogger<SafeguardConnectionManager> _logger;
     private readonly IConfiguration _configuration;
     private readonly CatalogProvider _catalogProvider;
+    private readonly ISafeguardConnectionFactory _factory;
 
     public SafeguardConnectionManager(
         ILogger<SafeguardConnectionManager> logger,
         IConfiguration configuration,
         CatalogProvider catalogProvider)
+        : this(logger, configuration, catalogProvider, new SafeguardConnectionFactory())
+    {
+    }
+
+    public SafeguardConnectionManager(
+        ILogger<SafeguardConnectionManager> logger,
+        IConfiguration configuration,
+        CatalogProvider catalogProvider,
+        ISafeguardConnectionFactory factory)
     {
         _logger = logger;
         _configuration = configuration;
         _catalogProvider = catalogProvider;
+        _factory = factory;
     }
 
     /// <summary>Gets all currently connected host names.</summary>
@@ -270,7 +279,7 @@ public class SafeguardConnectionManager : IDisposable
                 connection = await Task.Run(() =>
                 {
                     using var securePassword = ToSecureString(envPassword);
-                    return PkceLogin.Connect(host, envProvider, envUser, securePassword, ignoreSsl: ignoreSsl);
+                    return _factory.ConnectPkce(host, envProvider, envUser, securePassword, ignoreSsl);
                 }, ct);
             }
             else
@@ -282,7 +291,7 @@ public class SafeguardConnectionManager : IDisposable
                     DisplayCallback = info => DisplayDeviceCode(server, host, info, ct),
                 };
 
-                connection = await DeviceCodeLogin.ConnectAsync(host, parameters, ignoreSsl: ignoreSsl, cancellationToken: ct);
+                connection = await _factory.ConnectDeviceCodeAsync(host, parameters, ignoreSsl, ct);
             }
         }
         catch (McpException)
