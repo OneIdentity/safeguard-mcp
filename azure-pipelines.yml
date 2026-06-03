@@ -56,6 +56,40 @@ jobs:
           targetPath: $(Build.ArtifactStagingDirectory)/linux-x64
           artifactName: 'publish-linux-x64'
 
+  # ──────────────────────────────────────────────────────────────
+  # linux-arm64 AOT build runs on a Microsoft-hosted ARM64 Linux agent.
+  # Native AOT cannot cross-compile across CPU architectures cleanly, so
+  # we build natively on arm64. If the project does not have access to
+  # the `ubuntu-22.04-arm` hosted pool, the documented fallback is to
+  # build on `ubuntu-latest` (x64) with a cross-toolchain
+  # (`gcc-aarch64-linux-gnu`, clang `--target` flags) -- see
+  # DEVICE-CODE-AOT-PLAN.md §7a. Do not switch silently.
+  # ──────────────────────────────────────────────────────────────
+  - job: Publish_linux_arm64
+    displayName: 'Publish linux-arm64 (AOT)'
+    condition: ne(variables['Build.Reason'], 'PullRequest')
+    pool:
+      vmImage: 'ubuntu-22.04-arm'
+    steps:
+      - script: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+        displayName: 'Install Native AOT toolchain'
+
+      - template: pipeline-templates/build-steps.yml
+
+      - script: |
+          dotnet publish src/SafeguardMcp/SafeguardMcp.csproj \
+            -c Release -r linux-arm64 -p:PublishAot=true \
+            -o $(Build.ArtifactStagingDirectory)/linux-arm64
+        displayName: 'AOT publish linux-arm64'
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish linux-arm64 artifact'
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/linux-arm64
+          artifactName: 'publish-linux-arm64'
+
   - job: Publish_win_x64
     displayName: 'Publish win-x64 (AOT)'
     condition: ne(variables['Build.Reason'], 'PullRequest')
@@ -101,6 +135,7 @@ jobs:
     displayName: 'Release'
     dependsOn:
       - Publish_linux_x64
+      - Publish_linux_arm64
       - Publish_win_x64
       - Publish_osx_arm64
     condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
@@ -128,6 +163,12 @@ jobs:
           path: $(Build.ArtifactStagingDirectory)/linux-x64
 
       - task: DownloadPipelineArtifact@2
+        displayName: 'Download linux-arm64 artifact'
+        inputs:
+          artifact: 'publish-linux-arm64'
+          path: $(Build.ArtifactStagingDirectory)/linux-arm64
+
+      - task: DownloadPipelineArtifact@2
         displayName: 'Download win-x64 artifact'
         inputs:
           artifact: 'publish-win-x64'
@@ -142,15 +183,18 @@ jobs:
       # Restore executable bit (PublishPipelineArtifact does not preserve it)
       - script: |
           chmod +x $(Build.ArtifactStagingDirectory)/linux-x64/SafeguardMcp
+          chmod +x $(Build.ArtifactStagingDirectory)/linux-arm64/SafeguardMcp
           chmod +x $(Build.ArtifactStagingDirectory)/osx-arm64/SafeguardMcp
         displayName: 'Restore executable bit on Linux/macOS binaries'
 
       # Stage binaries into npm platform packages
       - script: |
           cp $(Build.ArtifactStagingDirectory)/linux-x64/SafeguardMcp npm/safeguard-mcp-linux-x64/safeguard-mcp
+          cp $(Build.ArtifactStagingDirectory)/linux-arm64/SafeguardMcp npm/safeguard-mcp-linux-arm64/safeguard-mcp
           cp $(Build.ArtifactStagingDirectory)/win-x64/SafeguardMcp.exe npm/safeguard-mcp-win-x64/safeguard-mcp.exe
           cp $(Build.ArtifactStagingDirectory)/osx-arm64/SafeguardMcp npm/safeguard-mcp-darwin-arm64/safeguard-mcp
           chmod +x npm/safeguard-mcp-linux-x64/safeguard-mcp
+          chmod +x npm/safeguard-mcp-linux-arm64/safeguard-mcp
           chmod +x npm/safeguard-mcp-darwin-arm64/safeguard-mcp
         displayName: 'Stage binaries into npm packages'
 
@@ -168,6 +212,7 @@ jobs:
 
           # Publish platform packages first
           cd npm/safeguard-mcp-linux-x64 && npm publish --access public && cd ../..
+          cd npm/safeguard-mcp-linux-arm64 && npm publish --access public && cd ../..
           cd npm/safeguard-mcp-win-x64 && npm publish --access public && cd ../..
           cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public && cd ../..
 
@@ -181,6 +226,7 @@ jobs:
 
           # Publish platform packages first
           cd npm/safeguard-mcp-linux-x64 && npm publish --access public --tag pre && cd ../..
+          cd npm/safeguard-mcp-linux-arm64 && npm publish --access public --tag pre && cd ../..
           cd npm/safeguard-mcp-win-x64 && npm publish --access public --tag pre && cd ../..
           cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public --tag pre && cd ../..
 
@@ -216,6 +262,7 @@ jobs:
           sourceFolder: $(Build.ArtifactStagingDirectory)
           contents: |
             linux-x64/SafeguardMcp
+            linux-arm64/SafeguardMcp
             win-x64/SafeguardMcp.exe
             osx-arm64/SafeguardMcp
           targetFolder: $(Build.ArtifactStagingDirectory)/release
@@ -223,6 +270,7 @@ jobs:
       - script: |
           cd $(Build.ArtifactStagingDirectory)
           tar -czf release/safeguard-mcp-linux-x64.tar.gz -C linux-x64 SafeguardMcp
+          tar -czf release/safeguard-mcp-linux-arm64.tar.gz -C linux-arm64 SafeguardMcp
           zip -j release/safeguard-mcp-win-x64.zip win-x64/SafeguardMcp.exe
           tar -czf release/safeguard-mcp-darwin-arm64.tar.gz -C osx-arm64 SafeguardMcp
         displayName: 'Archive release binaries'
@@ -247,6 +295,7 @@ jobs:
           title: 'Safeguard MCP Server $(PackageVersion)'
           assets: |
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-linux-x64.tar.gz
+            $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-linux-arm64.tar.gz
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-win-x64.zip
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-darwin-arm64.tar.gz
           isPreRelease: $(IsPreRelease)

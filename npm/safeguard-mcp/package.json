@@ -18,6 +18,7 @@
   ],
   "optionalDependencies": {
     "@oneidentity/safeguard-mcp-linux-x64": "1.0.0",
+    "@oneidentity/safeguard-mcp-linux-arm64": "1.0.0",
     "@oneidentity/safeguard-mcp-win-x64": "1.0.0",
     "@oneidentity/safeguard-mcp-darwin-arm64": "1.0.0"
   },
