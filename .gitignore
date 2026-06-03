@@ -10,7 +10,8 @@
 ModelContextProtocol/
 
 # Implementation plan (not for release)
-PLAN.md
+*-PLAN.md
+*-PROMPT.md
 
 # User-specific files
 *.rsuser

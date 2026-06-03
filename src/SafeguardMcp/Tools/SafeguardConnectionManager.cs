@@ -9,15 +9,19 @@ using SafeguardMcp.Catalog;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
-using BrowserLogin = OneIdentity.SafeguardDotNet.BrowserLogin.DefaultBrowserLogin;
+using DeviceCodeLogin = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeLogin;
+using DeviceCodeLoginParameters = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeLoginParameters;
+using DeviceCodeInfo = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeInfo;
 using PkceLogin = OneIdentity.SafeguardDotNet.PkceNoninteractiveLogin.PkceNoninteractiveLogin;
 
 namespace SafeguardMcp.Tools;
 
 /// <summary>
 /// Manages connections to one or more Safeguard appliances using the SafeguardDotNet SDK.
-/// Handles interactive (browser) and non-interactive (headless) authentication,
-/// multi-server connection tracking, token refresh, and SSL trust.
+/// Default authentication is OAuth 2.0 Device Authorization Grant (RFC 8628), with the
+/// verification URL/code surfaced via MCP elicitation. A non-interactive PKCE flow is
+/// retained for unattended use when SAFEGUARD_PROVIDER, SAFEGUARD_USER, and
+/// SAFEGUARD_PASSWORD are all set in the environment.
 /// </summary>
 public class SafeguardConnectionManager : IDisposable
 {
@@ -100,7 +104,7 @@ public class SafeguardConnectionManager : IDisposable
             if (ignoreSsl == true)
                 ignoreSsl = await ConfirmIgnoreSslAsync(server, host, ct);
 
-            await ConnectAsync(host, ignoreSsl, ct);
+            await ConnectAsync(server, host, ignoreSsl, ct);
             return host;
         }
         finally
@@ -247,7 +251,7 @@ public class SafeguardConnectionManager : IDisposable
         _authLock.Dispose();
     }
 
-    private async Task ConnectAsync(string host, bool? ignoreSslOverride, CancellationToken ct)
+    private async Task ConnectAsync(McpServer server, string host, bool? ignoreSslOverride, CancellationToken ct)
     {
         var ignoreSsl = ignoreSslOverride ?? ResolveSslPolicy();
         if (ignoreSslOverride.HasValue)
@@ -271,21 +275,14 @@ public class SafeguardConnectionManager : IDisposable
             }
             else
             {
-                _logger.LogInformation("Using interactive browser login for '{Host}'.", host);
+                _logger.LogInformation("Using device-code authentication for '{Host}'.", host);
 
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(TimeSpan.FromSeconds(120));
+                var parameters = new DeviceCodeLoginParameters
+                {
+                    DisplayCallback = info => DisplayDeviceCode(server, host, info, ct),
+                };
 
-                try
-                {
-                    connection = await Task.Run(() =>
-                        BrowserLogin.Connect(host, ignoreSsl: ignoreSsl), cts.Token);
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    throw new McpException(
-                        "Browser login timed out after 120 seconds. Please try again and complete the login promptly.");
-                }
+                connection = await DeviceCodeLogin.ConnectAsync(host, parameters, ignoreSsl: ignoreSsl, cancellationToken: ct);
             }
         }
         catch (McpException)
@@ -302,7 +299,8 @@ public class SafeguardConnectionManager : IDisposable
         {
             throw new McpException(
                 $"Authentication failed for '{host}': {ex.Message}. "
-                + "Verify credentials are correct. Call Safeguard_Connect to re-authenticate.");
+                + "If your Safeguard administrator has not enabled the Device Authorization Grant, "
+                + "set SAFEGUARD_PROVIDER, SAFEGUARD_USER, and SAFEGUARD_PASSWORD to use the PKCE fallback.");
         }
 
         _connections[host] = connection;
@@ -311,6 +309,53 @@ public class SafeguardConnectionManager : IDisposable
             host, connection.GetAccessTokenLifetimeRemaining());
 
         _ = Task.Run(() => _catalogProvider.LoadCatalogForHostAsync(host, ignoreSsl), CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Displays the RFC 8628 device-code verification URL/code to the user. The URL
+    /// and code are always written to the structured log so they can be retrieved
+    /// from the log file. When an MCP server is available we additionally raise an
+    /// elicitation prompt as a fire-and-forget task so it surfaces in the client UI
+    /// without blocking the SDK polling loop.
+    /// </summary>
+    private void DisplayDeviceCode(McpServer server, string host, DeviceCodeInfo info, CancellationToken ct)
+    {
+        var url = string.IsNullOrWhiteSpace(info.VerificationUriComplete)
+            ? info.VerificationUri
+            : info.VerificationUriComplete;
+
+        _logger.LogInformation(
+            "Device code for '{Host}': open {Url} and enter code {Code} (expires in {Seconds}s).",
+            host, url, info.UserCode, info.ExpiresIn);
+
+        if (server == null)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await server.ElicitAsync(new ElicitRequestParams
+                {
+                    Mode = "form",
+                    Message =
+                        $"To finish signing in to Safeguard '{host}', open {url} in a browser "
+                        + $"and confirm code {info.UserCode}. The code expires in {info.ExpiresIn} seconds. "
+                        + "You can dismiss this dialog after signing in.",
+                    RequestedSchema = new ElicitRequestParams.RequestSchema
+                    {
+                        Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>(),
+                        Required = []
+                    }
+                }, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Could not surface device-code prompt via MCP elicitation; user must follow the URL/code from the log.");
+            }
+        }, CancellationToken.None);
     }
 
     private bool ResolveSslPolicy()
