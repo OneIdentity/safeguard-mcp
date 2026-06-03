@@ -16,10 +16,16 @@ internal sealed class SafeguardApiTool(
     CatalogProvider catalogProvider,
     IConfiguration configuration)
 {
-    private int MaxResultsBeforeTruncation => configuration.GetValue("Safeguard:MaxResultsBeforeTruncation", 100);
-    private int MaxResponseChars => configuration.GetValue("Safeguard:MaxResponseChars", 30000);
-    private int DefaultLimit => configuration.GetValue("Safeguard:DefaultLimit", 50);
-    private bool AutoInjectLimit => configuration.GetValue("Safeguard:AutoInjectLimit", true);
+    private int MaxResultsBeforeTruncation => ParseInt(configuration["Safeguard:MaxResultsBeforeTruncation"], 100);
+    private int MaxResponseChars => ParseInt(configuration["Safeguard:MaxResponseChars"], 30000);
+    private int DefaultLimit => ParseInt(configuration["Safeguard:DefaultLimit"], 50);
+    private bool AutoInjectLimit => ParseBool(configuration["Safeguard:AutoInjectLimit"], true);
+
+    private static int ParseInt(string value, int defaultValue)
+        => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : defaultValue;
+
+    private static bool ParseBool(string value, bool defaultValue)
+        => bool.TryParse(value, out var v) ? v : defaultValue;
 
     [McpServerTool(Name = "Safeguard_Connect", Title = "Connect to Safeguard",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]

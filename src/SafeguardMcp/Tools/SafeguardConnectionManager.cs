@@ -364,7 +364,7 @@ public class SafeguardConnectionManager : IDisposable
         if (bool.TryParse(envVal, out var ignore))
             return ignore;
 
-        return _configuration.GetValue<bool>("Safeguard:IgnoreSsl");
+        return bool.TryParse(_configuration["Safeguard:IgnoreSsl"], out var ignoreCfg) && ignoreCfg;
     }
 
     /// <summary>
