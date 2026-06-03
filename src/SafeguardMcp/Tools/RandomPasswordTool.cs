@@ -7,7 +7,7 @@ using ModelContextProtocol.Server;
 /// specified. Otherwise, it will default to a length of 12, consisting of just letters and numbers.
 /// </summary>
 [McpServerToolType]
-public class RandomPasswordTool
+internal sealed class RandomPasswordTool
 {
     /// <summary>Notice the absence of 0, 1, O, and L, both lower and upper case.</summary>
     private static readonly string PasswordChars = "abcdefghijkmnpqrstuvwxyzABCDEFGHIJKMNPQRSTUVWXYZ23456789";

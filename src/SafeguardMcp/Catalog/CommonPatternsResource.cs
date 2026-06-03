@@ -9,8 +9,10 @@ namespace SafeguardMcp.Catalog;
 /// Helps agents construct correct API calls for frequent operations.
 /// </summary>
 [McpServerResourceType]
-public static class CommonPatternsResource
+internal sealed class CommonPatternsResource
 {
+    private CommonPatternsResource() { }
+
     [McpServerResource(UriTemplate = "safeguard://common-patterns")]
     [Description("Common Safeguard API patterns — lookup by name, create with dependencies, "
         + "bulk operations, audit queries, and error handling. Preload to write correct API calls faster.")]

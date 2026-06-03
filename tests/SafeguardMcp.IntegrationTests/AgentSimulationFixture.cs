@@ -30,8 +30,8 @@ public class AgentSimulationFixture : IAsyncLifetime
 
     public SafeguardConnectionManager ConnectionManager { get; private set; }
     public CatalogProvider CatalogProvider { get; private set; }
-    public SafeguardApiTool ApiTool { get; private set; }
-    public SafeguardWorkflows Workflows { get; private set; }
+    internal SafeguardApiTool ApiTool { get; private set; }
+    internal SafeguardWorkflows Workflows { get; private set; }
     public string Host { get; private set; }
     public bool Available { get; private set; }
     public string UnavailableReason { get; private set; }

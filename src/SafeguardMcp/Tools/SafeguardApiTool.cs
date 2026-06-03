@@ -11,7 +11,7 @@ using SafeguardMcp.Catalog;
 namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
-public class SafeguardApiTool(
+internal sealed class SafeguardApiTool(
     SafeguardConnectionManager connectionManager,
     CatalogProvider catalogProvider,
     IConfiguration configuration)
