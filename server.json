@@ -50,43 +50,6 @@
       ]
     },
     {
-      "registryType": "nuget",
-      "identifier": "OneIdentity.SafeguardMcp",
-      "version": "latest",
-      "runtime": "dotnet",
-      "transport": {
-        "type": "stdio"
-      },
-      "command": ["safeguard-mcp"],
-      "environmentVariables": [
-        {
-          "name": "SAFEGUARD_HOST",
-          "description": "Appliance hostname or IP for non-interactive authentication",
-          "required": false
-        },
-        {
-          "name": "SAFEGUARD_USER",
-          "description": "Username for non-interactive authentication",
-          "required": false
-        },
-        {
-          "name": "SAFEGUARD_PASSWORD",
-          "description": "Password for non-interactive authentication",
-          "required": false
-        },
-        {
-          "name": "SAFEGUARD_PROVIDER",
-          "description": "Identity provider (e.g., 'local', 'ad-domain'). Defaults to 'local'",
-          "required": false
-        },
-        {
-          "name": "SAFEGUARD_IGNORE_SSL",
-          "description": "Set to 'true' to skip TLS certificate validation",
-          "required": false
-        }
-      ]
-    },
-    {
       "registryType": "docker",
       "identifier": "ghcr.io/oneidentity/safeguard-mcp",
       "version": "latest",
