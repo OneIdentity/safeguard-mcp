@@ -54,7 +54,8 @@
       "identifier": "ghcr.io/oneidentity/safeguard-mcp",
       "version": "1.0.0",
       "transport": {
-        "type": "stdio"
+        "type": "streamable-http",
+        "url": "http://localhost:8080/"
       },
       "environmentVariables": [
         {
