@@ -9,8 +9,10 @@ namespace SafeguardMcp.Catalog;
 /// for context about product-to-API naming differences.
 /// </summary>
 [McpServerResourceType]
-public static class TerminologyResource
+internal sealed class TerminologyResource
 {
+    private TerminologyResource() { }
+
     [McpServerResource(UriTemplate = "safeguard://terminology")]
     [Description("Safeguard product terminology to API terminology mapping. "
         + "Read this to understand how Safeguard UI/documentation terms map to REST API endpoint names. "

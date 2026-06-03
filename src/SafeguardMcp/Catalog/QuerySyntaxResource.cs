@@ -9,8 +9,10 @@ namespace SafeguardMcp.Catalog;
 /// Clients can preload this into context to avoid repeated Safeguard_QueryHelp calls.
 /// </summary>
 [McpServerResourceType]
-public static class QuerySyntaxResource
+internal sealed class QuerySyntaxResource
 {
+    private QuerySyntaxResource() { }
+
     [McpServerResource(UriTemplate = "safeguard://query-syntax")]
     [Description("Complete Safeguard API query syntax reference — filter operators, field selection, "
         + "ordering, pagination, and search. Preload this to write correct query parameters without tool calls.")]

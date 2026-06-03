@@ -9,8 +9,10 @@ namespace SafeguardMcp.Catalog;
 /// Helps agents orient quickly without needing to call Safeguard_Discover first.
 /// </summary>
 [McpServerResourceType]
-public static class ApiOverviewResource
+internal sealed class ApiOverviewResource
 {
+    private ApiOverviewResource() { }
+
     [McpServerResource(UriTemplate = "safeguard://api-overview")]
     [Description("High-level map of Safeguard services, endpoint categories, and key object relationships. "
         + "Preload this to understand the API landscape before navigating specific endpoints.")]

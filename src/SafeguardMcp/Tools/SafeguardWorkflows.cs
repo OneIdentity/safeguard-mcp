@@ -6,7 +6,7 @@ using ModelContextProtocol.Server;
 namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
-public class SafeguardWorkflows
+internal sealed class SafeguardWorkflows
 {
     private static readonly WorkflowRecipe[] Recipes = LoadRecipes();
 

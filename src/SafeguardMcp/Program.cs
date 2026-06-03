@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Server;
 using SafeguardMcp.Catalog;
 using SafeguardMcp.Tools;
 
@@ -34,10 +35,7 @@ namespace SafeguardMcp
 
             RegisterServices(builder.Services);
 
-            builder.Services.AddMcpServer()
-                .WithStdioServerTransport()
-                .WithToolsFromAssembly()
-                .WithResourcesFromAssembly();
+            AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithStdioServerTransport());
 
             var app = builder.Build();
             await app.RunAsync();
@@ -45,7 +43,7 @@ namespace SafeguardMcp
 
         private static async Task RunHttpAsync(string[] args)
         {
-            var builder = WebApplication.CreateBuilder(args);
+            var builder = WebApplication.CreateSlimBuilder(args);
 
             builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
 
@@ -54,10 +52,7 @@ namespace SafeguardMcp
 
             RegisterServices(builder.Services);
 
-            builder.Services.AddMcpServer()
-                .WithHttpTransport()
-                .WithToolsFromAssembly()
-                .WithResourcesFromAssembly();
+            AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
 
             var app = builder.Build();
             app.MapMcp();
@@ -70,5 +65,18 @@ namespace SafeguardMcp
             services.AddSingleton<CatalogProvider>();
             services.AddSingleton<SafeguardConnectionManager>();
         }
+
+        // Explicit generic registration preserves required members for trimming/AOT
+        // and avoids the reflection-based assembly scan that WithToolsFromAssembly /
+        // WithResourcesFromAssembly perform. Centralized here so stdio and HTTP
+        // transports stay in lockstep when new tools or resources are added.
+        private static IMcpServerBuilder AddSafeguardMcpComponents(IMcpServerBuilder builder) => builder
+            .WithTools<SafeguardApiTool>()
+            .WithTools<RandomPasswordTool>()
+            .WithTools<SafeguardWorkflows>()
+            .WithResources<ApiOverviewResource>()
+            .WithResources<CommonPatternsResource>()
+            .WithResources<QuerySyntaxResource>()
+            .WithResources<TerminologyResource>();
     }
 }

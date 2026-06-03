@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SafeguardMcp.Tests" />
+    <InternalsVisibleTo Include="SafeguardMcp.IntegrationTests" />
   </ItemGroup>
 
   <ItemGroup>
