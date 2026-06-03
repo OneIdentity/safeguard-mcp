@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.IO;
+using System.Text;
 using System.Text.Json;
 using OneIdentity.SafeguardDotNet;
 
@@ -132,7 +134,15 @@ internal static class ApiToolHelpers
             if (totalItems <= maxItems)
                 return false;
 
-            truncatedBody = JsonSerializer.Serialize(items);
+            using var buffer = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStartArray();
+                foreach (var item in items)
+                    item.WriteTo(writer);
+                writer.WriteEndArray();
+            }
+            truncatedBody = Encoding.UTF8.GetString(buffer.ToArray());
             return true;
         }
         catch (JsonException)

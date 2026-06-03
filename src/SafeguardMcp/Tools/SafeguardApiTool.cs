@@ -310,7 +310,7 @@ internal sealed class SafeguardApiTool(
             notes.Add($"Note: Auto-applied limit={injectedLimit}. Specify 'limit' in the query to override it.");
         }
 
-        if (format == "json" && TryTruncateJsonArray(formattedBody, MaxResultsBeforeTruncation, out var truncatedBody, out var totalItems))
+        if (format == "json" && ApiToolHelpers.TryTruncateJsonArray(formattedBody, MaxResultsBeforeTruncation, out var truncatedBody, out var totalItems))
         {
             formattedBody = truncatedBody;
             notes.Add($"Returned {totalItems} items. Showing the first {MaxResultsBeforeTruncation}. Use filter, fields, page, or limit to narrow the result.");
@@ -326,40 +326,6 @@ internal sealed class SafeguardApiTool(
             return formattedBody;
 
         return string.Join("\n", notes) + "\n\n" + formattedBody;
-    }
-
-    private static bool TryTruncateJsonArray(string body, int maxItems, out string truncatedBody, out int totalItems)
-    {
-        truncatedBody = null;
-        totalItems = 0;
-
-        if (string.IsNullOrWhiteSpace(body))
-            return false;
-
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            if (document.RootElement.ValueKind != JsonValueKind.Array)
-                return false;
-
-            var items = new List<JsonElement>();
-            foreach (var item in document.RootElement.EnumerateArray())
-            {
-                totalItems++;
-                if (items.Count < maxItems)
-                    items.Add(item.Clone());
-            }
-
-            if (totalItems <= maxItems)
-                return false;
-
-            truncatedBody = JsonSerializer.Serialize(items);
-            return true;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
     }
 
     private string FormatErrorResponse(McpException ex)
