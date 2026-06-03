@@ -1,8 +1,8 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicholasgasior/model-context-protocol/schema/registry/src/schema/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
   "name": "oneidentity/safeguard-mcp",
   "displayName": "Safeguard MCP Server",
-  "description": "Official One Identity Safeguard for Privileged Passwords MCP server. Exposes 1,000+ PAM API endpoints through dynamic discovery tools for AI agents.",
+  "description": "Official One Identity Safeguard for Privileged Passwords MCP server with dynamic API discovery.",
   "version": "1.0.0",
   "publisher": {
     "name": "One Identity",
@@ -16,7 +16,7 @@
     {
       "registryType": "npm",
       "identifier": "@oneidentity/safeguard-mcp",
-      "version": "latest",
+      "version": "1.0.0",
       "runtime": "node",
       "transport": {
         "type": "stdio"
@@ -52,10 +52,9 @@
     {
       "registryType": "docker",
       "identifier": "ghcr.io/oneidentity/safeguard-mcp",
-      "version": "latest",
+      "version": "1.0.0",
       "transport": {
-        "type": "http",
-        "port": 8080
+        "type": "stdio"
       },
       "environmentVariables": [
         {
@@ -65,13 +64,13 @@
         },
         {
           "name": "SAFEGUARD_USER",
-          "description": "Username for authentication",
-          "required": true
+          "description": "Username for automation/non-interactive auth; omit to use device-code login",
+          "required": false
         },
         {
           "name": "SAFEGUARD_PASSWORD",
-          "description": "Password for authentication",
-          "required": true
+          "description": "Password for automation/non-interactive auth; omit to use device-code login",
+          "required": false
         },
         {
           "name": "SAFEGUARD_PROVIDER",
