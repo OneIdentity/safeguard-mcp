@@ -63,6 +63,7 @@ namespace SafeguardMcp
         {
             services.AddSingleton<CatalogLoader>();
             services.AddSingleton<CatalogProvider>();
+            services.AddSingleton<ISafeguardConnectionFactory, SafeguardConnectionFactory>();
             services.AddSingleton<SafeguardConnectionManager>();
         }
 
