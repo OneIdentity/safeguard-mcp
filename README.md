@@ -26,20 +26,27 @@ safeguard-mcp
 
 ### Docker
 
+The container is built for shared deployments and defaults to the
+**streamable-HTTP** MCP transport on port 8080. For per-user stdio use,
+prefer the npm package or the standalone binary instead.
+
 ```bash
-docker run -i --rm \
+docker run -d --rm \
+  -p 8080:8080 \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
-  -e SAFEGUARD_USER=admin \
-  -e SAFEGUARD_PASSWORD=secret \
   -e SAFEGUARD_IGNORE_SSL=true \
   ghcr.io/oneidentity/safeguard-mcp
 ```
+
+Authenticate via device code flow on first tool call, or pre-configure
+`SAFEGUARD_USER` / `SAFEGUARD_PASSWORD` for non-interactive runs. The
+container runs as a built-in nonroot user (`app`, UID 64198).
 
 ### Binary Downloads
 
 Self-contained binaries (no runtime needed) are available from
 [GitHub Releases](https://github.com/OneIdentity/safeguard-mcp/releases)
-for Linux x64, Windows x64, and macOS ARM64.
+for Linux x64, Linux arm64, Windows x64, and macOS ARM64.
 
 ## Quick Start
 
