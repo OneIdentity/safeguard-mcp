@@ -29,20 +29,10 @@ safeguard-mcp
 ```bash
 docker run -i --rm \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
-  -e SAFEGUARD_PROVIDER=local \
   -e SAFEGUARD_USER=admin \
   -e SAFEGUARD_PASSWORD=secret \
   -e SAFEGUARD_IGNORE_SSL=true \
   ghcr.io/oneidentity/safeguard-mcp
-```
-
-### .NET Tool
-
-If you already have the .NET 10 runtime:
-
-```bash
-dotnet tool install -g OneIdentity.SafeguardMcp
-safeguard-mcp
 ```
 
 ### Binary Downloads
@@ -71,7 +61,8 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-On first use, a browser window opens for you to log in via your identity provider.
+On first use, the server displays a verification URL and one-time code; complete the
+sign-in from any browser to authorize the connection.
 
 ### VS Code (GitHub Copilot)
 
@@ -102,15 +93,21 @@ TLS and Kubernetes deployment options.
 
 ## Authentication
 
-The server connects to your Safeguard appliance using **interactive browser login** by default.
-When you (or your agent) initiate a connection, a browser window opens for SSO through your
-configured identity provider — this works with any authentication method your appliance supports
-(LDAP, RADIUS, SAML, etc.).
+The server connects to your Safeguard appliance using the **OAuth 2.0 Device Authorization
+Grant** ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) by default. When you
+(or your agent) initiate a connection, the server prints a verification URL and a short
+one-time code; you complete sign-in from any browser — on the same machine or a different
+one — and the token flows back automatically. This works in containers and headless
+environments without needing a local browser, and supports any authentication method your
+appliance allows (LDAP, RADIUS, SAML, etc.).
+
+> Device code grant must be enabled on the Safeguard appliance (Safeguard Access settings).
 
 ### Typical Setup
 
 Most users simply set `SAFEGUARD_HOST` to tell the server which appliance to connect to.
-On first use, a browser window opens for you to log in — no passwords stored in config files:
+On first use, the server displays a verification URL and code — no passwords stored in
+config files:
 
 ```json
 {
@@ -140,30 +137,6 @@ For appliances using self-signed or internal CA certificates, set `SAFEGUARD_IGN
 The agent can also pass `ignoreSsl` per-connection at runtime via `Safeguard_Connect`, but the
 server will always prompt you for confirmation before disabling SSL validation.
 
-### Headless / CI (Environment Variables)
-
-For unattended or CI/CD scenarios where no browser is available, provide all three credential
-variables to enable automatic PKCE authentication without user interaction:
-
-| Variable | Purpose |
-|----------|---------|
-| `SAFEGUARD_HOST` | Appliance hostname or IP |
-| `SAFEGUARD_USER` | Username |
-| `SAFEGUARD_PASSWORD` | Password |
-| `SAFEGUARD_PROVIDER` | Identity provider (default: `local`) |
-
-When all three of `SAFEGUARD_USER`, `SAFEGUARD_PASSWORD`, and `SAFEGUARD_HOST` are set,
-the server authenticates automatically on startup without opening a browser.
-
-### Future: Device Code Flow
-
-For Docker and other environments without a browser, the ideal authentication experience is
-[OAuth 2.0 Device Authorization](https://datatracker.ietf.org/doc/html/rfc8628) — the server
-displays a URL and code, you authenticate from any browser, and the token flows back
-automatically. Safeguard's RSTS supports this grant type (disabled by default; enable it in
-Safeguard Access settings). Support will be added to SafeguardDotNet and this server in a
-future release, making it the recommended auth mode for containers.
-
 ## Architecture & Design
 
 ### The Problem: Large API Surfaces and AI Agents
@@ -185,7 +158,7 @@ The complete tool surface is **7 tools**:
 
 | Tool | Purpose |
 |------|---------|
-| `Safeguard_Connect` | Authenticate to one or more appliances (browser or headless) |
+| `Safeguard_Connect` | Authenticate to one or more appliances via device code |
 | `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
@@ -359,7 +332,7 @@ entirely:
 ```
 
 The agent will call `Safeguard_Connect` when it needs to interact with an appliance and
-a browser window will open for authentication.
+the server will display a verification URL and code for you to authenticate.
 
 #### Multi-server example
 
