@@ -31,8 +31,20 @@ public readonly record struct ApiSchema(
 /// <summary>
 /// Represents a single property in a schema.
 /// </summary>
+/// <remarks>
+/// <para><see cref="NestedFields"/> contains the immediate child property names of a complex
+/// object/array property whose schema was resolved from a <c>$ref</c>. Empty for primitive
+/// properties or when the referenced schema could not be resolved.</para>
+/// </remarks>
 public readonly record struct SchemaProperty(
     string Name,
     string Type,
     string Description,
-    bool Required);
+    bool Required,
+    string[] NestedFields)
+{
+    public SchemaProperty(string name, string type, string description, bool required)
+        : this(name, type, description, required, Array.Empty<string>())
+    {
+    }
+}

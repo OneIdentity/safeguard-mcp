@@ -726,6 +726,11 @@ internal sealed class SafeguardApiTool(
         if (!string.IsNullOrWhiteSpace(property.Description))
             sb.Append(" - ").Append(property.Description.Trim());
         sb.AppendLine();
+
+        if (property.NestedFields != null && property.NestedFields.Length > 0)
+        {
+            sb.Append("      Fields: ").AppendLine(string.Join(", ", property.NestedFields));
+        }
     }
 
     private static string ParseMethod(string method) => method.Trim().ToUpperInvariant() switch
