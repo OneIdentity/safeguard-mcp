@@ -102,6 +102,93 @@ jobs:
           dotnet publish src/SafeguardMcp/SafeguardMcp.csproj -c Release -r win-x64 -p:PublishAot=true -o $(Build.ArtifactStagingDirectory)/win-x64
         displayName: 'AOT publish win-x64'
 
+      # ──────────────────────────────────────────────────────────────
+      # Authenticode-sign SafeguardMcp.exe via SSL.com eSigner CKA.
+      # Recipe mirrors OneIdentity/SCALUS azure-pipelines.yml. All
+      # secret-touching steps gated on isRelease so PRs (incl. forks)
+      # never pull SPPCodeSigning vault contents.
+      # ──────────────────────────────────────────────────────────────
+      - task: AzureKeyVault@2
+        displayName: 'Get SPPCodeSigning secrets from Azure Key Vault'
+        inputs:
+          ConnectedServiceName: 'OneIdentity.Infrastructure.SPPCodeSigning'
+          KeyVaultName: 'SPPCodeSigning'
+          SecretsFilter: 'SPPCodeSigning-Password,SPPCodeSigning-TotpPrivateKey'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - powershell: |
+          # Download and unzip the latest eSigner CKA setup, then
+          # rename the versioned exe to a stable filename.
+          Invoke-WebRequest -OutFile eSigner_CKA_Setup.zip "https://www.ssl.com/download/ssl-com-esigner-cka"
+          Expand-Archive -Force eSigner_CKA_Setup.zip
+          Remove-Item eSigner_CKA_Setup.zip
+          Move-Item -Path "eSigner_CKA_*\*.exe" -Destination "eSigner_CKA_Installer.exe"
+        displayName: 'Download and unzip eSigner CKA setup'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - powershell: |
+          .\eSigner_CKA_Installer.exe /CURRENTUSER /VERYSILENT /SUPPRESSMSGBOXES /DIR="$(Build.SourcesDirectory)\eSignerCKA" | Out-Null
+          Get-ChildItem "$(Build.SourcesDirectory)\eSignerCKA"
+        displayName: 'Install eSigner CKA silently'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - powershell: |
+          & "$(Build.SourcesDirectory)\eSignerCKA\eSignerCKATool.exe" config `
+            -mode "product" `
+            -user "ssl.oid.safeguardpp@groups.quest.com" `
+            -pass "$(SPPCodeSigning-Password)" `
+            -totp "$(SPPCodeSigning-TotpPrivateKey)" `
+            -key "$(Build.SourcesDirectory)\eSignerCKA\master.key" `
+            -r
+        displayName: 'Configure eSigner CKA with vault credentials'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - powershell: |
+          & "$(Build.SourcesDirectory)\eSignerCKA\eSignerCKATool.exe" unload
+          & "$(Build.SourcesDirectory)\eSignerCKA\eSignerCKATool.exe" load
+        displayName: 'Load eSigner CKA certificate into Windows cert store'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - powershell: |
+          $exe = "$(Build.ArtifactStagingDirectory)\win-x64\SafeguardMcp.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "Contents of $(Build.ArtifactStagingDirectory)\win-x64:"
+            Get-ChildItem "$(Build.ArtifactStagingDirectory)\win-x64" -Recurse | ForEach-Object { Write-Host $_.FullName }
+            throw "Expected AOT executable not found: $exe"
+          }
+          # Resolve signtool from the Windows 10 SDK shipped on the
+          # windows-latest image. Pick the highest-version x64 build to
+          # avoid relying on PATH, which is not reliable in PowerShell
+          # task sessions.
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) {
+            throw "signtool.exe not found under Windows 10 SDK install path."
+          }
+          Write-Host "Using signtool: $signtool"
+          # /n "One Identity LLC" matches by partial subject so cert
+          # renewal does not require pipeline edits (see SCALUS notes).
+          & $signtool sign /fd sha256 /tr http://ts.ssl.com /td sha256 /n "One Identity LLC" "$exe"
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE" }
+          & $signtool verify /pa /v "$exe"
+          if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with exit code $LASTEXITCODE" }
+        displayName: 'Authenticode-sign and verify SafeguardMcp.exe'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - powershell: |
+          # Best-effort hygiene: unload the cert from the user store and
+          # delete the CKA workspace install + master.key. The hosted
+          # agent is ephemeral, but explicit cleanup is cheap insurance.
+          $cka = "$(Build.SourcesDirectory)\eSignerCKA\eSignerCKATool.exe"
+          if (Test-Path $cka) {
+            & $cka unload
+          }
+          Remove-Item -Recurse -Force "$(Build.SourcesDirectory)\eSignerCKA" -ErrorAction SilentlyContinue
+          Remove-Item -Force "eSigner_CKA_Installer.exe" -ErrorAction SilentlyContinue
+        displayName: 'Clean up eSigner CKA state'
+        condition: and(always(), eq(variables.isRelease, true))
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish win-x64 artifact'
         inputs:
