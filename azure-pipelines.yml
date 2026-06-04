@@ -579,6 +579,21 @@ jobs:
           echo "Smoke OK: HTTP /mcp accepted initialize."
         displayName: 'Smoke: docker --http /mcp accepts initialize'
 
+      # Budget guardrail: the chiseled-base image plus a single AOT binary
+      # should fit comfortably under 80 MB uncompressed. If it doesn't, we
+      # have either accidentally pulled in a heavier base, dropped trim,
+      # or grown the binary unexpectedly — fail before we publish.
+      - script: |
+          set -euo pipefail
+          SIZE=$(docker image inspect safeguard-mcp:smoke --format '{{.Size}}')
+          LIMIT=$((80 * 1024 * 1024))
+          echo "Image size: $SIZE bytes (budget: $LIMIT bytes / 80 MB)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "ERROR: docker image exceeds 80 MB budget."
+            exit 1
+          fi
+        displayName: 'Smoke: docker image under 80 MB budget'
+
       # Tag build: push :version and :latest in one shot.
       - script: |
           set -euo pipefail
