@@ -209,6 +209,149 @@ jobs:
             -o $(Build.ArtifactStagingDirectory)/osx-arm64
         displayName: 'AOT publish osx-arm64'
 
+      # ──────────────────────────────────────────────────────────────
+      # Apple codesign + notarize the raw Mach-O `SafeguardMcp` binary.
+      # Brief item 25; SCALUS recipe adapted (raw Mach-O, no .pkg, no
+      # stapling — Gatekeeper validates online via quarantine xattr).
+      # All secret-touching steps gated on isRelease.
+      # ──────────────────────────────────────────────────────────────
+      - task: AzureKeyVault@2
+        displayName: 'Get Apple signing secrets from Azure Key Vault'
+        inputs:
+          ConnectedServiceName: 'OneIdentity.Infrastructure.SPPCodeSigning'
+          KeyVaultName: 'SPPCodeSigning'
+          SecretsFilter: 'AppleCertificate-Application-Cert,AppleCertificate-Installer-Password,Apple-App-Specific-Password'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - bash: |
+          set -euo pipefail
+          # Isolate the signing identity in a temporary keychain so we
+          # never touch System.keychain on the hosted agent.
+          KEYCHAIN_PATH="$(Agent.TempDirectory)/safeguard-mcp-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          CERT_PATH="$(Agent.TempDirectory)/AppleCertificate-Application.p12"
+
+          echo "##vso[task.setvariable variable=KEYCHAIN_PATH;issecret=false]$KEYCHAIN_PATH"
+          echo "##vso[task.setvariable variable=KEYCHAIN_PASSWORD;issecret=true]$KEYCHAIN_PASSWORD"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Prepend the temp keychain to the user search list so codesign
+          # can find the identity without touching the login keychain.
+          ORIGINAL_LIST=$(security list-keychains -d user | sed -e 's/[\"]//g' | tr -d '\n ')
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $ORIGINAL_LIST
+
+          # Decode the base64 PFX from Key Vault and import.
+          { echo "$(AppleCertificate-Application-Cert)" | base64 --decode > "$CERT_PATH"; } 2>/dev/null
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$(AppleCertificate-Installer-Password)" \
+            -A -t cert -f pkcs12 \
+            -T /usr/bin/codesign -T /usr/bin/security
+
+          # Allow codesign to use the private key non-interactively.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+
+          rm -f "$CERT_PATH"
+
+          # Locate the Developer ID Application identity from this team.
+          # Fail loudly if zero or multiple match.
+          IDENTITY_LINE=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep '"Developer ID Application:' | grep '(LDBTVAT43D)' || true)
+          if [ -z "$IDENTITY_LINE" ]; then
+            echo "No Developer ID Application identity for team LDBTVAT43D found." >&2
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" >&2 || true
+            exit 1
+          fi
+          if [ "$(echo "$IDENTITY_LINE" | wc -l)" -ne 1 ]; then
+            echo "Multiple Developer ID Application identities matched; refusing to guess." >&2
+            echo "$IDENTITY_LINE" >&2
+            exit 1
+          fi
+          IDENTITY_SHA1=$(echo "$IDENTITY_LINE" | awk '{print $2}')
+          echo "Using signing identity SHA-1: $IDENTITY_SHA1"
+          echo "##vso[task.setvariable variable=APPLE_SIGNING_IDENTITY;issecret=false]$IDENTITY_SHA1"
+        displayName: 'Set up temporary keychain and import Apple cert'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - bash: |
+          set -euo pipefail
+          BIN="$(Build.ArtifactStagingDirectory)/osx-arm64/SafeguardMcp"
+          if [ ! -f "$BIN" ]; then
+            ls -la "$(Build.ArtifactStagingDirectory)/osx-arm64" || true
+            echo "Expected AOT executable not found: $BIN" >&2
+            exit 1
+          fi
+          # Diagnostic: warn if any non-system dylib is linked. AOT
+          # output should depend only on /usr/lib + /System/Library; if
+          # bundled dylibs ever appear, they must be signed first.
+          echo "otool -L:"
+          otool -L "$BIN"
+
+          # Hardened runtime + secure timestamp are required by the
+          # Apple Notary Service. No entitlements: AOT does not JIT.
+          codesign --force --options runtime --timestamp \
+            --sign "$(APPLE_SIGNING_IDENTITY)" \
+            --keychain "$(KEYCHAIN_PATH)" \
+            "$BIN"
+
+          codesign --verify --deep --strict --verbose=2 "$BIN"
+          codesign --display --verbose=4 "$BIN"
+        displayName: 'codesign and verify SafeguardMcp (osx-arm64)'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - bash: |
+          set -euo pipefail
+          BIN="$(Build.ArtifactStagingDirectory)/osx-arm64/SafeguardMcp"
+          ZIP="$(Agent.TempDirectory)/SafeguardMcp-osx-arm64.zip"
+          # Apple notary service requires zip/pkg/dmg as the upload
+          # vehicle. ditto preserves macOS metadata better than zip(1).
+          ditto -c -k --keepParent "$BIN" "$ZIP"
+
+          # Submit and wait. JSON output is machine-readable so we can
+          # capture the submission id reliably for diagnostics.
+          set +e
+          NOTARY_OUT=$(xcrun notarytool submit "$ZIP" \
+            --apple-id "One.Identity.Apple.Developer@oneidentity.com" \
+            --password "$(Apple-App-Specific-Password)" \
+            --team-id "LDBTVAT43D" \
+            --wait \
+            --output-format json)
+          NOTARY_RC=$?
+          set -e
+          echo "$NOTARY_OUT"
+
+          STATUS=$(echo "$NOTARY_OUT" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("status",""))' || true)
+          SUBMISSION_ID=$(echo "$NOTARY_OUT" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("id",""))' || true)
+
+          if [ "$NOTARY_RC" -ne 0 ] || [ "$STATUS" != "Accepted" ]; then
+            echo "Notarization failed (rc=$NOTARY_RC, status=$STATUS)." >&2
+            if [ -n "$SUBMISSION_ID" ]; then
+              echo "Fetching notary log for $SUBMISSION_ID..." >&2
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "One.Identity.Apple.Developer@oneidentity.com" \
+                --password "$(Apple-App-Specific-Password)" \
+                --team-id "LDBTVAT43D" || true
+            fi
+            exit 1
+          fi
+
+          # Stapling is N/A for raw Mach-O. Gatekeeper validates online
+          # via the quarantine xattr at first launch on the user's
+          # machine. Do not staple; do not gate on `spctl -t install`.
+          rm -f "$ZIP"
+        displayName: 'Notarize SafeguardMcp via xcrun notarytool'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - bash: |
+          set -eu
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+        displayName: 'Clean up temporary signing keychain'
+        condition: and(always(), eq(variables.isRelease, true))
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish osx-arm64 artifact'
         inputs:
