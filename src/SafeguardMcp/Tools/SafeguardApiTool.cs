@@ -247,7 +247,17 @@ internal sealed class SafeguardApiTool(
             .AppendLine("    What policies does role X have?-> GET /v4/Roles/{id}/Policies")
             .AppendLine("    Which roles is user Y in?    -> GET /v4/Users/{id}/Roles")
             .AppendLine("  Use Reports only for estate-wide aggregates (e.g. \"every user-account pair\").")
-            .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.");
+            .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.")
+            .AppendLine()
+            .AppendLine("Sensitive credential material:")
+            .AppendLine("  Passwords, SSH private keys, A2A secrets, API keys, and cert private keys are sensitive.")
+            .AppendLine("  Do NOT echo these in summaries, tables, logs, or follow-up tool calls. Reference accounts by id.")
+            .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
+            .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
+            .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
+            .AppendLine("  Setting a known value: PUT /v4/AssetAccounts/{id}/Password (body = value)")
+            .AppendLine("  Do NOT mint passwords client-side (Get-Random, pwgen, LLM) - bypasses the password rule and leaks plaintext.")
+            .AppendLine("  See workflow recipe: set-initial-account-password.");
 
         if (string.IsNullOrWhiteSpace(path))
             return sb.ToString().TrimEnd();
