@@ -550,6 +550,27 @@ jobs:
           tar -czf release/safeguard-mcp-darwin-arm64.tar.gz -C osx-arm64 SafeguardMcp
         displayName: 'Archive release binaries'
 
+      # SHA256SUMS over all release archives (item 26). Detached PGP
+      # signature (.asc) is intentionally omitted for now: a release
+      # PGP key has not been provisioned in SPPCodeSigning. README's
+      # "Verifying downloads" section should reference `sha256sum -c`
+      # only until a key is added or `cosign sign-blob` replaces it.
+      - script: |
+          set -euo pipefail
+          cd $(Build.ArtifactStagingDirectory)/release
+          # Sort for reproducibility; relative filenames so end users
+          # can `sha256sum -c SHA256SUMS` from the download directory.
+          sha256sum \
+            safeguard-mcp-linux-x64.tar.gz \
+            safeguard-mcp-linux-arm64.tar.gz \
+            safeguard-mcp-win-x64.zip \
+            safeguard-mcp-darwin-arm64.tar.gz \
+            | LC_ALL=C sort > SHA256SUMS
+          cat SHA256SUMS
+          # Self-check: verify the file we just produced is consistent.
+          sha256sum -c SHA256SUMS
+        displayName: 'Generate SHA256SUMS over release archives'
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish pipeline artifact'
         inputs:
@@ -573,5 +594,6 @@ jobs:
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-linux-arm64.tar.gz
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-win-x64.zip
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-darwin-arm64.tar.gz
+            $(Build.ArtifactStagingDirectory)/release/SHA256SUMS
           isPreRelease: $(IsPreRelease)
           addChangeLog: true
