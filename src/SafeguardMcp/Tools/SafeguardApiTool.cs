@@ -95,8 +95,30 @@ internal sealed class SafeguardApiTool(
             matches.Add((score, i));
         }
 
+        var batchSearched = !string.IsNullOrWhiteSpace(search)
+            && search.Contains("batch", StringComparison.OrdinalIgnoreCase);
+        var anyBatchMatch = false;
+        if (batchSearched)
+        {
+            foreach (var (_, idx) in matches)
+            {
+                if (results[idx].Path.Contains("/Batch", StringComparison.OrdinalIgnoreCase))
+                {
+                    anyBatchMatch = true;
+                    break;
+                }
+            }
+        }
+
         if (matches.Count == 0)
+        {
+            if (batchSearched)
+                return BuildNoBatchHint() + "\n\nNo endpoints matched the search criteria. Try broader search terms.";
             return "No endpoints matched the search criteria. Try broader search terms.\nTip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.";
+        }
+
+        if (batchSearched && !anyBatchMatch)
+            sb.AppendLine(BuildNoBatchHint()).AppendLine();
 
         // Sort by descending relevance; ties keep catalog order (stable sort).
         matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
@@ -628,6 +650,14 @@ internal sealed class SafeguardApiTool(
     /// 2 = a search term is a substring of the path
     /// 1 = a search term matches only in the summary
     /// </summary>
+    private static string BuildNoBatchHint()
+    {
+        return "Note: Safeguard exposes batch endpoints only on a handful of top-level entity collections "
+            + "(look for paths ending in '/Batch' on entities like Users, Assets, AssetAccounts). "
+            + "Per-id actions (e.g. ChangePassword, CheckPassword, Disable, Enable) have NO batch counterpart — "
+            + "call them in parallel by id from the client.";
+    }
+
     private static int ScoreMatch(IReadOnlyList<string> terms, string path, string summary)
     {
         if (terms == null || terms.Count == 0)
