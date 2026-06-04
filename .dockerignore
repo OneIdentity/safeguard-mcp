@@ -1,0 +1,16 @@
+**/.git
+**/bin
+**/obj
+**/node_modules
+**/tests
+**/npm
+**/pipeline-templates
+**/docs
+**/.vs
+*.md
+!src/SafeguardMcp/Workflows/*.md
+.gitignore
+.editorconfig
+azure-pipelines.yml
+Dockerfile
+safeguard-mcp.sln
