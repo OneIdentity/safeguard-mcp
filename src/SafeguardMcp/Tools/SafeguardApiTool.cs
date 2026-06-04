@@ -36,12 +36,13 @@ internal sealed class SafeguardApiTool(
         + "IMPORTANT: Only set ignoreSsl to true after the user has explicitly confirmed they want to skip certificate validation.")]
     public async Task<string> Safeguard_Connect(McpServer server,
         [Description("DNS name or IP address of the Safeguard appliance to connect to. If omitted, you will be prompted.")] string host = null,
-        [Description("Skip SSL certificate validation for this connection. Only use when the user has explicitly confirmed — never set this silently.")] bool? ignoreSsl = null)
+        [Description("Skip SSL certificate validation for this connection. Only use when the user has explicitly confirmed — never set this silently.")] bool? ignoreSsl = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(host) && ignoreSsl == null && connectionManager.ConnectedHosts.Count > 0)
             return connectionManager.GetStatusSummary();
 
-        var resolvedHost = await connectionManager.EnsureAuthenticatedAsync(server, host, CancellationToken.None, ignoreSsl);
+        var resolvedHost = await connectionManager.EnsureAuthenticatedAsync(server, host, ct, ignoreSsl);
         var allHosts = connectionManager.ConnectedHosts;
         var minutes = connectionManager.GetTokenLifetimeMinutes(resolvedHost);
         var msg = $"Connected and authenticated to Safeguard appliance at {resolvedHost}. Token expires in {minutes} minutes.";
@@ -135,8 +136,9 @@ internal sealed class SafeguardApiTool(
         [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets).")]
         string format = "json",
         [Description("Target server (required only with multiple connections).")]
-        string host = null)
-        => await DispatchAsync(server, method, path, query, body, format, host);
+        string host = null,
+        CancellationToken ct = default)
+        => await DispatchAsync(server, method, path, query, body, format, host, ct);
 
     [McpServerTool(Name = "Safeguard_Schema", Title = "Get API Schema",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -243,7 +245,8 @@ internal sealed class SafeguardApiTool(
         string query,
         string body,
         string format,
-        string host)
+        string host,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(method))
             throw new McpException("The 'method' parameter is required (GET, POST, PUT, PATCH, or DELETE).");
@@ -268,8 +271,8 @@ internal sealed class SafeguardApiTool(
         {
             var requiresAuthentication = service != Service.Notification || requestedFormat == "csv";
             var resolvedHost = requiresAuthentication
-                ? await connectionManager.EnsureAuthenticatedAsync(server, host, CancellationToken.None)
-                : await connectionManager.EnsureHostConfiguredAsync(server, host, CancellationToken.None);
+                ? await connectionManager.EnsureAuthenticatedAsync(server, host, ct)
+                : await connectionManager.EnsureHostConfiguredAsync(server, host, ct);
 
             if (requestedFormat == "csv")
             {
@@ -279,7 +282,7 @@ internal sealed class SafeguardApiTool(
                     Method.Get,
                     relativeUrl,
                     parameters,
-                    CancellationToken.None);
+                    ct);
                 return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit);
             }
 
@@ -290,7 +293,7 @@ internal sealed class SafeguardApiTool(
                 relativeUrl,
                 body,
                 parameters,
-                CancellationToken.None);
+                ct);
 
             return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit);
         }

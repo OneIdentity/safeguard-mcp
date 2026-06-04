@@ -84,11 +84,8 @@ public class SafeguardConnectionManager : IDisposable
         if (!string.IsNullOrWhiteSpace(host))
         {
             host = host.Trim();
-            if (_connections.ContainsKey(host))
-            {
-                EnsureTokenFresh(host);
+            if (_connections.ContainsKey(host) && TryEnsureTokenFresh(host))
                 return host;
-            }
         }
 
         await _authLock.WaitAsync(ct);
@@ -96,8 +93,11 @@ public class SafeguardConnectionManager : IDisposable
         {
             if (!string.IsNullOrWhiteSpace(host) && _connections.ContainsKey(host))
             {
-                EnsureTokenFresh(host);
-                return host;
+                if (TryEnsureTokenFresh(host))
+                    return host;
+                // Refresh failed — drop and re-auth in this same call so the
+                // agent does not have to call Safeguard_Connect a second time.
+                RemoveConnection(host);
             }
 
             host = ResolveConfiguredHost(host);
@@ -106,8 +106,9 @@ public class SafeguardConnectionManager : IDisposable
 
             if (_connections.ContainsKey(host))
             {
-                EnsureTokenFresh(host);
-                return host;
+                if (TryEnsureTokenFresh(host))
+                    return host;
+                RemoveConnection(host);
             }
 
             if (ignoreSsl == true)
@@ -161,7 +162,11 @@ public class SafeguardConnectionManager : IDisposable
             throw new McpException($"Not connected to '{host}'. Call Safeguard_Connect first.");
         }
 
-        EnsureTokenFresh(host);
+        if (!TryEnsureTokenFresh(host))
+        {
+            RemoveConnection(host);
+            throw new McpException($"Authentication expired for '{host}'. Call Safeguard_Connect to re-authenticate.");
+        }
 
         if (method == "PATCH")
             return await InvokeWithRefreshAsync(host, connection, service, method, relativeUrl, body, parameters, ct);
@@ -204,7 +209,11 @@ public class SafeguardConnectionManager : IDisposable
         if (!_connections.TryGetValue(host, out var connection))
             throw new McpException($"Not connected to '{host}'. Call Safeguard_Connect first.");
 
-        EnsureTokenFresh(host);
+        if (!TryEnsureTokenFresh(host))
+        {
+            RemoveConnection(host);
+            throw new McpException($"Authentication expired for '{host}'. Call Safeguard_Connect to re-authenticate.");
+        }
 
         try
         {
@@ -213,6 +222,22 @@ public class SafeguardConnectionManager : IDisposable
         }
         catch (SafeguardDotNetException ex)
         {
+            if (ex.HttpStatusCode == HttpStatusCode.Unauthorized)
+            {
+                try
+                {
+                    await Task.Run(connection.RefreshAccessToken, ct);
+                    return await Task.Run(() =>
+                        connection.InvokeMethodCsv(service, method, relativeUrl, null, parameters, null, null), ct);
+                }
+                catch
+                {
+                    RemoveConnection(host);
+                    throw new McpException(
+                        $"Authentication expired for '{host}'. Call Safeguard_Connect to re-authenticate.");
+                }
+            }
+
             throw new McpException(
                 $"Safeguard API error (HTTP {(int?)ex.HttpStatusCode ?? 0}): {ex.Message}");
         }
@@ -323,9 +348,12 @@ public class SafeguardConnectionManager : IDisposable
     /// <summary>
     /// Displays the RFC 8628 device-code verification URL/code to the user. The URL
     /// and code are always written to the structured log so they can be retrieved
-    /// from the log file. When an MCP server is available we additionally raise an
-    /// elicitation prompt as a fire-and-forget task so it surfaces in the client UI
-    /// without blocking the SDK polling loop.
+    /// from the log file. When the calling MCP session advertises form-mode
+    /// elicitation we additionally raise an elicitation prompt as a fire-and-forget
+    /// task so it surfaces in the client UI without blocking the SDK polling loop.
+    /// When the client did not advertise elicitation we fall back to a tagged
+    /// stderr line — stdout is the MCP protocol channel in stdio mode and must
+    /// never be touched.
     /// </summary>
     private void DisplayDeviceCode(McpServer server, string host, DeviceCodeInfo info, CancellationToken ct)
     {
@@ -337,8 +365,16 @@ public class SafeguardConnectionManager : IDisposable
             "Device code for '{Host}': open {Url} and enter code {Code} (expires in {Seconds}s).",
             host, url, info.UserCode, info.ExpiresIn);
 
-        if (server == null)
+        if (server?.ClientCapabilities?.Elicitation?.Form == null)
+        {
+            _logger.LogWarning(
+                "MCP client did not advertise form elicitation for '{Host}'; emitting device-code on stderr fallback.",
+                host);
+            // stderr only — stdio MCP transport uses stdout for protocol framing.
+            Console.Error.WriteLine(
+                $"SAFEGUARD_DEVICE_CODE: host={host} url={url} code={info.UserCode} expires_in={info.ExpiresIn}");
             return;
+        }
 
         _ = Task.Run(async () =>
         {
@@ -387,23 +423,25 @@ public class SafeguardConnectionManager : IDisposable
         return ResolveSslPolicy();
     }
 
-    private void EnsureTokenFresh(string host)
+    private bool TryEnsureTokenFresh(string host)
     {
-        if (_connections.TryGetValue(host, out var connection))
+        if (!_connections.TryGetValue(host, out var connection))
+            return false;
+
+        try
         {
-            try
+            var minutesLeft = connection.GetAccessTokenLifetimeRemaining();
+            if (minutesLeft < 5)
             {
-                var minutesLeft = connection.GetAccessTokenLifetimeRemaining();
-                if (minutesLeft < 5)
-                {
-                    _logger.LogInformation("Token for '{Host}' expires in {Minutes} min — refreshing.", host, minutesLeft);
-                    connection.RefreshAccessToken();
-                }
+                _logger.LogInformation("Token for '{Host}' expires in {Minutes} min — refreshing.", host, minutesLeft);
+                connection.RefreshAccessToken();
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to check/refresh token for '{Host}'.", host);
-            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check/refresh token for '{Host}' — forcing re-authentication.", host);
+            return false;
         }
     }
 
@@ -429,6 +467,14 @@ public class SafeguardConnectionManager : IDisposable
 
     private async Task<string> ElicitHostAsync(McpServer server, CancellationToken ct)
     {
+        if (server?.ClientCapabilities?.Elicitation?.Form == null)
+        {
+            throw new McpException(
+                "Safeguard server address is required and the MCP client does not support elicitation. "
+                + "Call Safeguard_Connect with the 'host' parameter set to the appliance DNS name or IP address, "
+                + "or set the SAFEGUARD_HOST environment variable.");
+        }
+
         _logger.LogInformation("Eliciting Safeguard server address from user...");
 
         var result = await server.ElicitAsync(new ElicitRequestParams
@@ -472,6 +518,21 @@ public class SafeguardConnectionManager : IDisposable
     /// </summary>
     private async Task<bool> ConfirmIgnoreSslAsync(McpServer server, string host, CancellationToken ct)
     {
+        if (server?.ClientCapabilities?.Elicitation?.Form == null)
+        {
+            // Refusing rather than silently bypassing: SSL skip is too dangerous to
+            // accept without explicit user confirmation, and we cannot ask without
+            // elicitation. The agent should re-call Safeguard_Connect after the
+            // user has installed the appliance certificate or is running on a
+            // client that supports elicitation.
+            _logger.LogWarning(
+                "Cannot confirm SSL bypass for '{Host}': MCP client does not support elicitation. Refusing.",
+                host);
+            throw new McpException(
+                $"Skipping SSL validation for '{host}' requires user confirmation, but the MCP client does not support elicitation. "
+                + "Trust the appliance certificate on this machine or run on a client that supports MCP elicitation, then retry.");
+        }
+
         _logger.LogInformation("Confirming SSL bypass with user for host '{Host}'...", host);
 
         var result = await server.ElicitAsync(new ElicitRequestParams
