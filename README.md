@@ -38,6 +38,16 @@ docker run -d --rm \
   ghcr.io/oneidentity/safeguard-mcp
 ```
 
+To run the container in **stdio** mode (e.g. wired into an MCP client that
+launches its own subprocess), pass `--stdio` and use `-i` so stdin stays
+attached:
+
+```bash
+docker run -i --rm \
+  -e SAFEGUARD_HOST=safeguard.corp.example.com \
+  ghcr.io/oneidentity/safeguard-mcp --stdio
+```
+
 Authenticate via device code flow on first tool call, or pre-configure
 `SAFEGUARD_USER` / `SAFEGUARD_PASSWORD` for non-interactive runs. The
 container runs as a built-in nonroot user (`app`, UID 1654).
@@ -47,6 +57,30 @@ container runs as a built-in nonroot user (`app`, UID 1654).
 Self-contained binaries (no runtime needed) are available from
 [GitHub Releases](https://github.com/OneIdentity/safeguard-mcp/releases)
 for Linux x64, Linux arm64, Windows x64, and macOS ARM64.
+
+### Verifying Downloads
+
+Each release publishes a `SHA256SUMS` file alongside the archives, plus a
+[cosign](https://github.com/sigstore/cosign) public key (`cosign.pub`) for
+verifying container image signatures. Verify before extracting.
+
+**Checksums:**
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+The `SHA256SUMS` file covers the release archives, the per-platform SPDX
+SBOMs (`sbom-linux-amd64.spdx.json`, `sbom-linux-arm64.spdx.json`), and
+the `cosign.pub` key itself.
+
+**Container image signature** — the multi-arch image is signed with a key
+held in an Azure Key Vault HSM. Download `cosign.pub` from the Release
+assets and verify the image digest:
+
+```bash
+cosign verify --key cosign.pub ghcr.io/oneidentity/safeguard-mcp:<tag>
+```
 
 ## Quick Start
 
@@ -432,6 +466,15 @@ SafeguardMcp --http   # HTTP mode, default port 5000
 In HTTP mode, clients connect to the `/mcp` endpoint (e.g., `http://localhost:5000/mcp`).
 Configure the listening URL via standard ASP.NET Core mechanisms (`--urls`, `ASPNETCORE_URLS`
 environment variable, or `appsettings.json`).
+
+A `/healthz` endpoint is exposed alongside `/mcp` for Kubernetes liveness/readiness probes
+and load-balancer health checks; it returns `200 Healthy` once the host is up.
+
+> **HTTP mode does not perform authentication on `/mcp`.** The transport itself is
+> unauthenticated by design — when binding to anything other than loopback, deploy the
+> server behind an authenticated reverse proxy, ingress controller, or service mesh
+> sidecar (mTLS, OAuth proxy, API gateway, etc.). TLS termination upstream is the
+> standard pattern; see below.
 
 #### TLS / HTTPS
 
