@@ -88,6 +88,38 @@ public class ErrorParsingTests
     }
 
     [Fact]
+    public void GetErrorHint_ContextAware_FlatFkFieldSuggestsNestedForm()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid field property - 'AssetId' is not a valid property name.",
+            hasModelState: false);
+        Assert.Contains("nested objects", hint);
+        Assert.Contains("Asset.Id", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_DottedFieldSuggestsChildEndpoint()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid field property - 'Profiles.Id' is not a valid property name.",
+            hasModelState: false);
+        Assert.Contains("to-one", hint);
+        Assert.Contains("sub-resource endpoint", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_InvalidFieldHintWinsOverModelState()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid field property - 'AssetId' is not a valid property name.",
+            hasModelState: true);
+        Assert.Contains("Asset.Id", hint);
+    }
+
+    [Fact]
     public void FormatModelState_ReturnsNullForNonJsonBody()
     {
         Assert.Null(ApiToolHelpers.FormatModelState("Not JSON"));
