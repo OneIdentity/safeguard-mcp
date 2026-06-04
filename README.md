@@ -40,7 +40,7 @@ docker run -d --rm \
 
 Authenticate via device code flow on first tool call, or pre-configure
 `SAFEGUARD_USER` / `SAFEGUARD_PASSWORD` for non-interactive runs. The
-container runs as a built-in nonroot user (`app`, UID 64198).
+container runs as a built-in nonroot user (`app`, UID 1654).
 
 ### Binary Downloads
 

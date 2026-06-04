@@ -235,7 +235,10 @@ jobs:
         displayName: 'npm publish (pre-release)'
         condition: not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
-      # Build & push Docker image
+      # Build & push multi-arch Docker image (linux/amd64 + linux/arm64)
+      # via buildx. The Dockerfile consumes pre-built AOT binaries from
+      # the per-RID publish jobs above (see Publish_linux_x64 and
+      # Publish_linux_arm64) — no in-image `dotnet publish`, no QEMU.
       - task: AzureKeyVault@2
         displayName: 'Get GHCR token'
         inputs:
@@ -244,16 +247,58 @@ jobs:
           SecretsFilter: 'GitHubContainerRegistryToken'
 
       - script: |
-          echo $(GitHubContainerRegistryToken) | docker login ghcr.io -u OneIdentity --password-stdin
-          docker build -t $(containerRegistry)/$(imageName):$(PackageVersion) .
-          docker push $(containerRegistry)/$(imageName):$(PackageVersion)
-        displayName: 'Build & push Docker image'
+          set -euo pipefail
+          mkdir -p binaries/amd64 binaries/arm64
+          cp $(Build.ArtifactStagingDirectory)/linux-x64/SafeguardMcp binaries/amd64/SafeguardMcp
+          cp $(Build.ArtifactStagingDirectory)/linux-arm64/SafeguardMcp binaries/arm64/SafeguardMcp
+          chmod +x binaries/amd64/SafeguardMcp binaries/arm64/SafeguardMcp
+        displayName: 'Stage AOT binaries for buildx'
 
       - script: |
-          docker tag $(containerRegistry)/$(imageName):$(PackageVersion) $(containerRegistry)/$(imageName):latest
-          docker push $(containerRegistry)/$(imageName):latest
-        displayName: 'Tag & push :latest'
+          set -euo pipefail
+          echo $(GitHubContainerRegistryToken) | docker login ghcr.io -u OneIdentity --password-stdin
+          docker buildx create --name multiarch --use 2>/dev/null || docker buildx use multiarch
+          docker buildx inspect --bootstrap
+        displayName: 'Set up buildx multi-arch builder'
+
+      # Tag build: push :version and :latest in one shot.
+      - script: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag $(containerRegistry)/$(imageName):$(PackageVersion) \
+            --tag $(containerRegistry)/$(imageName):latest \
+            --build-arg IMAGE_VERSION=$(PackageVersion) \
+            --provenance=mode=max \
+            --sbom=true \
+            --metadata-file $(Build.ArtifactStagingDirectory)/docker-image-metadata.json \
+            --push .
+          docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
+        displayName: 'buildx build & push (release)'
         condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+
+      # Pre-release: push :version only.
+      - script: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag $(containerRegistry)/$(imageName):$(PackageVersion) \
+            --build-arg IMAGE_VERSION=$(PackageVersion) \
+            --provenance=mode=max \
+            --sbom=true \
+            --metadata-file $(Build.ArtifactStagingDirectory)/docker-image-metadata.json \
+            --push .
+          docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
+        displayName: 'buildx build & push (pre-release)'
+        condition: not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+
+      # Publish the buildx metadata (containing the manifest-list digest)
+      # so item 27 (cosign sign) can sign the immutable digest.
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish docker image metadata'
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/docker-image-metadata.json
+          artifactName: 'docker-image-metadata'
 
       # Stage release artifacts
       - task: CopyFiles@2
