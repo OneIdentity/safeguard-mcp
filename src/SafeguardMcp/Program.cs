@@ -38,6 +38,7 @@ namespace SafeguardMcp
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithStdioServerTransport());
 
             var app = builder.Build();
+            LogStartupAuthMode(app.Services.GetRequiredService<ILogger<Program>>());
             await app.RunAsync();
         }
 
@@ -55,8 +56,38 @@ namespace SafeguardMcp
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
 
             var app = builder.Build();
+            LogStartupAuthMode(app.Services.GetRequiredService<ILogger<Program>>());
             app.MapMcp();
             await app.RunAsync();
+        }
+
+        // Logs the configured authentication posture at startup. Device-code auth
+        // cannot pre-authenticate (no MCP session exists yet to elicit on), so when
+        // only SAFEGUARD_HOST is set we log that the agent must drive the flow.
+        private static void LogStartupAuthMode(ILogger logger)
+        {
+            var host = Environment.GetEnvironmentVariable("SAFEGUARD_HOST");
+            var provider = Environment.GetEnvironmentVariable("SAFEGUARD_PROVIDER");
+            var user = Environment.GetEnvironmentVariable("SAFEGUARD_USER");
+            var hasPkce = !string.IsNullOrWhiteSpace(provider)
+                && !string.IsNullOrWhiteSpace(user)
+                && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SAFEGUARD_PASSWORD"));
+
+            if (string.IsNullOrWhiteSpace(host))
+                return;
+
+            if (hasPkce)
+            {
+                logger.LogInformation(
+                    "Safeguard host '{Host}' and PKCE credentials configured; first authentication will use non-interactive PKCE.",
+                    host);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Safeguard host '{Host}' pre-configured; agent must call Safeguard_Connect to authenticate via device-code.",
+                    host);
+            }
         }
 
         private static void RegisterServices(IServiceCollection services)
