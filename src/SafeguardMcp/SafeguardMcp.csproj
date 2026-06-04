@@ -35,9 +35,9 @@
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="1.3.0" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
-    <PackageReference Include="OneIdentity.SafeguardDotNet" Version="9.0.0-pre40008" />
-    <PackageReference Include="OneIdentity.SafeguardDotNet.DeviceCodeLogin" Version="9.0.0-pre40008" />
-    <PackageReference Include="OneIdentity.SafeguardDotNet.PkceNoninteractiveLogin" Version="9.0.0-pre40008" />
+    <PackageReference Include="OneIdentity.SafeguardDotNet" Version="9.0.0-pre40181" />
+    <PackageReference Include="OneIdentity.SafeguardDotNet.DeviceCodeLogin" Version="9.0.0-pre40181" />
+    <PackageReference Include="OneIdentity.SafeguardDotNet.PkceNoninteractiveLogin" Version="9.0.0-pre40181" />
   </ItemGroup>
 
   <ItemGroup>
