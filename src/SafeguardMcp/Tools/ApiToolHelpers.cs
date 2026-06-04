@@ -198,10 +198,40 @@ internal static class ApiToolHelpers
             return "Safeguard orderby uses a leading minus for descending (orderby=-Field), not OData ('Field desc'/'Field asc').";
         }
 
+        if (statusCode == 400
+            && !string.IsNullOrWhiteSpace(apiMessage)
+            && apiMessage.Contains("Invalid field property", StringComparison.OrdinalIgnoreCase))
+        {
+            var badField = ExtractQuotedToken(apiMessage);
+            if (!string.IsNullOrWhiteSpace(badField) && badField.Contains('.'))
+            {
+                return "Dotted field selection only works for to-one nav properties (e.g. Asset.Name). "
+                    + "For child collections, call the sub-resource endpoint (GET /v4/<parent>/{id}/<collection>) instead of dotting into them.";
+            }
+
+            return "Safeguard exposes parent relationships as nested objects, not flat foreign-key columns. "
+                + "Use Asset.Id / Asset.Name (not AssetId / AssetName). Run Safeguard_Schema to see the nested shape.";
+        }
+
         if (statusCode == 400 && hasModelState)
             return "Fix the fields listed under 'Validation errors' and retry.";
 
         return GetErrorHint(statusCode);
+    }
+
+    /// <summary>
+    /// Extract the first single-quoted token from a Safeguard error message.
+    /// Safeguard formats invalid-field/orderby messages as: ... 'BadName' is not a valid property name.
+    /// Returns null when no single-quoted token is present.
+    /// </summary>
+    private static string ExtractQuotedToken(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return null;
+        var start = message.IndexOf('\'');
+        if (start < 0) return null;
+        var end = message.IndexOf('\'', start + 1);
+        if (end <= start) return null;
+        return message.Substring(start + 1, end - start - 1);
     }
 
     /// <summary>
