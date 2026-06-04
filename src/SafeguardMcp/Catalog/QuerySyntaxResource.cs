@@ -140,6 +140,28 @@ internal sealed class QuerySyntaxResource
         sb.AppendLine("- \"All accounts whose secrets changed last month\" → `/v4/Reports/Tasks/AccountSecretsChanged`");
         sb.AppendLine();
         sb.AppendLine("Reports endpoints typically have their own field schemas that do not match the underlying entity schemas — call `Safeguard_Schema` on the specific report path before selecting fields.");
+        sb.AppendLine();
+        sb.AppendLine("## Sensitive Credential Material");
+        sb.AppendLine();
+        sb.AppendLine("Treat the following as sensitive — **do not echo, log, or include in summaries, tables, or follow-up tool calls**:");
+        sb.AppendLine("- Account passwords (any value returned from `/v4/AssetAccounts/{id}/Password`, `/Passwords`, or `/GeneratePassword`)");
+        sb.AppendLine("- SSH private keys (any value from `/v4/AssetAccounts/{id}/SshKey`)");
+        sb.AppendLine("- A2A registration secrets and API keys");
+        sb.AppendLine("- Certificate private keys");
+        sb.AppendLine("- Anything Safeguard explicitly calls out as a secret in its response body");
+        sb.AppendLine();
+        sb.AppendLine("Reference these by account id (or registration id), not by value. If a user asks for confirmation, reply with status (\"rotated\", \"set\", \"verified\") — never the value itself.");
+        sb.AppendLine();
+        sb.AppendLine("**Prefer server-side password operations so plaintext never enters your context:**");
+        sb.AppendLine();
+        sb.AppendLine("| Goal | Right call | Notes |");
+        sb.AppendLine("|------|------------|-------|");
+        sb.AppendLine("| Set initial password on a new managed account | `POST /v4/AssetAccounts/{id}/ChangePassword` (no body) | Safeguard generates per partition rule, pushes to asset, returns activity log only — **no plaintext returned**. |");
+        sb.AppendLine("| Rotate a managed account's password | `POST /v4/AssetAccounts/{id}/ChangePassword` (no body) | Same. There is no batch endpoint — call in parallel by id. |");
+        sb.AppendLine("| Generate a rule-compliant value out of band | `POST /v4/AssetAccounts/{id}/GeneratePassword` (no body) | Returns one sample string. Treat as sensitive. |");
+        sb.AppendLine("| Set a known value (e.g. import) | `PUT /v4/AssetAccounts/{id}/Password` (body = value) | Use only when you already control the value. |");
+        sb.AppendLine();
+        sb.AppendLine("Do **not** mint passwords client-side (local pwgen, `Get-Random`, LLM-generated strings) — they bypass the partition's password rule and leak plaintext into your transcript. The `set-initial-account-password` workflow recipe walks through the full flow.");
 
         return sb.ToString();
     }
