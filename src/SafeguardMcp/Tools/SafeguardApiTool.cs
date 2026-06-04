@@ -211,7 +211,16 @@ internal sealed class SafeguardApiTool(
             .AppendLine("Examples:")
             .AppendLine("  fields=Id,Name&filter=Name icontains 'admin'&orderby=Name&page=0&limit=25")
             .AppendLine("  filter=(Disabled eq false) and (Platform.DisplayName eq 'Windows')")
-            .AppendLine("  filter=Id in [1,2,3]");
+            .AppendLine("  filter=Id in [1,2,3]")
+            .AppendLine()
+            .AppendLine("Reports vs direct queries:")
+            .AppendLine("  /v4/Reports/* aggregates across the whole estate and can be slow on large deployments.")
+            .AppendLine("  Prefer direct entity queries for narrow questions:")
+            .AppendLine("    Who is in role X?            -> GET /v4/Roles/{id}/Members")
+            .AppendLine("    What policies does role X have?-> GET /v4/Roles/{id}/Policies")
+            .AppendLine("    Which roles is user Y in?    -> GET /v4/Users/{id}/Roles")
+            .AppendLine("  Use Reports only for estate-wide aggregates (e.g. \"every user-account pair\").")
+            .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.");
 
         if (string.IsNullOrWhiteSpace(path))
             return sb.ToString().TrimEnd();
