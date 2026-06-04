@@ -44,4 +44,126 @@ public class ErrorParsingTests
     {
         Assert.Null(ApiToolHelpers.GetErrorHint(statusCode));
     }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_ReturnsOrderbyHintForInvalidOrderByProperty()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid order by property - 'CreatedDate desc' is not a valid property name.",
+            hasModelState: false);
+        Assert.Contains("orderby=-Field", hint);
+        Assert.Contains("not OData", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_OrderbyHintWinsOverModelStateHint()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid order by property - 'Name desc' is not a valid property name.",
+            hasModelState: true);
+        Assert.Contains("orderby=-Field", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_ReturnsModelStateHintWhenPresent()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(400, "The request is invalid.", hasModelState: true);
+        Assert.Equal("Fix the fields listed under 'Validation errors' and retry.", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_FallsBackToGenericHintFor400()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(400, "Some other 400 message", hasModelState: false);
+        Assert.Equal("Check request body format. Use Safeguard_Schema to see required fields.", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_FallsBackToGenericHintForOtherCodes()
+    {
+        Assert.Equal(ApiToolHelpers.GetErrorHint(401), ApiToolHelpers.GetErrorHint(401, "anything", false));
+        Assert.Equal(ApiToolHelpers.GetErrorHint(404), ApiToolHelpers.GetErrorHint(404, null, false));
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_FlatFkFieldSuggestsNestedForm()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid field property - 'AssetId' is not a valid property name.",
+            hasModelState: false);
+        Assert.Contains("nested objects", hint);
+        Assert.Contains("Asset.Id", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_DottedFieldSuggestsChildEndpoint()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid field property - 'Profiles.Id' is not a valid property name.",
+            hasModelState: false);
+        Assert.Contains("to-one", hint);
+        Assert.Contains("sub-resource endpoint", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_InvalidFieldHintWinsOverModelState()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid field property - 'AssetId' is not a valid property name.",
+            hasModelState: true);
+        Assert.Contains("Asset.Id", hint);
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullForNonJsonBody()
+    {
+        Assert.Null(ApiToolHelpers.FormatModelState("Not JSON"));
+        Assert.Null(ApiToolHelpers.FormatModelState(""));
+        Assert.Null(ApiToolHelpers.FormatModelState(null));
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullWhenModelStateAbsent()
+    {
+        const string body = "{\"Code\":70002,\"Message\":\"Invalid field property - 'AssetId' is not a valid property name.\"}";
+        Assert.Null(ApiToolHelpers.FormatModelState(body));
+    }
+
+    [Fact]
+    public void FormatModelState_ExtractsSingleFieldError()
+    {
+        const string body = "{\"Code\":70000,\"Message\":\"The request is invalid.\",\"ModelState\":{\"entity.AccountPasswordRuleId\":[\"The field AccountPasswordRuleId must be a valid non-zero database ID.\"]}}";
+        var result = ApiToolHelpers.FormatModelState(body);
+        Assert.Equal(
+            "- entity.AccountPasswordRuleId: The field AccountPasswordRuleId must be a valid non-zero database ID.",
+            result);
+    }
+
+    [Fact]
+    public void FormatModelState_ExtractsMultipleFieldErrorsAndJoinsMessages()
+    {
+        const string body = "{\"ModelState\":{\"entity.Name\":[\"Required.\"],\"entity.Port\":[\"Out of range.\",\"Must be > 0.\"]}}";
+        var result = ApiToolHelpers.FormatModelState(body);
+        Assert.Contains("- entity.Name: Required.", result);
+        Assert.Contains("- entity.Port: Out of range. Must be > 0.", result);
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullForEmptyModelState()
+    {
+        const string body = "{\"ModelState\":{}}";
+        Assert.Null(ApiToolHelpers.FormatModelState(body));
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullForMalformedJson()
+    {
+        const string body = "{\"ModelState\":";
+        Assert.Null(ApiToolHelpers.FormatModelState(body));
+    }
 }

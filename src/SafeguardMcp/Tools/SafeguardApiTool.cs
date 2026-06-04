@@ -95,8 +95,30 @@ internal sealed class SafeguardApiTool(
             matches.Add((score, i));
         }
 
+        var batchSearched = !string.IsNullOrWhiteSpace(search)
+            && search.Contains("batch", StringComparison.OrdinalIgnoreCase);
+        var anyBatchMatch = false;
+        if (batchSearched)
+        {
+            foreach (var (_, idx) in matches)
+            {
+                if (results[idx].Path.Contains("/Batch", StringComparison.OrdinalIgnoreCase))
+                {
+                    anyBatchMatch = true;
+                    break;
+                }
+            }
+        }
+
         if (matches.Count == 0)
+        {
+            if (batchSearched)
+                return BuildNoBatchHint() + "\n\nNo endpoints matched the search criteria. Try broader search terms.";
             return "No endpoints matched the search criteria. Try broader search terms.\nTip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.";
+        }
+
+        if (batchSearched && !anyBatchMatch)
+            sb.AppendLine(BuildNoBatchHint()).AppendLine();
 
         // Sort by descending relevance; ties keep catalog order (stable sort).
         matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
@@ -199,10 +221,16 @@ internal sealed class SafeguardApiTool(
             .AppendLine("  String values use single quotes: filter=Name eq 'Admin'")
             .AppendLine("  Combine expressions with and, or, not, and parentheses")
             .AppendLine("  Nested properties: filter=TaskProperties.HasAccountTaskFailure eq true")
+            .AppendLine("  Relationships: parents are nested objects, NOT flat FK columns.")
+            .AppendLine("    To-one is dottable: fields=Asset.Id,Asset.Name (NOT AssetId/AssetName).")
+            .AppendLine("    To-many is NOT dottable: use child endpoint GET /v4/<parent>/{id}/<collection>")
+            .AppendLine("      (e.g. /v4/AssetPartitions/{id}/Profiles, NOT fields=Profiles.Id).")
+            .AppendLine("    Schema labels: object<Type> = to-one (dottable); array<Type> = to-many (use child path).")
             .AppendLine("  Field selection: fields=Id,Name,Description")
             .AppendLine("  Exclude fields: fields=-TaskProperties,-Platform")
             .AppendLine("  Ordering: orderby=Name or orderby=-CreatedDate")
             .AppendLine("  Multiple order fields: orderby=Name,-CreatedDate")
+            .AppendLine("  NOTE: Not OData. Use -Field for descending; 'Name desc' or 'Name asc' returns HTTP 400.")
             .AppendLine("  Pagination: page=0&limit=50 (page is 0-indexed)")
             .AppendLine("  Quick search: q=searchterm")
             .AppendLine("  Count only: count=true")
@@ -210,7 +238,26 @@ internal sealed class SafeguardApiTool(
             .AppendLine("Examples:")
             .AppendLine("  fields=Id,Name&filter=Name icontains 'admin'&orderby=Name&page=0&limit=25")
             .AppendLine("  filter=(Disabled eq false) and (Platform.DisplayName eq 'Windows')")
-            .AppendLine("  filter=Id in [1,2,3]");
+            .AppendLine("  filter=Id in [1,2,3]")
+            .AppendLine()
+            .AppendLine("Reports vs direct queries:")
+            .AppendLine("  /v4/Reports/* aggregates across the whole estate and can be slow on large deployments.")
+            .AppendLine("  Prefer direct entity queries for narrow questions:")
+            .AppendLine("    Who is in role X?            -> GET /v4/Roles/{id}/Members")
+            .AppendLine("    What policies does role X have?-> GET /v4/Roles/{id}/Policies")
+            .AppendLine("    Which roles is user Y in?    -> GET /v4/Users/{id}/Roles")
+            .AppendLine("  Use Reports only for estate-wide aggregates (e.g. \"every user-account pair\").")
+            .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.")
+            .AppendLine()
+            .AppendLine("Sensitive credential material:")
+            .AppendLine("  Passwords, SSH private keys, A2A secrets, API keys, and cert private keys are sensitive.")
+            .AppendLine("  Do NOT echo these in summaries, tables, logs, or follow-up tool calls. Reference accounts by id.")
+            .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
+            .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
+            .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
+            .AppendLine("  Setting a known value: PUT /v4/AssetAccounts/{id}/Password (body = value)")
+            .AppendLine("  Do NOT mint passwords client-side (Get-Random, pwgen, LLM) - bypasses the password rule and leaks plaintext.")
+            .AppendLine("  See workflow recipe: set-initial-account-password.");
 
         if (string.IsNullOrWhiteSpace(path))
             return sb.ToString().TrimEnd();
@@ -340,6 +387,7 @@ internal sealed class SafeguardApiTool(
 
         var errorDetail = ExtractErrorDetail(rawMessage);
         TryParseErrorBody(errorDetail, out var apiMessage, out var apiCode, out var innerError);
+        var modelStateSummary = ApiToolHelpers.FormatModelState(errorDetail);
 
         var lines = new List<string>();
         if (statusCode > 0)
@@ -354,8 +402,13 @@ internal sealed class SafeguardApiTool(
             lines.Add($"Code: {apiCode}");
         if (!string.IsNullOrWhiteSpace(innerError))
             lines.Add($"InnerError: {innerError}");
+        if (!string.IsNullOrWhiteSpace(modelStateSummary))
+        {
+            lines.Add("Validation errors:");
+            lines.Add(modelStateSummary);
+        }
 
-        var hint = GetErrorHint(statusCode, rawMessage);
+        var hint = GetErrorHint(statusCode, rawMessage, apiMessage, !string.IsNullOrWhiteSpace(modelStateSummary));
         if (!string.IsNullOrWhiteSpace(hint))
             lines.Add($"Hint: {hint}");
 
@@ -440,18 +493,20 @@ internal sealed class SafeguardApiTool(
         _ => element.ToString()
     };
 
-    private static string GetErrorHint(int statusCode, string rawMessage) => statusCode switch
+    private static string GetErrorHint(int statusCode, string rawMessage, string apiMessage, bool hasModelState)
     {
-        400 => "Check request body format. Use Safeguard_Schema to see required fields.",
-        401 => "Token expired. Call Safeguard_Connect to re-authenticate.",
-        403 => "Insufficient permissions for this operation.",
-        404 => "Resource not found. Verify the ID exists using a GET call.",
-        409 => "Conflict. GET the current state first, then retry.",
-        422 => "Validation failed. Check property types match the schema.",
-        _ when rawMessage.Contains("Authentication expired", StringComparison.OrdinalIgnoreCase)
-            => "Token expired. Call Safeguard_Connect to re-authenticate.",
-        _ => null
-    };
+        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState);
+        if (!string.IsNullOrWhiteSpace(hint))
+            return hint;
+
+        if (rawMessage != null
+            && rawMessage.Contains("Authentication expired", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Token expired. Call Safeguard_Connect to re-authenticate.";
+        }
+
+        return null;
+    }
 
     private IDictionary<string, string> MaybeInjectLimit(
         string method,
@@ -605,6 +660,14 @@ internal sealed class SafeguardApiTool(
     /// 2 = a search term is a substring of the path
     /// 1 = a search term matches only in the summary
     /// </summary>
+    private static string BuildNoBatchHint()
+    {
+        return "Note: Safeguard exposes batch endpoints only on a handful of top-level entity collections "
+            + "(look for paths ending in '/Batch' on entities like Users, Assets, AssetAccounts). "
+            + "Per-id actions (e.g. ChangePassword, CheckPassword, Disable, Enable) have NO batch counterpart — "
+            + "call them in parallel by id from the client.";
+    }
+
     private static int ScoreMatch(IReadOnlyList<string> terms, string path, string summary)
     {
         if (terms == null || terms.Count == 0)
@@ -708,6 +771,11 @@ internal sealed class SafeguardApiTool(
         if (!string.IsNullOrWhiteSpace(property.Description))
             sb.Append(" - ").Append(property.Description.Trim());
         sb.AppendLine();
+
+        if (property.NestedFields != null && property.NestedFields.Length > 0)
+        {
+            sb.Append("      Fields: ").AppendLine(string.Join(", ", property.NestedFields));
+        }
     }
 
     private static string ParseMethod(string method) => method.Trim().ToUpperInvariant() switch

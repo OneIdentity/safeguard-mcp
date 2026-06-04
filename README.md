@@ -205,7 +205,6 @@ The complete tool surface is **7 tools**:
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
 | `Safeguard_Workflows` | Get step-by-step recipes for common multi-step operations |
 | `Safeguard_Execute` | Call any endpoint on any service (auto-routes to the correct service) |
-| `RandomPassword` | Generate a secure random password |
 
 An agent working through a task follows this pattern:
 
