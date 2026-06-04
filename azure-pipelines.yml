@@ -505,7 +505,10 @@ jobs:
             --push .
           docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
         displayName: 'buildx build & push (release)'
-        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        # Gate on isRelease so feature-branch manual queues never push
+        # an unsigned image (cosign sign below requires SPPCodeSigning
+        # secrets, which are also gated on isRelease).
+        condition: and(eq(variables.isRelease, true), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Pre-release: push :version only.
       - script: |
@@ -520,15 +523,90 @@ jobs:
             --push .
           docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
         displayName: 'buildx build & push (pre-release)'
-        condition: not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+        condition: and(eq(variables.isRelease, true), not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v')))
 
       # Publish the buildx metadata (containing the manifest-list digest)
-      # so item 27 (cosign sign) can sign the immutable digest.
+      # so the cosign sign step below can sign the immutable digest.
       - task: PublishPipelineArtifact@1
         displayName: 'Publish docker image metadata'
         inputs:
           targetPath: $(Build.ArtifactStagingDirectory)/docker-image-metadata.json
           artifactName: 'docker-image-metadata'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      # ──────────────────────────────────────────────────────────────
+      # Item 27: cosign sign the multi-arch manifest list and extract
+      # per-platform SBOMs as GitHub Release assets. Signing key is an
+      # Azure Key Vault HSM key (`safeguard-mcp-cosign`) in
+      # SPPCodeSigning; private bytes never leave the vault. Auth is
+      # via the existing ADO service connection
+      # `OneIdentity.Infrastructure.SPPCodeSigning` — cosign's default
+      # Azure credential chain picks up the AzureCLI session.
+      # ──────────────────────────────────────────────────────────────
+      - script: |
+          set -euo pipefail
+          COSIGN_VERSION=v2.4.1
+          COSIGN_SHA256=8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b
+          curl -sSL -o /tmp/cosign \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
+          sudo install -m 0755 /tmp/cosign /usr/local/bin/cosign
+          cosign version
+        displayName: 'Install pinned cosign'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
+      - task: AzureCLI@2
+        displayName: 'cosign sign manifest list (Azure Key Vault key)'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+        inputs:
+          azureSubscription: 'OneIdentity.Infrastructure.SPPCodeSigning'
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            set -euo pipefail
+            META="$(Build.ArtifactStagingDirectory)/docker-image-metadata.json"
+            DIGEST=$(jq -er '."containerimage.digest"' "$META")
+            case "$DIGEST" in
+              sha256:*) ;;
+              *) echo "Invalid manifest-list digest from buildx metadata: $DIGEST" >&2; exit 1 ;;
+            esac
+            IMAGE="$(containerRegistry)/$(imageName)@$DIGEST"
+            echo "Signing immutable digest: $IMAGE"
+
+            KEY_REF="azurekms://SPPCodeSigning.vault.azure.net/safeguard-mcp-cosign"
+            export COSIGN_YES=true
+
+            cosign sign --key "$KEY_REF" "$IMAGE"
+            cosign verify --key "$KEY_REF" "$IMAGE"
+
+            mkdir -p "$(Build.ArtifactStagingDirectory)/release"
+            # Export the public half so users can verify with
+            # `cosign verify --key cosign.pub <image>`. Until a static
+            # cosign.pub is committed to the repo, this Release-asset
+            # copy is the primary distribution channel; after commit,
+            # this file should match `docs/cosign.pub` in the repo.
+            cosign public-key --key "$KEY_REF" \
+              > "$(Build.ArtifactStagingDirectory)/release/cosign.pub"
+            cat "$(Build.ArtifactStagingDirectory)/release/cosign.pub"
+
+      - script: |
+          set -euo pipefail
+          IMAGE="$(containerRegistry)/$(imageName):$(PackageVersion)"
+          OUT="$(Build.ArtifactStagingDirectory)/release"
+          mkdir -p "$OUT"
+          # Extract per-platform SPDX SBOMs that buildx attached via
+          # --sbom=true. `imagetools inspect` reads the in-toto
+          # attestation envelope and returns the embedded SPDX doc.
+          for platform in linux/amd64 linux/arm64; do
+            slug=$(echo "$platform" | tr '/' '-')
+            docker buildx imagetools inspect "$IMAGE" \
+              --format "{{ json (index .SBOM \"${platform}\").SPDX }}" \
+              | jq . > "$OUT/sbom-${slug}.spdx.json"
+            test -s "$OUT/sbom-${slug}.spdx.json"
+            echo "Wrote $OUT/sbom-${slug}.spdx.json ($(wc -c < "$OUT/sbom-${slug}.spdx.json") bytes)"
+          done
+        displayName: 'Extract per-platform SBOMs from pushed image'
+        condition: and(succeeded(), eq(variables.isRelease, true))
 
       # Stage release artifacts
       - task: CopyFiles@2
@@ -550,22 +628,35 @@ jobs:
           tar -czf release/safeguard-mcp-darwin-arm64.tar.gz -C osx-arm64 SafeguardMcp
         displayName: 'Archive release binaries'
 
-      # SHA256SUMS over all release archives (item 26). Detached PGP
-      # signature (.asc) is intentionally omitted for now: a release
-      # PGP key has not been provisioned in SPPCodeSigning. README's
-      # "Verifying downloads" section should reference `sha256sum -c`
-      # only until a key is added or `cosign sign-blob` replaces it.
+      # SHA256SUMS over all release archives + SBOMs + cosign.pub
+      # (item 26). Detached PGP signature (.asc) is intentionally
+      # omitted for now: a release PGP key has not been provisioned in
+      # SPPCodeSigning. README's "Verifying downloads" section should
+      # reference `sha256sum -c` (and `cosign verify --key cosign.pub`
+      # for the image) until a key is added or `cosign sign-blob`
+      # replaces PGP for the SHA256SUMS file itself.
       - script: |
           set -euo pipefail
           cd $(Build.ArtifactStagingDirectory)/release
           # Sort for reproducibility; relative filenames so end users
           # can `sha256sum -c SHA256SUMS` from the download directory.
-          sha256sum \
+          # SBOMs and cosign.pub are only present on isRelease builds;
+          # use shell glob expansion plus `ls` so the step does not
+          # fail when those optional files are absent.
+          FILES=$(ls -1 \
             safeguard-mcp-linux-x64.tar.gz \
             safeguard-mcp-linux-arm64.tar.gz \
             safeguard-mcp-win-x64.zip \
             safeguard-mcp-darwin-arm64.tar.gz \
-            | LC_ALL=C sort > SHA256SUMS
+            sbom-linux-amd64.spdx.json \
+            sbom-linux-arm64.spdx.json \
+            cosign.pub \
+            2>/dev/null || true)
+          # The four archives are mandatory; fail loudly if any is missing.
+          for f in safeguard-mcp-linux-x64.tar.gz safeguard-mcp-linux-arm64.tar.gz safeguard-mcp-win-x64.zip safeguard-mcp-darwin-arm64.tar.gz; do
+            test -f "$f" || { echo "Required release archive missing: $f" >&2; exit 1; }
+          done
+          sha256sum $FILES | LC_ALL=C sort > SHA256SUMS
           cat SHA256SUMS
           # Self-check: verify the file we just produced is consistent.
           sha256sum -c SHA256SUMS
@@ -594,6 +685,9 @@ jobs:
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-linux-arm64.tar.gz
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-win-x64.zip
             $(Build.ArtifactStagingDirectory)/release/safeguard-mcp-darwin-arm64.tar.gz
+            $(Build.ArtifactStagingDirectory)/release/sbom-linux-amd64.spdx.json
+            $(Build.ArtifactStagingDirectory)/release/sbom-linux-arm64.spdx.json
+            $(Build.ArtifactStagingDirectory)/release/cosign.pub
             $(Build.ArtifactStagingDirectory)/release/SHA256SUMS
           isPreRelease: $(IsPreRelease)
           addChangeLog: true
