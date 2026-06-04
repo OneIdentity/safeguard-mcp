@@ -16,11 +16,55 @@ namespace SafeguardMcp
     {
         public static async Task Main(string[] args)
         {
+            if (HasFlag(args, "-v", "--version"))
+            {
+                Console.Out.WriteLine(GetVersion());
+                return;
+            }
+
+            if (HasFlag(args, "-h", "--help", "-?", "/?"))
+            {
+                Console.Out.WriteLine(GetHelpText());
+                return;
+            }
+
             if (args.Contains("--http", StringComparer.OrdinalIgnoreCase))
                 await RunHttpAsync(args);
             else
                 await RunStdioAsync(args);
         }
+
+        private static bool HasFlag(string[] args, params string[] flags)
+        {
+            foreach (var arg in args)
+                foreach (var flag in flags)
+                    if (string.Equals(arg, flag, StringComparison.OrdinalIgnoreCase))
+                        return true;
+            return false;
+        }
+
+        // BuildInfo.Version is generated from <Version> in the csproj — see GenerateBuildInfo target.
+        private static string GetVersion() => BuildInfo.Version;
+
+        private static string GetHelpText() => $@"safeguard-mcp {GetVersion()}
+Model Context Protocol server for One Identity Safeguard for Privileged Passwords.
+
+USAGE:
+  safeguard-mcp                Run as MCP stdio server (default; for IDE integration).
+  safeguard-mcp --http         Run as MCP HTTP server on http://localhost:8080/mcp.
+  safeguard-mcp --version      Print version and exit.
+  safeguard-mcp --help         Print this help and exit.
+
+ENVIRONMENT:
+  SAFEGUARD_HOST               DNS name or IP of the Safeguard appliance to pre-configure.
+                               When set, the agent must call Safeguard_Connect to authenticate.
+  SAFEGUARD_PROVIDER,          Optional non-interactive PKCE credentials. When all three
+  SAFEGUARD_USER,              are set, the server uses PKCE instead of device-code auth.
+  SAFEGUARD_PASSWORD
+  SAFEGUARD_IGNORE_SSL=true    Skip TLS verification (lab/test only).
+  ASPNETCORE_URLS              In --http mode, the URLs to bind (default http://0.0.0.0:8080).
+
+Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
         private static async Task RunStdioAsync(string[] args)
         {
@@ -61,9 +105,7 @@ namespace SafeguardMcp
             await app.RunAsync();
         }
 
-        // Logs the configured authentication posture at startup. Device-code auth
-        // cannot pre-authenticate (no MCP session exists yet to elicit on), so when
-        // only SAFEGUARD_HOST is set we log that the agent must drive the flow.
+        // Device-code can't pre-auth (no MCP session yet); log the configured posture.
         private static void LogStartupAuthMode(ILogger logger)
         {
             var host = Environment.GetEnvironmentVariable("SAFEGUARD_HOST");
