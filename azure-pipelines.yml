@@ -50,6 +50,53 @@ jobs:
             -o $(Build.ArtifactStagingDirectory)/linux-x64
         displayName: 'AOT publish linux-x64'
 
+      - script: |
+          set -euo pipefail
+          STAGE="$(Build.ArtifactStagingDirectory)/linux-x64"
+          chmod +x "$STAGE/SafeguardMcp"
+
+          # Drive the published binary over stdio with initialize + tools/list.
+          # Allowed exit codes: 0 (clean EOF) or 124 (timeout fired after we
+          # already got the responses we need).
+          set +e
+          SMOKE_OUT=$(printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | timeout 10s "$STAGE/SafeguardMcp")
+          RC=$?
+          set -e
+
+          echo "--- smoke stdout ---"
+          echo "$SMOKE_OUT"
+          echo "--- exit code: $RC ---"
+
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; then
+            echo "ERROR: binary exited with unexpected code $RC"
+            exit 1
+          fi
+
+          # Extract the tool names from the tools/list response (id == 2).
+          # Each stdout line should be a valid JSON-RPC message; jq filters by id.
+          ACTUAL=$(echo "$SMOKE_OUT" | jq -r 'select(.id==2) | .result.tools[].name' | sort -u)
+          EXPECTED=$(printf '%s\n' \
+            Safeguard_Connect \
+            Safeguard_Discover \
+            Safeguard_Execute \
+            Safeguard_QueryHelp \
+            Safeguard_Schema \
+            Safeguard_Workflows | sort -u)
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: tools/list did not return the expected set."
+            echo "--- expected ---"; echo "$EXPECTED"
+            echo "--- actual ---";   echo "$ACTUAL"
+            exit 1
+          fi
+
+          echo "Smoke OK: all 6 expected tools present (exact match)."
+        displayName: 'Smoke: stdio tools/list returns 6 expected tools'
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish linux-x64 artifact'
         inputs:
@@ -428,6 +475,40 @@ jobs:
           chmod +x npm/safeguard-mcp-darwin-arm64/safeguard-mcp
         displayName: 'Stage binaries into npm packages'
 
+      # Smoke: pack all 5 npm packages, install the linux-x64 platform
+      # tarball + root tarball globally on this agent, and run
+      # `safeguard-mcp --version` to prove the wrapper's optional-dep
+      # resolution actually launches the AOT binary. Catches launcher
+      # regressions before we publish anything.
+      - script: |
+          set -euo pipefail
+          PACKDIR=$(mktemp -d)
+          for pkg in safeguard-mcp-linux-x64 safeguard-mcp-linux-arm64 \
+                     safeguard-mcp-win-x64 safeguard-mcp-darwin-arm64 \
+                     safeguard-mcp; do
+            (cd "npm/$pkg" && npm pack --pack-destination="$PACKDIR")
+          done
+          ls -la "$PACKDIR"
+
+          PLATFORM_TGZ=$(ls "$PACKDIR"/oneidentity-safeguard-mcp-linux-x64-*.tgz)
+          ROOT_TGZ=$(ls "$PACKDIR"/oneidentity-safeguard-mcp-[0-9]*.tgz)
+
+          echo "Installing platform tarball globally: $PLATFORM_TGZ"
+          npm install -g --no-package-lock "$PLATFORM_TGZ"
+
+          echo "Installing root tarball globally (omit optional deps): $ROOT_TGZ"
+          npm install -g --omit=optional --no-package-lock "$ROOT_TGZ"
+
+          echo "Running safeguard-mcp --version..."
+          OUT=$(safeguard-mcp --version)
+          echo "$OUT"
+          if ! echo "$OUT" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "ERROR: --version output did not contain a semver."
+            exit 1
+          fi
+          echo "Smoke OK: npm wrapper launches platform binary."
+        displayName: 'Smoke: npm pack + global install + --version'
+
       # Retrieve npm token from Key Vault
       - task: AzureKeyVault@2
         displayName: 'Get npm publish token'
@@ -490,6 +571,62 @@ jobs:
           docker buildx create --name multiarch --use 2>/dev/null || docker buildx use multiarch
           docker buildx inspect --bootstrap
         displayName: 'Set up buildx multi-arch builder'
+
+      # Smoke: build a single-arch image with the default (docker) builder
+      # so we can --load it locally, run it with the default --http
+      # ENTRYPOINT, and exercise the streamable-HTTP /mcp endpoint with a
+      # real JSON-RPC initialize before we push anything to GHCR.
+      - script: |
+          set -euo pipefail
+          docker buildx build \
+            --builder default \
+            --platform linux/amd64 \
+            --load \
+            --tag safeguard-mcp:smoke \
+            --build-arg IMAGE_VERSION=smoke \
+            .
+
+          CID=$(docker run -d --rm -p 18080:8080 safeguard-mcp:smoke)
+          trap 'echo "--- container logs ---"; docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+
+          OK=0
+          for i in $(seq 1 30); do
+            RESP=$(curl -fsS \
+              -X POST \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+              http://localhost:18080/mcp 2>/dev/null) || RESP=""
+            if echo "$RESP" | grep -q '"jsonrpc"'; then
+              echo "--- /mcp response ---"
+              echo "$RESP"
+              OK=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$OK" -ne 1 ]; then
+            echo "ERROR: /mcp did not respond with a JSON-RPC body in 30s"
+            exit 1
+          fi
+          echo "Smoke OK: HTTP /mcp accepted initialize."
+        displayName: 'Smoke: docker --http /mcp accepts initialize'
+
+      # Budget guardrail: the chiseled-base image plus a single AOT binary
+      # should fit comfortably under 80 MB uncompressed. If it doesn't, we
+      # have either accidentally pulled in a heavier base, dropped trim,
+      # or grown the binary unexpectedly — fail before we publish.
+      - script: |
+          set -euo pipefail
+          SIZE=$(docker image inspect safeguard-mcp:smoke --format '{{.Size}}')
+          LIMIT=$((80 * 1024 * 1024))
+          echo "Image size: $SIZE bytes (budget: $LIMIT bytes / 80 MB)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "ERROR: docker image exceeds 80 MB budget."
+            exit 1
+          fi
+        displayName: 'Smoke: docker image under 80 MB budget'
 
       # Tag build: push :version and :latest in one shot.
       - script: |
