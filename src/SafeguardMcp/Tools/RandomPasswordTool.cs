@@ -15,7 +15,7 @@ internal sealed class RandomPasswordTool
     /// <summary>Just a small handful of what most things will hopefully consider "special characters".</summary>
     private static readonly string SpecialChars = "~!@#%^&*=+";
 
-    [McpServerTool]
+    [McpServerTool(Name = "RandomPassword", Title = "Generate a random password")]
     [Description("""
         Can be used to generate a random password locally. Some options for password complexity can be specified.
         Otherwise, it will default to a length of 12, consisting of just letters and numbers.
