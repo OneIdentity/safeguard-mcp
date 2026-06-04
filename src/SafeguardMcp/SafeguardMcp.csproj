@@ -45,4 +45,29 @@
     <EmbeddedResource Include="Catalog\StaticCatalog.txt" />
   </ItemGroup>
 
+  <!-- Generates BuildInfo.g.cs with <Version> as a const, avoiding runtime reflection. -->
+  <Target Name="GenerateBuildInfo"
+          BeforeTargets="CoreCompile"
+          Inputs="$(MSBuildProjectFile)"
+          Outputs="$(IntermediateOutputPath)BuildInfo.g.cs">
+    <PropertyGroup>
+      <_BuildInfoFile>$(IntermediateOutputPath)BuildInfo.g.cs</_BuildInfoFile>
+      <_BuildInfoSource>// &lt;auto-generated /&gt;
+namespace SafeguardMcp%3B
+internal static class BuildInfo
+{
+    public const string Version = "$(Version)"%3B
+}
+</_BuildInfoSource>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_BuildInfoFile)"
+                      Lines="$(_BuildInfoSource)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(_BuildInfoFile)" />
+      <FileWrites Include="$(_BuildInfoFile)" />
+    </ItemGroup>
+  </Target>
+
 </Project>
