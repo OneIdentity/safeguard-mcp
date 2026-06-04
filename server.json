@@ -92,7 +92,6 @@
     "Safeguard_Schema",
     "Safeguard_QueryHelp",
     "Safeguard_Workflows",
-    "Safeguard_Execute",
-    "RandomPassword"
+    "Safeguard_Execute"
   ]
 }
