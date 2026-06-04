@@ -1,27 +1,32 @@
-# Build stage — full SDK plus AOT toolchain
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang zlib1g-dev \
- && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-COPY src/SafeguardMcp/SafeguardMcp.csproj ./SafeguardMcp/
-RUN dotnet restore SafeguardMcp/SafeguardMcp.csproj -r linux-x64
-COPY src/SafeguardMcp/ ./SafeguardMcp/
-RUN dotnet publish SafeguardMcp/SafeguardMcp.csproj \
-    --no-restore \
-    -c Release -r linux-x64 -p:PublishAot=true \
-    -o /app/publish
-
-# Runtime stage — no .NET runtime, just native deps.
+# syntax=docker/dockerfile:1
 #
-# The chiseled base image already declares a built-in nonroot user `app`
-# at $APP_UID (= 64198 on Ubuntu Noble chiseled images). We use that
-# canonical Microsoft user rather than forcing a Google-distroless-style
-# UID 65532, which would require shell-less /etc/passwd manipulation in
-# an intermediate stage.
-FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled AS runtime
+# Single-stage runtime image. AOT binaries are built outside Docker
+# (in dedicated per-RID pipeline jobs) and copied in via buildx's
+# TARGETARCH so a single Dockerfile produces both linux/amd64 and
+# linux/arm64 variants. Cross-arch dotnet AOT inside `docker buildx`
+# is fragile, which is why we don't do it.
+#
+# Build context layout produced by the Release job:
+#   binaries/amd64/SafeguardMcp   (from publish-linux-x64)
+#   binaries/arm64/SafeguardMcp   (from publish-linux-arm64)
+#
+# The chiseled base image already declares a built-in nonroot user
+# `app` at $APP_UID (= 1654 on `runtime-deps:10.0-noble-chiseled`,
+# verified via `docker buildx imagetools inspect`). We use that
+# canonical Microsoft user rather than forcing a Google-distroless
+# UID 65532, which would require shell-less /etc/passwd manipulation
+# in an intermediate stage.
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled
+ARG TARGETARCH
+ARG IMAGE_VERSION=0.0.0-dev
+
+LABEL org.opencontainers.image.source="https://github.com/OneIdentity/safeguard-mcp" \
+      org.opencontainers.image.description="Safeguard MCP Server" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${IMAGE_VERSION}"
+
 WORKDIR /app
-COPY --from=build --chown=$APP_UID:$APP_UID /app/publish/SafeguardMcp .
+COPY --chmod=0755 --chown=$APP_UID:$APP_UID binaries/$TARGETARCH/SafeguardMcp .
 USER $APP_UID
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
