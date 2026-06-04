@@ -3,6 +3,18 @@ variables:
     value: '1.0.0'
   - name: isTagBuild
     value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/') }}
+  # Gate for code-signing and other steps that need access to release
+  # secrets (Authenticode certs, Apple cert, PGP key, cosign key, etc.).
+  # True only for non-PR builds on `main` or a `refs/tags/v*` tag, so PRs
+  # (including from forks) can never pull SPPCodeSigning vault secrets.
+  - name: isRelease
+    value: $[ and(
+        ne(variables['Build.Reason'], 'PullRequest'),
+        or(
+          eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+          startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        )
+      ) ]
   - name: dotnetVersion
     value: '10.0.x'
   - name: containerRegistry
