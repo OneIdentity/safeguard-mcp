@@ -69,6 +69,11 @@ internal sealed class QuerySyntaxResource
         sb.AppendLine("- Descending: `orderby=-CreatedDate`");
         sb.AppendLine("- Multiple fields: `orderby=Asset.Name,-CreatedDate`");
         sb.AppendLine();
+        sb.AppendLine("> **Not OData.** Safeguard does **not** accept OData-style direction keywords. ");
+        sb.AppendLine("> Use the leading-minus convention (`-Field`) for descending. ");
+        sb.AppendLine("> `orderby=Name desc` or `orderby=Name asc` will be rejected with HTTP 400 ");
+        sb.AppendLine("> (`Invalid order by property - 'Name desc' is not a valid property name`).");
+        sb.AppendLine();
         sb.AppendLine("## Pagination");
         sb.AppendLine();
         sb.AppendLine("- `page=0&limit=50` — page is 0-indexed, limit is items per page");
