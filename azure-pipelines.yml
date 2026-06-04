@@ -50,6 +50,53 @@ jobs:
             -o $(Build.ArtifactStagingDirectory)/linux-x64
         displayName: 'AOT publish linux-x64'
 
+      - script: |
+          set -euo pipefail
+          STAGE="$(Build.ArtifactStagingDirectory)/linux-x64"
+          chmod +x "$STAGE/SafeguardMcp"
+
+          # Drive the published binary over stdio with initialize + tools/list.
+          # Allowed exit codes: 0 (clean EOF) or 124 (timeout fired after we
+          # already got the responses we need).
+          set +e
+          SMOKE_OUT=$(printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | timeout 10s "$STAGE/SafeguardMcp")
+          RC=$?
+          set -e
+
+          echo "--- smoke stdout ---"
+          echo "$SMOKE_OUT"
+          echo "--- exit code: $RC ---"
+
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; then
+            echo "ERROR: binary exited with unexpected code $RC"
+            exit 1
+          fi
+
+          # Extract the tool names from the tools/list response (id == 2).
+          # Each stdout line should be a valid JSON-RPC message; jq filters by id.
+          ACTUAL=$(echo "$SMOKE_OUT" | jq -r 'select(.id==2) | .result.tools[].name' | sort -u)
+          EXPECTED=$(printf '%s\n' \
+            Safeguard_Connect \
+            Safeguard_Discover \
+            Safeguard_Execute \
+            Safeguard_QueryHelp \
+            Safeguard_Schema \
+            Safeguard_Workflows | sort -u)
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: tools/list did not return the expected set."
+            echo "--- expected ---"; echo "$EXPECTED"
+            echo "--- actual ---";   echo "$ACTUAL"
+            exit 1
+          fi
+
+          echo "Smoke OK: all 6 expected tools present (exact match)."
+        displayName: 'Smoke: stdio tools/list returns 6 expected tools'
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish linux-x64 artifact'
         inputs:
