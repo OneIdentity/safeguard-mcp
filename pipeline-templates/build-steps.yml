@@ -1,0 +1,22 @@
+steps:
+  - task: UseDotNet@2
+    displayName: 'Install .NET SDK'
+    inputs:
+      packageType: 'sdk'
+      version: $(dotnetVersion)
+
+  - script: dotnet restore
+    displayName: 'Restore dependencies'
+
+  - script: dotnet build --no-restore -c Release
+    displayName: 'Build'
+
+  - script: dotnet test tests/SafeguardMcp.Tests --no-build -c Release --logger trx --results-directory $(Build.ArtifactStagingDirectory)/test-results
+    displayName: 'Run unit tests'
+
+  - task: PublishTestResults@2
+    displayName: 'Publish test results'
+    inputs:
+      testResultsFormat: 'VSTest'
+      testResultsFiles: '$(Build.ArtifactStagingDirectory)/test-results/*.trx'
+    condition: always()

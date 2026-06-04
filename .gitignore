@@ -10,7 +10,8 @@
 ModelContextProtocol/
 
 # Implementation plan (not for release)
-PLAN.md
+*-PLAN.md
+*-PROMPT.md
 
 # User-specific files
 *.rsuser
@@ -40,6 +41,10 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+
+# Re-include the npm root package launcher (caught by [Bb]in/ above).
+!npm/safeguard-mcp/bin/
+!npm/safeguard-mcp/bin/**
 
 # Visual Studio 2015/2017 cache/options directory
 .vs/
