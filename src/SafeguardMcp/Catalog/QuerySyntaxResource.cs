@@ -100,6 +100,29 @@ internal sealed class QuerySyntaxResource
         sb.AppendLine("# Accounts with passwords not changed in 90+ days");
         sb.AppendLine("fields=Id,Name,Asset.Name,TaskProperties.LastSuccessPasswordChangeDate&filter=TaskProperties.LastSuccessPasswordChangeDate lt '2024-01-01'&orderby=TaskProperties.LastSuccessPasswordChangeDate&limit=50");
         sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("## Reports vs Direct Queries");
+        sb.AppendLine();
+        sb.AppendLine("`/v4/Reports/*` endpoints aggregate across the whole estate and can take a long time to generate on large deployments. ");
+        sb.AppendLine("Prefer direct entity queries for narrow questions; reach for Reports only when you genuinely need an estate-wide aggregate.");
+        sb.AppendLine();
+        sb.AppendLine("**Use direct queries for narrow questions:**");
+        sb.AppendLine();
+        sb.AppendLine("| Question | Direct query | Avoid |");
+        sb.AppendLine("|----------|--------------|-------|");
+        sb.AppendLine("| Who is in role X? | `GET /v4/Roles/{id}/Members` | `/v4/Reports/Entitlements/UserEntitlements` |");
+        sb.AppendLine("| What policies does role X have? | `GET /v4/Roles/{id}/Policies` | `/v4/Reports/Entitlements/UserEntitlements` |");
+        sb.AppendLine("| Which accounts can user Y request? | `GET /v4/Users/{id}/Roles` then `GET /v4/Roles/{id}/Policies` | `/v4/Reports/Entitlements/UserEntitlements` |");
+        sb.AppendLine("| Compare two users' access | Two queries on `/v4/Users/{id}/Roles` | `/v4/Reports/Entitlements/UserEntitlements/Summary` |");
+        sb.AppendLine("| Owners of a single asset | `GET /v4/Reports/Ownership/Asset/{id}/Owners` (already scoped) | n/a |");
+        sb.AppendLine();
+        sb.AppendLine("**Use Reports only for estate-wide aggregates:**");
+        sb.AppendLine();
+        sb.AppendLine("- \"How many users have access to anything?\" → `/v4/Reports/Entitlements/UserEntitlements/Summary`");
+        sb.AppendLine("- \"Generate a CSV of every user-account pair\" → `/v4/Reports/Entitlements/UserEntitlements`");
+        sb.AppendLine("- \"All accounts whose secrets changed last month\" → `/v4/Reports/Tasks/AccountSecretsChanged`");
+        sb.AppendLine();
+        sb.AppendLine("Reports endpoints typically have their own field schemas that do not match the underlying entity schemas — call `Safeguard_Schema` on the specific report path before selecting fields.");
 
         return sb.ToString();
     }
