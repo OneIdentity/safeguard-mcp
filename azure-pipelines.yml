@@ -475,6 +475,40 @@ jobs:
           chmod +x npm/safeguard-mcp-darwin-arm64/safeguard-mcp
         displayName: 'Stage binaries into npm packages'
 
+      # Smoke: pack all 5 npm packages, install the linux-x64 platform
+      # tarball + root tarball globally on this agent, and run
+      # `safeguard-mcp --version` to prove the wrapper's optional-dep
+      # resolution actually launches the AOT binary. Catches launcher
+      # regressions before we publish anything.
+      - script: |
+          set -euo pipefail
+          PACKDIR=$(mktemp -d)
+          for pkg in safeguard-mcp-linux-x64 safeguard-mcp-linux-arm64 \
+                     safeguard-mcp-win-x64 safeguard-mcp-darwin-arm64 \
+                     safeguard-mcp; do
+            (cd "npm/$pkg" && npm pack --pack-destination="$PACKDIR")
+          done
+          ls -la "$PACKDIR"
+
+          PLATFORM_TGZ=$(ls "$PACKDIR"/oneidentity-safeguard-mcp-linux-x64-*.tgz)
+          ROOT_TGZ=$(ls "$PACKDIR"/oneidentity-safeguard-mcp-[0-9]*.tgz)
+
+          echo "Installing platform tarball globally: $PLATFORM_TGZ"
+          npm install -g --no-package-lock "$PLATFORM_TGZ"
+
+          echo "Installing root tarball globally (omit optional deps): $ROOT_TGZ"
+          npm install -g --omit=optional --no-package-lock "$ROOT_TGZ"
+
+          echo "Running safeguard-mcp --version..."
+          OUT=$(safeguard-mcp --version)
+          echo "$OUT"
+          if ! echo "$OUT" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "ERROR: --version output did not contain a semver."
+            exit 1
+          fi
+          echo "Smoke OK: npm wrapper launches platform binary."
+        displayName: 'Smoke: npm pack + global install + --version'
+
       # Retrieve npm token from Key Vault
       - task: AzureKeyVault@2
         displayName: 'Get npm publish token'
