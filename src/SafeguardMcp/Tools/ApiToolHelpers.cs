@@ -185,6 +185,124 @@ internal static class ApiToolHelpers
         _ => null
     };
 
+    /// <summary>
+    /// Context-aware hint that inspects the parsed Safeguard error message and surfaced
+    /// validation state to return more specific guidance for known failure shapes.
+    /// </summary>
+    internal static string GetErrorHint(int statusCode, string apiMessage, bool hasModelState)
+    {
+        if (statusCode == 400
+            && !string.IsNullOrWhiteSpace(apiMessage)
+            && apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Safeguard orderby uses a leading minus for descending (orderby=-Field), not OData ('Field desc'/'Field asc').";
+        }
+
+        if (statusCode == 400
+            && !string.IsNullOrWhiteSpace(apiMessage)
+            && apiMessage.Contains("Invalid field property", StringComparison.OrdinalIgnoreCase))
+        {
+            var badField = ExtractQuotedToken(apiMessage);
+            if (!string.IsNullOrWhiteSpace(badField) && badField.Contains('.'))
+            {
+                return "Dotted field selection only works for to-one nav properties (e.g. Asset.Name). "
+                    + "For child collections, call the sub-resource endpoint (GET /v4/<parent>/{id}/<collection>) instead of dotting into them.";
+            }
+
+            return "Safeguard exposes parent relationships as nested objects, not flat foreign-key columns. "
+                + "Use Asset.Id / Asset.Name (not AssetId / AssetName). Run Safeguard_Schema to see the nested shape.";
+        }
+
+        if (statusCode == 400 && hasModelState)
+            return "Fix the fields listed under 'Validation errors' and retry.";
+
+        return GetErrorHint(statusCode);
+    }
+
+    /// <summary>
+    /// Extract the first single-quoted token from a Safeguard error message.
+    /// Safeguard formats invalid-field/orderby messages as: ... 'BadName' is not a valid property name.
+    /// Returns null when no single-quoted token is present.
+    /// </summary>
+    private static string ExtractQuotedToken(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return null;
+        var start = message.IndexOf('\'');
+        if (start < 0) return null;
+        var end = message.IndexOf('\'', start + 1);
+        if (end <= start) return null;
+        return message.Substring(start + 1, end - start - 1);
+    }
+
+    /// <summary>
+    /// Extracts and formats the Safeguard ASP.NET ModelState dictionary from a JSON error body.
+    /// ModelState shape: {"path.to.field":["error message", ...], ...}
+    /// Returns null when the body is not JSON, has no ModelState property, or ModelState is empty.
+    /// </summary>
+    internal static string FormatModelState(string errorBody)
+    {
+        if (string.IsNullOrWhiteSpace(errorBody) || !errorBody.TrimStart().StartsWith('{'))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(errorBody);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+
+            JsonElement modelState = default;
+            var found = false;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Name.Equals("ModelState", StringComparison.OrdinalIgnoreCase)
+                    && property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    modelState = property.Value;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+                return null;
+
+            var lines = new List<string>();
+            foreach (var field in modelState.EnumerateObject())
+            {
+                var messages = new List<string>();
+                if (field.Value.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var msg in field.Value.EnumerateArray())
+                    {
+                        if (msg.ValueKind == JsonValueKind.String)
+                        {
+                            var text = msg.GetString();
+                            if (!string.IsNullOrWhiteSpace(text))
+                                messages.Add(text);
+                        }
+                    }
+                }
+                else if (field.Value.ValueKind == JsonValueKind.String)
+                {
+                    var text = field.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        messages.Add(text);
+                }
+
+                if (messages.Count == 0)
+                    lines.Add($"- {field.Name}");
+                else
+                    lines.Add($"- {field.Name}: {string.Join(" ", messages)}");
+            }
+
+            return lines.Count == 0 ? null : string.Join("\n", lines);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     // --- Query parameter parsing ---
 
     internal static IDictionary<string, string> ParseQueryParameters(string query)

@@ -148,7 +148,6 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
         // transports stay in lockstep when new tools or resources are added.
         private static IMcpServerBuilder AddSafeguardMcpComponents(IMcpServerBuilder builder) => builder
             .WithTools<SafeguardApiTool>()
-            .WithTools<RandomPasswordTool>()
             .WithTools<SafeguardWorkflows>()
             .WithResources<ApiOverviewResource>()
             .WithResources<CommonPatternsResource>()
