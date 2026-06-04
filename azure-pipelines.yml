@@ -538,6 +538,47 @@ jobs:
           docker buildx inspect --bootstrap
         displayName: 'Set up buildx multi-arch builder'
 
+      # Smoke: build a single-arch image with the default (docker) builder
+      # so we can --load it locally, run it with the default --http
+      # ENTRYPOINT, and exercise the streamable-HTTP /mcp endpoint with a
+      # real JSON-RPC initialize before we push anything to GHCR.
+      - script: |
+          set -euo pipefail
+          docker buildx build \
+            --builder default \
+            --platform linux/amd64 \
+            --load \
+            --tag safeguard-mcp:smoke \
+            --build-arg IMAGE_VERSION=smoke \
+            .
+
+          CID=$(docker run -d --rm -p 18080:8080 safeguard-mcp:smoke)
+          trap 'echo "--- container logs ---"; docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+
+          OK=0
+          for i in $(seq 1 30); do
+            RESP=$(curl -fsS \
+              -X POST \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+              http://localhost:18080/mcp 2>/dev/null) || RESP=""
+            if echo "$RESP" | grep -q '"jsonrpc"'; then
+              echo "--- /mcp response ---"
+              echo "$RESP"
+              OK=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$OK" -ne 1 ]; then
+            echo "ERROR: /mcp did not respond with a JSON-RPC body in 30s"
+            exit 1
+          fi
+          echo "Smoke OK: HTTP /mcp accepted initialize."
+        displayName: 'Smoke: docker --http /mcp accepts initialize'
+
       # Tag build: push :version and :latest in one shot.
       - script: |
           set -euo pipefail
