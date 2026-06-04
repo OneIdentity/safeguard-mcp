@@ -96,11 +96,13 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
                 Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
 
             RegisterServices(builder.Services);
+            builder.Services.AddHealthChecks();
 
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
 
             var app = builder.Build();
             LogStartupAuthMode(app.Services.GetRequiredService<ILogger<Program>>());
+            app.MapHealthChecks("/healthz");
             app.MapMcp();
             await app.RunAsync();
         }
