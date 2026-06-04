@@ -186,6 +186,25 @@ internal static class ApiToolHelpers
     };
 
     /// <summary>
+    /// Context-aware hint that inspects the parsed Safeguard error message and surfaced
+    /// validation state to return more specific guidance for known failure shapes.
+    /// </summary>
+    internal static string GetErrorHint(int statusCode, string apiMessage, bool hasModelState)
+    {
+        if (statusCode == 400
+            && !string.IsNullOrWhiteSpace(apiMessage)
+            && apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Safeguard orderby uses a leading minus for descending (orderby=-Field), not OData ('Field desc'/'Field asc').";
+        }
+
+        if (statusCode == 400 && hasModelState)
+            return "Fix the fields listed under 'Validation errors' and retry.";
+
+        return GetErrorHint(statusCode);
+    }
+
+    /// <summary>
     /// Extracts and formats the Safeguard ASP.NET ModelState dictionary from a JSON error body.
     /// ModelState shape: {"path.to.field":["error message", ...], ...}
     /// Returns null when the body is not JSON, has no ModelState property, or ModelState is empty.

@@ -46,6 +46,48 @@ public class ErrorParsingTests
     }
 
     [Fact]
+    public void GetErrorHint_ContextAware_ReturnsOrderbyHintForInvalidOrderByProperty()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid order by property - 'CreatedDate desc' is not a valid property name.",
+            hasModelState: false);
+        Assert.Contains("orderby=-Field", hint);
+        Assert.Contains("not OData", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_OrderbyHintWinsOverModelStateHint()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(
+            400,
+            "Invalid order by property - 'Name desc' is not a valid property name.",
+            hasModelState: true);
+        Assert.Contains("orderby=-Field", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_ReturnsModelStateHintWhenPresent()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(400, "The request is invalid.", hasModelState: true);
+        Assert.Equal("Fix the fields listed under 'Validation errors' and retry.", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_FallsBackToGenericHintFor400()
+    {
+        var hint = ApiToolHelpers.GetErrorHint(400, "Some other 400 message", hasModelState: false);
+        Assert.Equal("Check request body format. Use Safeguard_Schema to see required fields.", hint);
+    }
+
+    [Fact]
+    public void GetErrorHint_ContextAware_FallsBackToGenericHintForOtherCodes()
+    {
+        Assert.Equal(ApiToolHelpers.GetErrorHint(401), ApiToolHelpers.GetErrorHint(401, "anything", false));
+        Assert.Equal(ApiToolHelpers.GetErrorHint(404), ApiToolHelpers.GetErrorHint(404, null, false));
+    }
+
+    [Fact]
     public void FormatModelState_ReturnsNullForNonJsonBody()
     {
         Assert.Null(ApiToolHelpers.FormatModelState("Not JSON"));
