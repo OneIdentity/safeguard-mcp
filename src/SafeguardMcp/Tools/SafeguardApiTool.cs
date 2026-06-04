@@ -203,6 +203,7 @@ internal sealed class SafeguardApiTool(
             .AppendLine("  Exclude fields: fields=-TaskProperties,-Platform")
             .AppendLine("  Ordering: orderby=Name or orderby=-CreatedDate")
             .AppendLine("  Multiple order fields: orderby=Name,-CreatedDate")
+            .AppendLine("  NOTE: Not OData. Use -Field for descending; 'Name desc' or 'Name asc' returns HTTP 400.")
             .AppendLine("  Pagination: page=0&limit=50 (page is 0-indexed)")
             .AppendLine("  Quick search: q=searchterm")
             .AppendLine("  Count only: count=true")
@@ -361,7 +362,7 @@ internal sealed class SafeguardApiTool(
             lines.Add(modelStateSummary);
         }
 
-        var hint = GetErrorHint(statusCode, rawMessage, !string.IsNullOrWhiteSpace(modelStateSummary));
+        var hint = GetErrorHint(statusCode, rawMessage, apiMessage, !string.IsNullOrWhiteSpace(modelStateSummary));
         if (!string.IsNullOrWhiteSpace(hint))
             lines.Add($"Hint: {hint}");
 
@@ -446,19 +447,29 @@ internal sealed class SafeguardApiTool(
         _ => element.ToString()
     };
 
-    private static string GetErrorHint(int statusCode, string rawMessage, bool hasModelState) => statusCode switch
+    private static string GetErrorHint(int statusCode, string rawMessage, string apiMessage, bool hasModelState)
     {
-        400 when hasModelState => "Fix the fields listed under 'Validation errors' and retry.",
-        400 => "Check request body format. Use Safeguard_Schema to see required fields.",
-        401 => "Token expired. Call Safeguard_Connect to re-authenticate.",
-        403 => "Insufficient permissions for this operation.",
-        404 => "Resource not found. Verify the ID exists using a GET call.",
-        409 => "Conflict. GET the current state first, then retry.",
-        422 => "Validation failed. Check property types match the schema.",
-        _ when rawMessage.Contains("Authentication expired", StringComparison.OrdinalIgnoreCase)
-            => "Token expired. Call Safeguard_Connect to re-authenticate.",
-        _ => null
-    };
+        if (statusCode == 400
+            && !string.IsNullOrWhiteSpace(apiMessage)
+            && apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Safeguard orderby uses a leading minus for descending (orderby=-Field), not OData ('Field desc'/'Field asc').";
+        }
+
+        return statusCode switch
+        {
+            400 when hasModelState => "Fix the fields listed under 'Validation errors' and retry.",
+            400 => "Check request body format. Use Safeguard_Schema to see required fields.",
+            401 => "Token expired. Call Safeguard_Connect to re-authenticate.",
+            403 => "Insufficient permissions for this operation.",
+            404 => "Resource not found. Verify the ID exists using a GET call.",
+            409 => "Conflict. GET the current state first, then retry.",
+            422 => "Validation failed. Check property types match the schema.",
+            _ when rawMessage.Contains("Authentication expired", StringComparison.OrdinalIgnoreCase)
+                => "Token expired. Call Safeguard_Connect to re-authenticate.",
+            _ => null
+        };
+    }
 
     private IDictionary<string, string> MaybeInjectLimit(
         string method,
