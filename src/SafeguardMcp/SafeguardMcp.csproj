@@ -18,6 +18,8 @@
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <TreatTrimWarningsAsErrors>true</TreatTrimWarningsAsErrors>
+    <TreatAotWarningsAsErrors>true</TreatAotWarningsAsErrors>
 
     <!-- Size trimming knobs -->
     <DebuggerSupport>false</DebuggerSupport>
