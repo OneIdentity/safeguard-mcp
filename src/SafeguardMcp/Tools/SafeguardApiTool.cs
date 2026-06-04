@@ -449,26 +449,17 @@ internal sealed class SafeguardApiTool(
 
     private static string GetErrorHint(int statusCode, string rawMessage, string apiMessage, bool hasModelState)
     {
-        if (statusCode == 400
-            && !string.IsNullOrWhiteSpace(apiMessage)
-            && apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
+        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState);
+        if (!string.IsNullOrWhiteSpace(hint))
+            return hint;
+
+        if (rawMessage != null
+            && rawMessage.Contains("Authentication expired", StringComparison.OrdinalIgnoreCase))
         {
-            return "Safeguard orderby uses a leading minus for descending (orderby=-Field), not OData ('Field desc'/'Field asc').";
+            return "Token expired. Call Safeguard_Connect to re-authenticate.";
         }
 
-        return statusCode switch
-        {
-            400 when hasModelState => "Fix the fields listed under 'Validation errors' and retry.",
-            400 => "Check request body format. Use Safeguard_Schema to see required fields.",
-            401 => "Token expired. Call Safeguard_Connect to re-authenticate.",
-            403 => "Insufficient permissions for this operation.",
-            404 => "Resource not found. Verify the ID exists using a GET call.",
-            409 => "Conflict. GET the current state first, then retry.",
-            422 => "Validation failed. Check property types match the schema.",
-            _ when rawMessage.Contains("Authentication expired", StringComparison.OrdinalIgnoreCase)
-                => "Token expired. Call Safeguard_Connect to re-authenticate.",
-            _ => null
-        };
+        return null;
     }
 
     private IDictionary<string, string> MaybeInjectLimit(
