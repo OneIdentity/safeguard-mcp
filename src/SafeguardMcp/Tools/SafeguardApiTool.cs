@@ -340,6 +340,7 @@ internal sealed class SafeguardApiTool(
 
         var errorDetail = ExtractErrorDetail(rawMessage);
         TryParseErrorBody(errorDetail, out var apiMessage, out var apiCode, out var innerError);
+        var modelStateSummary = ApiToolHelpers.FormatModelState(errorDetail);
 
         var lines = new List<string>();
         if (statusCode > 0)
@@ -354,8 +355,13 @@ internal sealed class SafeguardApiTool(
             lines.Add($"Code: {apiCode}");
         if (!string.IsNullOrWhiteSpace(innerError))
             lines.Add($"InnerError: {innerError}");
+        if (!string.IsNullOrWhiteSpace(modelStateSummary))
+        {
+            lines.Add("Validation errors:");
+            lines.Add(modelStateSummary);
+        }
 
-        var hint = GetErrorHint(statusCode, rawMessage);
+        var hint = GetErrorHint(statusCode, rawMessage, !string.IsNullOrWhiteSpace(modelStateSummary));
         if (!string.IsNullOrWhiteSpace(hint))
             lines.Add($"Hint: {hint}");
 
@@ -440,8 +446,9 @@ internal sealed class SafeguardApiTool(
         _ => element.ToString()
     };
 
-    private static string GetErrorHint(int statusCode, string rawMessage) => statusCode switch
+    private static string GetErrorHint(int statusCode, string rawMessage, bool hasModelState) => statusCode switch
     {
+        400 when hasModelState => "Fix the fields listed under 'Validation errors' and retry.",
         400 => "Check request body format. Use Safeguard_Schema to see required fields.",
         401 => "Token expired. Call Safeguard_Connect to re-authenticate.",
         403 => "Insufficient permissions for this operation.",
