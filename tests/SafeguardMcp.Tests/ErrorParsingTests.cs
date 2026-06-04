@@ -44,4 +44,52 @@ public class ErrorParsingTests
     {
         Assert.Null(ApiToolHelpers.GetErrorHint(statusCode));
     }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullForNonJsonBody()
+    {
+        Assert.Null(ApiToolHelpers.FormatModelState("Not JSON"));
+        Assert.Null(ApiToolHelpers.FormatModelState(""));
+        Assert.Null(ApiToolHelpers.FormatModelState(null));
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullWhenModelStateAbsent()
+    {
+        const string body = "{\"Code\":70002,\"Message\":\"Invalid field property - 'AssetId' is not a valid property name.\"}";
+        Assert.Null(ApiToolHelpers.FormatModelState(body));
+    }
+
+    [Fact]
+    public void FormatModelState_ExtractsSingleFieldError()
+    {
+        const string body = "{\"Code\":70000,\"Message\":\"The request is invalid.\",\"ModelState\":{\"entity.AccountPasswordRuleId\":[\"The field AccountPasswordRuleId must be a valid non-zero database ID.\"]}}";
+        var result = ApiToolHelpers.FormatModelState(body);
+        Assert.Equal(
+            "- entity.AccountPasswordRuleId: The field AccountPasswordRuleId must be a valid non-zero database ID.",
+            result);
+    }
+
+    [Fact]
+    public void FormatModelState_ExtractsMultipleFieldErrorsAndJoinsMessages()
+    {
+        const string body = "{\"ModelState\":{\"entity.Name\":[\"Required.\"],\"entity.Port\":[\"Out of range.\",\"Must be > 0.\"]}}";
+        var result = ApiToolHelpers.FormatModelState(body);
+        Assert.Contains("- entity.Name: Required.", result);
+        Assert.Contains("- entity.Port: Out of range. Must be > 0.", result);
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullForEmptyModelState()
+    {
+        const string body = "{\"ModelState\":{}}";
+        Assert.Null(ApiToolHelpers.FormatModelState(body));
+    }
+
+    [Fact]
+    public void FormatModelState_ReturnsNullForMalformedJson()
+    {
+        const string body = "{\"ModelState\":";
+        Assert.Null(ApiToolHelpers.FormatModelState(body));
+    }
 }

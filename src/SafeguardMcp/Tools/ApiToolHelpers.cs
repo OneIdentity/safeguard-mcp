@@ -185,6 +185,75 @@ internal static class ApiToolHelpers
         _ => null
     };
 
+    /// <summary>
+    /// Extracts and formats the Safeguard ASP.NET ModelState dictionary from a JSON error body.
+    /// ModelState shape: {"path.to.field":["error message", ...], ...}
+    /// Returns null when the body is not JSON, has no ModelState property, or ModelState is empty.
+    /// </summary>
+    internal static string FormatModelState(string errorBody)
+    {
+        if (string.IsNullOrWhiteSpace(errorBody) || !errorBody.TrimStart().StartsWith('{'))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(errorBody);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+
+            JsonElement modelState = default;
+            var found = false;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Name.Equals("ModelState", StringComparison.OrdinalIgnoreCase)
+                    && property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    modelState = property.Value;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+                return null;
+
+            var lines = new List<string>();
+            foreach (var field in modelState.EnumerateObject())
+            {
+                var messages = new List<string>();
+                if (field.Value.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var msg in field.Value.EnumerateArray())
+                    {
+                        if (msg.ValueKind == JsonValueKind.String)
+                        {
+                            var text = msg.GetString();
+                            if (!string.IsNullOrWhiteSpace(text))
+                                messages.Add(text);
+                        }
+                    }
+                }
+                else if (field.Value.ValueKind == JsonValueKind.String)
+                {
+                    var text = field.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        messages.Add(text);
+                }
+
+                if (messages.Count == 0)
+                    lines.Add($"- {field.Name}");
+                else
+                    lines.Add($"- {field.Name}: {string.Join(" ", messages)}");
+            }
+
+            return lines.Count == 0 ? null : string.Join("\n", lines);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     // --- Query parameter parsing ---
 
     internal static IDictionary<string, string> ParseQueryParameters(string query)
