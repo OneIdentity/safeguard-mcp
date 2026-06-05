@@ -11,6 +11,7 @@ ModelContextProtocol/
 
 # Implementation plan (not for release)
 *-PLAN.md
+*-FACTS.md
 *-PROMPT.md
 
 # User-specific files
@@ -491,3 +492,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# IDE-generated debug profile (not used; this is a console MCP server)
+**/Properties/launchSettings.json
