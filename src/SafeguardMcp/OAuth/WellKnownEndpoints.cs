@@ -59,5 +59,8 @@ internal static class WellKnownEndpoints
         ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
         ctx.Response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
         ctx.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
+        // Match the body's 1-hour Cache-Control window so browsers don't
+        // re-preflight every cached metadata GET.
+        ctx.Response.Headers["Access-Control-Max-Age"] = "3600";
     }
 }
