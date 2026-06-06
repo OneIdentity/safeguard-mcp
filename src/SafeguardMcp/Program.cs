@@ -180,6 +180,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
                 builder.Services.AddSingleton<OAuth.ClientRegistry>();
                 builder.Services.AddSingleton<OAuth.AuthorizeFlowStore>();
                 builder.Services.AddSingleton<OAuth.AuthCodeStore>();
+                builder.Services.AddSingleton<OAuth.IRstsTokenExchanger, OAuth.SdkRstsTokenExchanger>();
             }
 
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
@@ -200,6 +201,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             {
                 OAuth.WellKnownEndpoints.Map(app, bridgeOptions);
                 OAuth.AuthorizeEndpoints.Map(app, bridgeOptions);
+                OAuth.TokenEndpoint.Map(app, bridgeOptions);
                 app.Services.GetRequiredService<ILogger<Program>>().LogInformation(
                     "OAuth metadata bridge active at {PublicUrl}; well-known metadata exposed for MCP clients.",
                     bridgeOptions.McpPublicUrl);
