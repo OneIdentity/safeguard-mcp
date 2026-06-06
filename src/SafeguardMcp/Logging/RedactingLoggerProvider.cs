@@ -75,22 +75,27 @@ internal sealed class RedactingLogger : ILogger
 }
 
 /// <summary>
-/// Wraps an exception so its <see cref="Exception.Message"/> and
-/// <see cref="Exception.ToString"/> are scrubbed before any logger
-/// formats them. The original exception is preserved as the inner
-/// exception so type identity and stack walking still work.
+/// Wraps an exception so its <see cref="Exception.Message"/>,
+/// <see cref="Exception.ToString"/>, <see cref="Exception.StackTrace"/>,
+/// and chained <see cref="Exception.InnerException"/> are all scrubbed
+/// before any logger can format them. Recursive wrapping closes the
+/// chain-walking footgun: a sink that does
+/// <c>ex.InnerException.Message</c> still sees redacted text rather
+/// than reaching the original instance directly.
 /// </summary>
 internal sealed class RedactedException : Exception
 {
     private readonly Exception _original;
 
     public RedactedException(Exception original)
-        : base(SecretRedactor.Scrub(original?.Message ?? string.Empty), original)
+        : base(
+            SecretRedactor.Scrub(original?.Message ?? string.Empty),
+            original?.InnerException == null ? null : new RedactedException(original.InnerException))
     {
         _original = original;
     }
 
-    public override string StackTrace => _original?.StackTrace;
+    public override string StackTrace => SecretRedactor.Scrub(_original?.StackTrace ?? string.Empty);
 
     public override string ToString() => SecretRedactor.Scrub(_original?.ToString() ?? string.Empty);
 }

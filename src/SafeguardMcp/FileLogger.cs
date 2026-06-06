@@ -18,7 +18,7 @@ public sealed class FileLoggerProvider(string path) : ILoggerProvider
 
 file sealed class FileLogger(string category, StreamWriter writer, Lock @lock) : ILogger
 {
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => null;
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => SafeguardMcp.Logging.NullScope.Instance;
 
     public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Debug;
 
