@@ -23,7 +23,7 @@ namespace SafeguardMcp.IntegrationTests;
 /// </summary>
 public class ApplianceFixture : IAsyncLifetime
 {
-    public SafeguardConnectionManager ConnectionManager { get; private set; }
+    internal TestConnectionManager ConnectionManager { get; private set; }
     public CatalogProvider CatalogProvider { get; private set; }
     public string Host { get; private set; }
     public bool Available { get; private set; }
@@ -51,7 +51,7 @@ public class ApplianceFixture : IAsyncLifetime
         var verifyEnv = Environment.GetEnvironmentVariable("SPP_VERIFY");
         var ignoreSsl = string.Equals(verifyEnv, "false", StringComparison.OrdinalIgnoreCase);
 
-        // Set the env vars that SafeguardConnectionManager.ConnectAsync reads
+        // Set the env vars that StdioSafeguardSession reads
         Environment.SetEnvironmentVariable("SAFEGUARD_PROVIDER", provider);
         Environment.SetEnvironmentVariable("SAFEGUARD_USER", user);
         Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
@@ -71,8 +71,8 @@ public class ApplianceFixture : IAsyncLifetime
 
         var catalogLoader = new CatalogLoader(new NullLogger<CatalogLoader>());
         CatalogProvider = new CatalogProvider(catalogLoader, new NullLogger<CatalogProvider>());
-        ConnectionManager = new SafeguardConnectionManager(
-            new NullLogger<SafeguardConnectionManager>(), config, CatalogProvider);
+        ConnectionManager = new TestConnectionManager(
+            new NullLogger<StdioSafeguardSession>(), config, CatalogProvider);
 
         try
         {

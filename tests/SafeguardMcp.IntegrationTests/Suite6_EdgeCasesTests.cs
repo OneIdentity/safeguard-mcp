@@ -143,9 +143,9 @@ public class Suite6_EdgeCasesTests
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogLoader>());
         var catalogProvider = new SafeguardMcp.Catalog.CatalogProvider(
             catalogLoader, new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogProvider>());
-        using var disconnectedMgr = new SafeguardMcp.Tools.SafeguardConnectionManager(
-            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.SafeguardConnectionManager>(),
-            config, catalogProvider);
+        using var disconnectedMgr = new SafeguardMcp.Tools.HttpRelaySafeguardSession(
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.HttpRelaySafeguardSession>(),
+            config, new Microsoft.AspNetCore.Http.HttpContextAccessor());
         var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
 
         var schema = tool.Safeguard_Schema(path: "/v4/Users", method: "POST");
@@ -169,15 +169,24 @@ public class Suite6_EdgeCasesTests
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogLoader>());
         var catalogProvider = new SafeguardMcp.Catalog.CatalogProvider(
             catalogLoader, new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogProvider>());
-        using var disconnectedMgr = new SafeguardMcp.Tools.SafeguardConnectionManager(
-            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.SafeguardConnectionManager>(),
-            config, catalogProvider);
-        var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
+        var prevHost = Environment.GetEnvironmentVariable("SAFEGUARD_HOST");
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", "disconnected-host.example");
+        try
+        {
+            using var disconnectedMgr = new SafeguardMcp.Tools.HttpRelaySafeguardSession(
+                new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.HttpRelaySafeguardSession>(),
+                config, new Microsoft.AspNetCore.Http.HttpContextAccessor());
+            var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
 
-        var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(
-            () => tool.Safeguard_Execute(null, method: "GET", path: "/v4/Users", host: "disconnected-host"));
+            var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(
+                () => tool.Safeguard_Execute(null, method: "GET", path: "/v4/Users"));
 
-        Assert.Contains("Connect", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("authenticated", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SAFEGUARD_HOST", prevHost);
+        }
     }
 
     [Fact]
