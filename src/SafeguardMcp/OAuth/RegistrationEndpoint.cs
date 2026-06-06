@@ -70,12 +70,14 @@ internal static class RegistrationEndpoint
         if (options == null) throw new ArgumentNullException(nameof(options));
 
         endpoints.MapPost(RegistrationPath, ctx => HandleRegisterAsync(ctx, options));
-        endpoints.MapMethods(RegistrationPath, new[] { "OPTIONS" }, ctx =>
-        {
-            SetCorsHeaders(ctx);
-            ctx.Response.StatusCode = StatusCodes.Status204NoContent;
-            return Task.CompletedTask;
-        });
+        endpoints.MapMethods(RegistrationPath, new[] { "OPTIONS" }, HandleOptionsAsync);
+    }
+
+    internal static Task HandleOptionsAsync(HttpContext ctx)
+    {
+        SetCorsHeaders(ctx);
+        ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+        return Task.CompletedTask;
     }
 
     internal static async Task HandleRegisterAsync(HttpContext ctx, BridgeOptions options)

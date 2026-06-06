@@ -88,12 +88,14 @@ internal static class TokenEndpoint
         if (options == null) throw new ArgumentNullException(nameof(options));
 
         endpoints.MapPost(TokenPath, ctx => HandleTokenAsync(ctx, options));
-        endpoints.MapMethods(TokenPath, new[] { "OPTIONS" }, ctx =>
-        {
-            SetCorsHeaders(ctx);
-            ctx.Response.StatusCode = StatusCodes.Status204NoContent;
-            return Task.CompletedTask;
-        });
+        endpoints.MapMethods(TokenPath, new[] { "OPTIONS" }, HandleOptionsAsync);
+    }
+
+    internal static Task HandleOptionsAsync(HttpContext ctx)
+    {
+        SetCorsHeaders(ctx);
+        ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+        return Task.CompletedTask;
     }
 
     internal static async Task HandleTokenAsync(HttpContext ctx, BridgeOptions options)
