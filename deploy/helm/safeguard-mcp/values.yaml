@@ -1,0 +1,120 @@
+# ------------------------------------------------------------------
+# Required configuration. Override these on every install.
+# ------------------------------------------------------------------
+
+# Public DNS name / hostname of the Safeguard appliance.
+safeguardHost: ""
+
+# Externally-visible base URL of this deployment. Published in
+# `/.well-known/*` metadata. Required when the OAuth bridge is
+# enabled (oauthBridge.enabled=true).
+mcpPublicUrl: ""
+
+# rSTS RelyingPartyApplication.Realm — an absolute URI; rSTS asserts
+# this on the entity. Conventionally the same as `mcpPublicUrl`.
+# Required when the OAuth bridge is enabled. The bridge is a public
+# PKCE client at rSTS — there is no client secret.
+rstsClientId: ""
+
+# ------------------------------------------------------------------
+# Container image. Both the relay and the bridge run the same image
+# with different env (the bridge endpoints are mapped only when
+# `MCP_PUBLIC_URL` is set; the bridge Deployment sets it).
+# ------------------------------------------------------------------
+image:
+  repository: ghcr.io/oneidentity/safeguard-mcp
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Optional list of imagePullSecrets, e.g. [{ name: my-registry }].
+# Create the underlying secret out-of-band:
+#   kubectl -n <ns> create secret docker-registry <name> ...
+imagePullSecrets: []
+
+# ------------------------------------------------------------------
+# Stateless relay. Serves the MCP `/mcp` streamable-HTTP transport,
+# `/healthz`, and (when the bridge is enabled) the OAuth
+# `/.well-known/*` metadata documents.
+# ------------------------------------------------------------------
+relay:
+  replicaCount: 3
+
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+
+# ------------------------------------------------------------------
+# OAuth metadata bridge. Single-replica by design. Set
+# `oauthBridge.enabled: false` to disable bridge endpoints entirely
+# (e.g., if you front the deployment with a different OAuth gateway
+# or only need the relay).
+# ------------------------------------------------------------------
+oauthBridge:
+  enabled: true
+
+bridge:
+  replicaCount: 1
+
+  # The bridge holds in-flight `/authorize` and unredeemed `/token`
+  # state in process memory (no shared cache yet). A second replica
+  # would split that state across pods, so a user could `/authorize`
+  # against pod A and arrive at `/authorize/callback` on pod B with
+  # no entry to bind to. Setting `replicaCount > 1` is therefore
+  # gated by an explicit `acceptInProcessStateLossOnRestart: true`
+  # opt-in (enforced by values.schema.json). This is a
+  # correctness/availability soft-guard, NOT a security control —
+  # the security guarantees (no token storage, PKCE binding, exact
+  # redirect-URI match) hold regardless of replica count.
+  acceptInProcessStateLossOnRestart: false
+
+  # Lifetime of an unredeemed bridge auth code (seconds, 1..300).
+  authCodeTtlSeconds: 60
+
+# ------------------------------------------------------------------
+# Per-component knobs (resources, scheduling). Apply to both
+# Deployments unless overridden under `relay.*`/`bridge.*`.
+# ------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# ------------------------------------------------------------------
+# Ingress. A single Ingress with path-based routing fans out to the
+# bridge service for `/authorize`, `/authorize/callback`, `/token`,
+# `/register`, and to the relay service for `/mcp`, `/healthz`,
+# `/.well-known/*`.
+# ------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  host: ""
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    enabled: true
+    secretName: safeguard-mcp-tls
+
+# ------------------------------------------------------------------
+# Optional toggles.
+# ------------------------------------------------------------------
+
+# Set to true only if your appliance presents a certificate the
+# cluster cannot verify (lab/dev). Leave false in production.
+safeguardIgnoreSsl: false
+
+# Override the chart-derived ConfigMap values with literal entries.
+# Keys here win over the computed configMap.
+extraEnv: {}

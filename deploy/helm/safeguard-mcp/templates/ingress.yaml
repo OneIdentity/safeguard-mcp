@@ -1,0 +1,73 @@
+{{- if .Values.ingress.enabled }}
+{{- $host := required "ingress.host is required when ingress.enabled=true" .Values.ingress.host -}}
+{{- $relay := include "safeguard-mcp.relayName" . -}}
+{{- $bridge := include "safeguard-mcp.bridgeName" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "safeguard-mcp.fullname" . }}
+  labels:
+    {{- include "safeguard-mcp.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          {{- if .Values.oauthBridge.enabled }}
+          - path: /authorize
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $bridge }}
+                port:
+                  name: http
+          - path: /token
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $bridge }}
+                port:
+                  name: http
+          - path: /register
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $bridge }}
+                port:
+                  name: http
+          {{- end }}
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $relay }}
+                port:
+                  name: http
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $relay }}
+                port:
+                  name: http
+          {{- if .Values.oauthBridge.enabled }}
+          - path: /.well-known/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $relay }}
+                port:
+                  name: http
+          {{- end }}
+{{- end }}

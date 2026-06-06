@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "safeguard-mcp.fullname" . }}-test-wellknown
+  labels:
+    {{- include "safeguard-mcp.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: wellknown
+      image: curlimages/curl:8.10.1
+      command: ["sh", "-c"]
+      args:
+        {{- if .Values.oauthBridge.enabled }}
+        - |
+          set -eu
+          # Bridge enabled: well-known metadata documents must be
+          # served by the relay (the bridge fan-out is via Ingress
+          # path-routing; in-cluster we hit the relay Service
+          # directly).
+          for path in /.well-known/oauth-protected-resource \
+                      /.well-known/oauth-authorization-server; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "http://{{ include "safeguard-mcp.relayName" . }}${path}")
+            if [ "$code" != "200" ]; then
+              echo "FAIL: ${path} returned ${code}" >&2
+              exit 1
+            fi
+          done
+          echo "well-known metadata served"
+        {{- else }}
+        - |
+          set -eu
+          # Bridge disabled: well-known endpoints are NOT mapped.
+          # Confirm a 404 (or 4xx generally) so a regression that
+          # silently turned the bridge on is caught.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "http://{{ include "safeguard-mcp.relayName" . }}/.well-known/oauth-protected-resource")
+          if [ "${code#4}" = "${code}" ]; then
+            echo "FAIL: bridge disabled but /.well-known returned ${code}" >&2
+            exit 1
+          fi
+          echo "bridge disabled, well-known correctly absent (${code})"
+        {{- end }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
