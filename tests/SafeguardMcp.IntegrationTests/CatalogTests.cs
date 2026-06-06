@@ -23,8 +23,8 @@ public class CatalogTests
     public void DynamicCatalog_ContainsEndpoints()
     {
         var endpoints = _fixture.CatalogProvider.GetEndpoints(_fixture.Host);
-        Assert.True(endpoints.Length > 500,
-            $"Expected at least 500 endpoints from swagger, got {endpoints.Length}");
+        Assert.True(endpoints.Length > 1000,
+            $"Expected at least 1000 endpoints from swagger, got {endpoints.Length}");
     }
 
     [RequiresApplianceFact]

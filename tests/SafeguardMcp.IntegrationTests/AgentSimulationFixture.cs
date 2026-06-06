@@ -83,7 +83,10 @@ public class AgentSimulationFixture : IAsyncLifetime
         Environment.SetEnvironmentVariable("SAFEGUARD_IGNORE_SSL", ignoreSsl.ToString());
 
         await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
-        await Task.Delay(4000);
+        // Production fires catalog loading fire-and-forget after
+        // auth; tests need it loaded before they run. Await
+        // deterministically instead of racing a fixed Task.Delay.
+        await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
         await PreCleanStaleObjectsAsync();
         await CreateTestAdminAsync(password);
@@ -97,7 +100,7 @@ public class AgentSimulationFixture : IAsyncLifetime
         Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
 
         await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
-        await Task.Delay(3000);
+        await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
         ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
         Workflows = new SafeguardWorkflows();
