@@ -84,7 +84,8 @@ public class Suite2_SchemaQualityTests
         var hintsSection = ExtractSection(schema, "AGENT HINTS:");
 
         Assert.Contains("RoleId", requestSection);
-        Assert.Contains("AccessRequestProperties (object)", requestSection);
+        // Nested $ref types are rendered as "object<TypeName>" by AppendSchemaProperty.
+        Assert.Contains("AccessRequestProperties (object", requestSection);
         Assert.Contains("AccessRequestProperties: Nested object", hintsSection);
     }
 

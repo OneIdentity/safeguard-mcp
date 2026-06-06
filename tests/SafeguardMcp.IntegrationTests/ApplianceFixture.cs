@@ -80,8 +80,11 @@ public class ApplianceFixture : IAsyncLifetime
             await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
             Available = true;
 
-            // Wait briefly for background catalog load to complete
-            await Task.Delay(3000);
+            // Production fires the catalog load fire-and-forget after
+            // authentication; tests need the catalog *available* before
+            // they run, so await it deterministically instead of
+            // racing a fixed Task.Delay.
+            await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
         }
         catch (Exception ex)
         {
