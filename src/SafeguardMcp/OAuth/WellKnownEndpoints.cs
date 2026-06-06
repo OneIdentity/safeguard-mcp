@@ -38,12 +38,14 @@ internal static class WellKnownEndpoints
     private static void MapMetadata(IEndpointRouteBuilder endpoints, string path, string body)
     {
         endpoints.MapGet(path, ctx => WriteMetadataAsync(ctx, body));
-        endpoints.MapMethods(path, new[] { "OPTIONS" }, ctx =>
-        {
-            SetMetadataCorsHeaders(ctx);
-            ctx.Response.StatusCode = StatusCodes.Status204NoContent;
-            return Task.CompletedTask;
-        });
+        endpoints.MapMethods(path, new[] { "OPTIONS" }, HandleOptionsAsync);
+    }
+
+    internal static Task HandleOptionsAsync(HttpContext ctx)
+    {
+        SetMetadataCorsHeaders(ctx);
+        ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+        return Task.CompletedTask;
     }
 
     private static Task WriteMetadataAsync(HttpContext ctx, string body)
