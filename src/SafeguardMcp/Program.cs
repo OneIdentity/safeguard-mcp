@@ -38,7 +38,15 @@ namespace SafeguardMcp
             }
 
             if (args.Contains("--http", StringComparer.OrdinalIgnoreCase))
+            {
+                var lockdownError = HttpModeStartup.ValidateEnvironment();
+                if (lockdownError != null)
+                {
+                    Console.Error.WriteLine("safeguard-mcp: " + lockdownError);
+                    return 2;
+                }
                 await RunHttpAsync(args);
+            }
             else
                 await RunStdioAsync(args);
 
