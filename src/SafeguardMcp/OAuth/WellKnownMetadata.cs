@@ -55,7 +55,6 @@ internal static class WellKnownMetadata
 
     /// <summary>
     /// RFC 8414 authorization-server metadata for the bridge.
-    /// All field choices match HTTP-AUTH-RELAY-PLAN §2.2.b.
     /// </summary>
     public static string BuildAuthorizationServerJson(BridgeOptions options)
     {

@@ -9,14 +9,13 @@ namespace SafeguardMcp.OAuth;
 /// Production <see cref="IRstsTokenExchanger"/> backed by the
 /// SafeguardDotNet SDK statics
 /// (<c>Safeguard.AgentBasedLoginUtils.PostAuthorizationCodeFlowAsync</c>
-/// and <c>PostLoginResponseAsync</c>) — the two helpers FACTS
-/// §SafeguardDotNet SDK identifies as the supported AOT-safe seam
+/// and <c>PostLoginResponseAsync</c>) — the two AOT-safe helpers used
 /// for the bridge's <c>/token</c> Stage-1 + Stage-2 exchange.
 ///
 /// <para>
 /// No state, no fields holding token material — both helpers return
 /// their results to stack locals in the caller (<see cref="TokenEndpoint"/>),
-/// preserving the plan §2.3 "no Safeguard access tokens stored, on
+/// preserving the bridge's "no Safeguard access tokens stored, on
 /// any code path, at any time" invariant.
 /// </para>
 /// </summary>

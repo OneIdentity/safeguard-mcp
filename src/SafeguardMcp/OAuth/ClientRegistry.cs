@@ -4,17 +4,15 @@ namespace SafeguardMcp.OAuth;
 
 /// <summary>
 /// Per-process registry of MCP clients that completed Dynamic Client
-/// Registration (RFC 7591) against <c>POST /register</c>. The full
-/// registration handler is task 2.2.f; this type ships now so
-/// <see cref="AuthorizeEndpoints"/> can enforce the "client_id matches
-/// a /register record" check in plan §2.2.c.
+/// Registration (RFC 7591) against <c>POST /register</c>.
+/// <see cref="AuthorizeEndpoints"/> uses it to enforce the
+/// "client_id matches a /register record" check at <c>/authorize</c>.
 ///
 /// <para>
 /// Storage is in-memory only. Bridge restart loses the registry;
 /// clients that see a 401 from <c>/authorize</c> are expected to
-/// re-register transparently (plan §2.2). The registry holds no
-/// secrets — DCR clients are public PKCE-only clients per
-/// plan §2.2.f.
+/// re-register transparently. The registry holds no secrets — DCR
+/// clients are public PKCE-only clients.
 /// </para>
 /// </summary>
 internal sealed class ClientRegistry

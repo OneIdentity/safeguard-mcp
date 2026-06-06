@@ -3,7 +3,8 @@ using System.Text.RegularExpressions;
 namespace SafeguardMcp.Logging;
 
 /// <summary>
-/// Centralized scrubber for log-shaped secrets per HTTP-AUTH-RELAY-PLAN §1.10.
+/// Centralized scrubber for log-shaped secrets — every redaction
+/// rule lives here so callers cannot accidentally route around it.
 /// Patterns:
 /// <list type="bullet">
 ///   <item><c>Bearer &lt;token&gt;</c></item>

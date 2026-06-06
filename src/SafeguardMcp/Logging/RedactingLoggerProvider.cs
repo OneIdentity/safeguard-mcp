@@ -5,10 +5,10 @@ namespace SafeguardMcp.Logging;
 /// <summary>
 /// Wraps an inner <see cref="ILoggerProvider"/> and scrubs every
 /// rendered log message through <see cref="SecretRedactor.Scrub(string)"/>
-/// before forwarding it on. Per HTTP-AUTH-RELAY-PLAN §1.10, every
-/// configured provider (console, file, etc.) is wrapped at startup so
-/// no JWT, Bearer token, OAuth <c>code</c>, or PKCE <c>code_verifier</c>
-/// can leak through any logging sink.
+/// before forwarding it on. Every configured provider (console, file,
+/// etc.) is wrapped at startup so no JWT, Bearer token, OAuth
+/// <c>code</c>, or PKCE <c>code_verifier</c> can leak through any
+/// logging sink.
 ///
 /// Scope state (anything passed to <see cref="ILogger.BeginScope{TState}(TState)"/>)
 /// is forwarded as-is — application code does not place secrets in scopes

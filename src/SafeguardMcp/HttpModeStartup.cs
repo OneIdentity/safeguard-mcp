@@ -1,7 +1,7 @@
 namespace SafeguardMcp;
 
 /// <summary>
-/// HTTP-mode startup lockdowns from HTTP-AUTH-RELAY-PLAN §1.8.
+/// HTTP-mode startup lockdowns.
 ///
 /// <list type="bullet">
 ///   <item><b>SAFEGUARD_HOST is required.</b> Pure-relay HTTP mode has a
@@ -10,8 +10,8 @@ namespace SafeguardMcp;
 ///   <item><b>SAFEGUARD_PROVIDER / SAFEGUARD_USER / SAFEGUARD_PASSWORD
 ///   are forbidden.</b> Setting environment-PKCE credentials in a
 ///   multi-tenant HTTP server would impersonate one identity for every
-///   caller (the original bug Phase 1 fixes). Fail fast at startup
-///   rather than silently elevate privileges.</item>
+///   caller. Fail fast at startup rather than silently elevate
+///   privileges.</item>
 /// </list>
 ///
 /// The validator is pure (takes an environment lookup delegate) so it

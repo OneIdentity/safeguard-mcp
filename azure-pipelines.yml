@@ -180,8 +180,8 @@ jobs:
   # we build natively on arm64. If the project does not have access to
   # the `ubuntu-22.04-arm` hosted pool, the documented fallback is to
   # build on `ubuntu-latest` (x64) with a cross-toolchain
-  # (`gcc-aarch64-linux-gnu`, clang `--target` flags) -- see
-  # DEVICE-CODE-AOT-PLAN.md §7a. Do not switch silently.
+  # (`gcc-aarch64-linux-gnu`, clang `--target` flags). Do not switch
+  # silently.
   # ──────────────────────────────────────────────────────────────
   - job: Publish_linux_arm64
     displayName: 'Publish linux-arm64 (AOT)'

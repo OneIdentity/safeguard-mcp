@@ -39,8 +39,7 @@ public class BearerRedactionTests
 
     public static IEnumerable<object[]> SecretLines()
     {
-        // Each row exercises a different pattern from
-        // HTTP-AUTH-RELAY-PLAN §1.10.
+        // Each row exercises a different secret-bearing log pattern.
         yield return new object[] { $"Authorization: Bearer {SampleJwt}" };
         yield return new object[] { $"raw JWT in the middle of text: {SampleJwt} (do not log)" };
         yield return new object[] { "callback hit with code=abcDEF123-_." };

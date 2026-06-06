@@ -110,8 +110,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
         /// <summary>
         /// Replaces host-installed logging providers with stderr + file,
         /// each wrapped in <see cref="RedactingLoggerProvider"/>.
-        /// Single chokepoint so both transports get identical scrubbing
-        /// (HTTP-AUTH-RELAY-PLAN §1.10).
+        /// Single chokepoint so both transports get identical scrubbing.
         /// </summary>
         private static void ConfigureRedactingLogging(ILoggingBuilder logging)
         {

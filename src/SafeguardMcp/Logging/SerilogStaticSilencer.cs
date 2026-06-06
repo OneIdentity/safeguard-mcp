@@ -6,8 +6,7 @@ using Serilog.Events;
 namespace SafeguardMcp.Logging;
 
 /// <summary>
-/// Defense-in-depth wiring for Serilog's static logger, per
-/// HTTP-AUTH-RELAY-PLAN §1.10.
+/// Defense-in-depth wiring for Serilog's static logger.
 ///
 /// <para>
 /// SafeguardDotNet logs via the global <see cref="Serilog.Log"/> static

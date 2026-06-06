@@ -6,12 +6,11 @@ namespace SafeguardMcp.OAuth;
 
 /// <summary>
 /// Maps the bridge's RFC 9728 / RFC 8414 well-known metadata endpoints
-/// (HTTP-AUTH-RELAY-PLAN §2.2.a, §2.2.b) onto an
-/// <see cref="IEndpointRouteBuilder"/>. Both endpoints:
+/// onto an <see cref="IEndpointRouteBuilder"/>. Both endpoints:
 /// <list type="bullet">
 ///   <item>Return <c>application/json</c>.</item>
-///   <item>Set <c>Access-Control-Allow-Origin: *</c> per plan §2.6
-///   (RFC 8414 §3.2 expects metadata to be publicly readable).</item>
+///   <item>Set <c>Access-Control-Allow-Origin: *</c> — RFC 8414 §3.2
+///   expects metadata to be publicly readable.</item>
 ///   <item>Implement an <c>OPTIONS</c> preflight that mirrors the
 ///   ACAO/ACAM headers and returns 204.</item>
 ///   <item>Send <c>Cache-Control: public, max-age=3600</c> — the

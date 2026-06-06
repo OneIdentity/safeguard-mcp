@@ -6,8 +6,7 @@ using SafeguardMcp.OAuth;
 namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
-/// Phase 2 task 2.1 — verifies <see cref="BridgeOptions.Parse"/>
-/// against HTTP-AUTH-RELAY-PLAN §2.1.
+/// Verifies <see cref="BridgeOptions.Parse"/> startup behavior.
 ///
 /// <list type="bullet">
 ///   <item>No bridge env vars → result is inactive, no error.</item>

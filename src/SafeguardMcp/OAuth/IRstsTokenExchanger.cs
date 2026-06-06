@@ -15,9 +15,10 @@ namespace SafeguardMcp.OAuth;
 /// Implementations <strong>must</strong> use the SDK helpers
 /// (<c>Safeguard.AgentBasedLoginUtils.PostAuthorizationCodeFlowAsync</c>
 /// and <c>PostLoginResponseAsync</c>) and <strong>must not</strong>
-/// hand-roll the rSTS or LoginResponse wire formats — see
-/// HTTP-AUTH-RELAY-PLAN-FACTS §SafeguardDotNet SDK and
-/// HTTP-AUTH-RELAY-PROMPT §3 "Use SDK helpers, not hand-rolled HTTP."
+/// hand-roll the rSTS or LoginResponse wire formats: the SDK encodes
+/// the rSTS request shape, parses the LoginResponse, and clears
+/// transient secrets in ways that hand-rolled HTTP would have to
+/// re-derive and keep in lockstep with appliance changes.
 /// </para>
 /// </summary>
 internal interface IRstsTokenExchanger
@@ -26,8 +27,8 @@ internal interface IRstsTokenExchanger
     /// Exchanges the rSTS authorization code for an rSTS access token.
     /// The returned <see cref="SecureString"/> is owned by the caller
     /// and must be disposed as soon as the LoginResponse exchange
-    /// finishes (plan §2.3 — token material is a stack local in the
-    /// <c>/token</c> handler).
+    /// finishes — token material lives only as a stack local in the
+    /// <c>/token</c> handler, never as a field anywhere.
     /// </summary>
     Task<SecureString> ExchangeAuthorizationCodeAsync(
         string appliance,

@@ -9,8 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace SafeguardMcp.OAuth;
 
 /// <summary>
-/// Maps <c>POST /register</c> (HTTP-AUTH-RELAY-PLAN §2.2.f) — the
-/// bridge's RFC 7591 dynamic client registration endpoint.
+/// Maps <c>POST /register</c> — the bridge's RFC 7591 dynamic client
+/// registration endpoint.
 ///
 /// <para>
 /// The MCP 2025-06-18 OAuth 2.1 client profile (Claude Desktop, VS
@@ -27,8 +27,8 @@ namespace SafeguardMcp.OAuth;
 /// <c>/authorize</c> trusts when deciding where to bounce the
 /// user-agent on success or error, so an attacker who can register
 /// an arbitrary redirect_uri can turn the bridge into an open
-/// redirect. Per plan §2.2.f, each <c>redirect_uri</c> must satisfy
-/// at least one of:
+/// redirect. Each <c>redirect_uri</c> must therefore satisfy at
+/// least one of:
 /// </para>
 ///
 /// <list type="bullet">
@@ -59,9 +59,9 @@ internal static class RegistrationEndpoint
     private const string JsonContentTypePrefix = "application/json";
     private const string ResponseContentType = "application/json; charset=utf-8";
 
-    // RFC 7591 doesn't fix a registration TTL; plan §2.2.f sets 30
-    // days. Bridge restart loses all entries — clients re-register
-    // on the next 401 from /authorize.
+    // RFC 7591 doesn't fix a registration TTL; the bridge picks 30
+    // days as a pragmatic ceiling. Bridge restart loses all entries —
+    // clients re-register on the next 401 from /authorize.
     public static readonly TimeSpan ClientRegistrationTtl = TimeSpan.FromDays(30);
 
     public static void Map(IEndpointRouteBuilder endpoints, BridgeOptions options)
@@ -231,7 +231,7 @@ internal static class RegistrationEndpoint
     /// Anything else — including <c>http</c> on a non-loopback host,
     /// missing scheme, fragment-bearing URIs, or origin-less
     /// non-loopback URIs — is rejected to keep this endpoint from
-    /// becoming an open-redirect oracle (plan §2.2.f, task 2.E).
+    /// becoming an open-redirect oracle.
     /// </summary>
     internal static bool IsAcceptableRedirectUri(string redirectUri, string origin, out string rejectReason)
     {
@@ -385,8 +385,7 @@ internal static class RegistrationEndpoint
 
     private static void SetCorsHeaders(HttpContext ctx)
     {
-        // Plan §2.6: /register is server-to-server, allow * for
-        // pragmatism.
+        // /register is server-to-server, advertise * for pragmatism.
         ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
         ctx.Response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
         ctx.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
