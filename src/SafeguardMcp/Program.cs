@@ -52,7 +52,19 @@ namespace SafeguardMcp
                     Console.Error.WriteLine("safeguard-mcp: " + lockdownError);
                     return 2;
                 }
-                await RunHttpAsync(args);
+
+                // Parse Phase-2 OAuth metadata bridge configuration. The
+                // bridge is opt-in via MCP_PUBLIC_URL; when absent, the
+                // server runs in pure-relay-only mode. When set but
+                // misconfigured, fail-fast with a clear stderr message.
+                var bridgeParse = OAuth.BridgeOptions.Parse(Environment.GetEnvironmentVariable);
+                if (bridgeParse.Error != null)
+                {
+                    Console.Error.WriteLine("safeguard-mcp: " + bridgeParse.Error);
+                    return 2;
+                }
+
+                await RunHttpAsync(args, bridgeParse.Options);
             }
             else
                 await RunStdioAsync(args);
@@ -124,7 +136,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             await app.RunAsync();
         }
 
-        private static async Task RunHttpAsync(string[] args)
+        private static async Task RunHttpAsync(string[] args, OAuth.BridgeOptions bridgeOptions)
         {
             var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -174,6 +186,13 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             WarmCatalog(app.Services);
             app.MapHealthChecks("/healthz");
             app.MapMcp();
+            if (bridgeOptions != null)
+            {
+                OAuth.WellKnownEndpoints.Map(app, bridgeOptions);
+                app.Services.GetRequiredService<ILogger<Program>>().LogInformation(
+                    "OAuth metadata bridge active at {PublicUrl}; well-known metadata exposed for MCP clients.",
+                    bridgeOptions.McpPublicUrl);
+            }
             await app.RunAsync();
         }
 
