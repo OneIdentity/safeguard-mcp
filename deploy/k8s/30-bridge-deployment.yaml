@@ -1,0 +1,110 @@
+# Bridge Deployment.
+#
+# The bridge serves the OAuth metadata bridge endpoints — `/authorize`,
+# `/authorize/callback`, `/token`, `/register` — that translate
+# RFC 6749/7591/8707 OAuth flows into rSTS authorization-code-with-PKCE
+# logins. It is **single-replica by design** (replicas: 1) and there
+# is **no HorizontalPodAutoscaler** for it.
+#
+# Why no HPA / why replicas: 1
+# ----------------------------
+# In-flight authorize state lives in process memory:
+#   * `AuthorizeFlowStore`  — bridge<->rSTS PKCE pair, keyed by
+#     opaque bridge_session_id, lifetime ~ user login round-trip.
+#   * `AuthCodeStore`       — bridge auth-code -> rSTS auth-code
+#     redemption record, lifetime = `BRIDGE_AUTH_CODE_TTL_SECONDS`
+#     (default 60s).
+#   * `ClientRegistry`      — DCR-issued client_ids, 30-day TTL.
+#
+# A second replica would split that state across pods, so the user
+# could `/authorize` against pod A and arrive at `/authorize/callback`
+# on pod B (no entry → 400, no open redirect) or redeem `/token` on
+# pod C (no entry → invalid_grant). There is no shared cache yet, so
+# horizontal scaling is unsafe. The plan calls this out explicitly:
+# `bridge.replicaCount > 1` is unsupported until shared-cache work
+# lands. Bridge restart loses in-flight logins; the user simply
+# retries — keep liveness probes patient (see below).
+#
+# This is not a security control: the security guarantees (no token
+# storage, PKCE binding, exact-URI redirect match) are enforced
+# regardless of replica count. It is a correctness/availability
+# constraint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safeguard-mcp-bridge
+  namespace: safeguard-mcp
+  labels:
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/component: bridge
+spec:
+  replicas: 1
+  strategy:
+    # Recreate so we never run two bridge pods simultaneously, even
+    # transiently during a rollout — see the in-flight-state note
+    # above. The user-visible cost is a brief 5xx window during
+    # bridge upgrades; that is acceptable because login is a
+    # short-lived flow and the relay (which serves /mcp) keeps
+    # serving authenticated traffic throughout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: safeguard-mcp
+      app.kubernetes.io/component: bridge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safeguard-mcp
+        app.kubernetes.io/component: bridge
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: safeguard-mcp
+          image: ghcr.io/oneidentity/safeguard-mcp:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--http"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: safeguard-mcp-config
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+          # Liveness is intentionally lenient. Restart on a real
+          # crash/lockup, not on a slow upstream rSTS call. A restart
+          # invalidates every in-flight /authorize and unredeemed
+          # /token entry; users have to start their login over.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
