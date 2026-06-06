@@ -1,0 +1,69 @@
+# Single-host docker-compose deployment for safeguard-mcp.
+#
+# One container serves the relay endpoints (/mcp, /healthz) and, when
+# the OAuth bridge is enabled, the bridge endpoints (/authorize,
+# /authorize/callback, /token, /register) and the well-known metadata
+# documents — all from the same process. This is **single-replica by
+# definition**: docker-compose has no horizontal scaling primitive
+# that preserves the bridge's in-process OAuth state, and the relay's
+# horizontal-scaling story is the Kubernetes deploy in
+# deploy/k8s/ or deploy/helm/safeguard-mcp/.
+#
+# Use this shape when:
+#   * You're running on a single host (laptop, dev VM, small POC)
+#   * You don't need >1 replica
+#   * You want the simplest possible TLS termination story (a
+#     reverse proxy in front of this container, or no TLS at all
+#     for purely localhost MCP-client testing)
+#
+# For multi-host / HA, use the Kubernetes shape instead — see
+# deploy/README.md.
+#
+# Configuration is supplied via a `.env` file in this directory; copy
+# `.env.example` to `.env` and edit. None of those values are secret
+# (the bridge is a public PKCE client at rSTS — no client secret;
+# Safeguard tokens are never persisted), so checking the `.env` into
+# a private repo as configuration-as-data is acceptable.
+
+services:
+  safeguard-mcp:
+    image: ghcr.io/oneidentity/safeguard-mcp:latest
+    container_name: safeguard-mcp
+    restart: unless-stopped
+    # Bind to the host's loopback interface by default. Front this
+    # with a reverse proxy (Caddy, Traefik, nginx) that terminates
+    # TLS at MCP_PUBLIC_URL and forwards to localhost:8080. Change
+    # to "8080:8080" if you intend to expose the container directly
+    # — but only behind TLS, since MCP clients send Bearer tokens.
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ASPNETCORE_URLS: "http://+:8080"
+      # Required: the appliance to relay against.
+      SAFEGUARD_HOST: "${SAFEGUARD_HOST:?SAFEGUARD_HOST is required}"
+      # Optional. Only set in lab/dev where the appliance presents
+      # a certificate the container cannot verify.
+      SAFEGUARD_IGNORE_SSL: "${SAFEGUARD_IGNORE_SSL:-false}"
+      # Bridge configuration. Leave MCP_PUBLIC_URL unset to disable
+      # the bridge entirely (relay-only mode). When set, the bridge
+      # endpoints are mapped and well-known metadata is published.
+      MCP_PUBLIC_URL: "${MCP_PUBLIC_URL:-}"
+      RSTS_CLIENT_ID: "${RSTS_CLIENT_ID:-}"
+      BRIDGE_AUTH_CODE_TTL_SECONDS: "${BRIDGE_AUTH_CODE_TTL_SECONDS:-60}"
+    healthcheck:
+      # The chiseled runtime image has no shell and no curl/wget,
+      # so we use the binary's own --version flag as a liveness
+      # signal. This confirms the binary still launches; it does
+      # not validate the HTTP server. Front this container with a
+      # reverse proxy that probes /healthz over HTTP if you need
+      # true liveness checking.
+      test: ["CMD", "/app/SafeguardMcp", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
