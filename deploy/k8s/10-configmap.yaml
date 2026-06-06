@@ -1,0 +1,30 @@
+# Non-secret runtime configuration consumed by both the relay and
+# the bridge Deployments via `envFrom: configMapRef`.
+#
+# None of these values are sensitive:
+#   * SAFEGUARD_HOST is the appliance hostname / public DNS name.
+#   * RSTS_CLIENT_ID is the rSTS RelyingPartyApplication.Realm — an
+#     absolute URI (rSTS asserts this), conventionally the same as
+#     MCP_PUBLIC_URL. Public PKCE client; there is NO client secret.
+#   * MCP_PUBLIC_URL is the externally-visible base URL of this
+#     deployment; it is published in /.well-known/* metadata.
+#   * BRIDGE_AUTH_CODE_TTL_SECONDS is the lifetime of an unredeemed
+#     bridge auth code (default 60, max 300).
+#
+# Replace the example values before applying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: safeguard-mcp-config
+  namespace: safeguard-mcp
+  labels:
+    app.kubernetes.io/name: safeguard-mcp
+data:
+  SAFEGUARD_HOST: "safeguard.example.com"
+  MCP_PUBLIC_URL: "https://mcp.example.com"
+  RSTS_CLIENT_ID: "https://mcp.example.com"
+  BRIDGE_AUTH_CODE_TTL_SECONDS: "60"
+  # Set to "true" only if your Safeguard appliance presents a
+  # certificate that the cluster cannot verify (lab/dev). Leave unset
+  # in production.
+  # SAFEGUARD_IGNORE_SSL: "false"
