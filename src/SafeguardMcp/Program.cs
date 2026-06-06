@@ -107,21 +107,30 @@ ENVIRONMENT:
 
 Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
+        /// <summary>
+        /// Replaces host-installed logging providers with stderr + file,
+        /// each wrapped in <see cref="RedactingLoggerProvider"/>.
+        /// Single chokepoint so both transports get identical scrubbing
+        /// (HTTP-AUTH-RELAY-PLAN §1.10).
+        /// </summary>
+        private static void ConfigureRedactingLogging(ILoggingBuilder logging)
+        {
+            // stdio mode must keep stdout reserved for the MCP protocol —
+            // stderr is the only safe console destination, and the file
+            // sink mirrors what HTTP mode also gets.
+            logging.ClearProviders();
+            logging.AddProvider(new RedactingLoggerProvider(new StderrLoggerProvider()));
+            logging.AddProvider(new RedactingLoggerProvider(new FileLoggerProvider(
+                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log"))));
+        }
+
         private static async Task RunStdioAsync(string[] args)
         {
             var builder = Host.CreateEmptyApplicationBuilder(settings: null);
 
             builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
 
-            // Replace the default console provider (and any other host-
-            // installed providers) with stderr + file, both wrapped in
-            // RedactingLoggerProvider. stdio mode must keep stdout
-            // reserved for the MCP protocol — so console output goes
-            // to stderr.
-            builder.Logging.ClearProviders();
-            builder.Logging.AddProvider(new RedactingLoggerProvider(new StderrLoggerProvider()));
-            builder.Logging.AddProvider(new RedactingLoggerProvider(new FileLoggerProvider(
-                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log"))));
+            ConfigureRedactingLogging(builder.Logging);
 
             RegisterServices(builder.Services);
             builder.Services.AddSingleton<ISafeguardSession, StdioSafeguardSession>();
@@ -142,13 +151,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
             builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
 
-            // Replace any host-installed providers with stderr + file,
-            // both wrapped in RedactingLoggerProvider so no Bearer / JWT /
-            // OAuth code can reach a sink unscrubbed.
-            builder.Logging.ClearProviders();
-            builder.Logging.AddProvider(new RedactingLoggerProvider(new StderrLoggerProvider()));
-            builder.Logging.AddProvider(new RedactingLoggerProvider(new FileLoggerProvider(
-                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log"))));
+            ConfigureRedactingLogging(builder.Logging);
 
             // Defense-in-depth HttpLogging defaults: even though we do
             // not currently call UseHttpLogging, if a future engineer
