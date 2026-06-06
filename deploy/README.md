@@ -24,6 +24,31 @@ metadata bridge. The Compose shape collapses both endpoint sets into
 a single container — there is only one process, so the relay/bridge
 distinction becomes moot.
 
+### Primary vs. read-only replica fleets
+
+A given deployment binds to **one** Safeguard appliance via
+`SAFEGUARD_HOST`. To address more than one appliance, stand up more
+than one deployment — same image, same chart, same configuration
+schema, just different `SAFEGUARD_HOST`.
+
+A particularly useful split is **primary vs. read-only replica**.
+Safeguard read-only replicas serve the full access-request workflow
+(credential retrieval, sessions), A2A, and all configuration reads;
+they reject only configuration writes. Pointing a second deployment
+at a replica gives you either:
+
+* **Read scaling / load isolation** — route read-heavy agents at the
+  replica deployment and config-mutating workflows at the primary.
+* **A no-config-mutation safety boundary** — deploy *only* the
+  replica-targeted fleet to make AI agents in that environment
+  incapable of mutating Safeguard configuration. Cred retrieval,
+  sessions, and A2A still work; config writes return a clean
+  appliance-level error.
+
+The deployment artifacts in this directory work unchanged for both
+roles. The only operational difference is the value of
+`SAFEGUARD_HOST`.
+
 ## Two-Deployment rationale
 
 Sticky sessions don't work for OAuth. A typical login crosses
