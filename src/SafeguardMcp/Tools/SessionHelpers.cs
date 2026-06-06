@@ -37,24 +37,34 @@ internal static class SessionHelpers
     /// and decoding (without verification) the JWT body for expiry
     /// display. Returns a populated <see cref="PrincipalInfo"/>.
     /// </summary>
-    public static async Task<PrincipalInfo> GetPrincipalInfoAsync(
+    public static Task<PrincipalInfo> GetPrincipalInfoAsync(
         ISafeguardSession session,
         string applianceHost,
         CancellationToken cancellationToken)
     {
-        var result = await session.ExecuteWithConnectionAsync(
-            async connection =>
-            {
-                var response = await Task.Run(() =>
-                    connection.InvokeMethodFull(Service.Core, Method.Get, "Me", null, null, null, null),
-                    cancellationToken);
-                var info = ParseMeResponse(response.Body) ?? new PrincipalInfo();
-                info.ApplianceHost = applianceHost;
-                PopulateTokenExpiry(connection, info);
-                return info;
-            }, cancellationToken);
+        return session.ExecuteWithConnectionAsync(
+            connection => GetPrincipalInfoFromConnectionAsync(connection, applianceHost, cancellationToken),
+            cancellationToken);
+    }
 
-        return result;
+    /// <summary>
+    /// Connection-direct overload of
+    /// <see cref="GetPrincipalInfoAsync(ISafeguardSession, string, CancellationToken)"/>
+    /// used by the <c>safeguard-mcp login</c> subcommand, which has an
+    /// <see cref="ISafeguardConnection"/> in hand rather than a session.
+    /// </summary>
+    public static async Task<PrincipalInfo> GetPrincipalInfoFromConnectionAsync(
+        ISafeguardConnection connection,
+        string applianceHost,
+        CancellationToken cancellationToken)
+    {
+        var response = await Task.Run(() =>
+            connection.InvokeMethodFull(Service.Core, Method.Get, "Me", null, null, null, null),
+            cancellationToken);
+        var info = ParseMeResponse(response.Body) ?? new PrincipalInfo();
+        info.ApplianceHost = applianceHost;
+        PopulateTokenExpiry(connection, info);
+        return info;
     }
 
     private static PrincipalInfo ParseMeResponse(string body)

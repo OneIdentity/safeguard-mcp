@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using SafeguardMcp.Catalog;
+using SafeguardMcp.Login;
 using SafeguardMcp.Tools;
 
 namespace SafeguardMcp
@@ -14,24 +15,34 @@ namespace SafeguardMcp
     // https://modelcontextprotocol.io/docs/develop/build-server
     public class Program
     {
-        public static async Task Main(string[] args)
+        public static async Task<int> Main(string[] args)
         {
+            if (args.Length > 0 && string.Equals(args[0], "login", StringComparison.OrdinalIgnoreCase))
+            {
+                // Subcommand owns its own --help / --version flags below the
+                // top-level dispatch so `safeguard-mcp login --help` reaches it.
+                var subArgs = args.Length == 1 ? Array.Empty<string>() : args[1..];
+                return await LoginCommand.RunAsync(subArgs, CancellationToken.None);
+            }
+
             if (HasFlag(args, "-v", "--version"))
             {
                 Console.Out.WriteLine(GetVersion());
-                return;
+                return 0;
             }
 
             if (HasFlag(args, "-h", "--help", "-?", "/?"))
             {
                 Console.Out.WriteLine(GetHelpText());
-                return;
+                return 0;
             }
 
             if (args.Contains("--http", StringComparer.OrdinalIgnoreCase))
                 await RunHttpAsync(args);
             else
                 await RunStdioAsync(args);
+
+            return 0;
         }
 
         private static bool HasFlag(string[] args, params string[] flags)
@@ -52,6 +63,9 @@ Model Context Protocol server for One Identity Safeguard for Privileged Password
 USAGE:
   safeguard-mcp                Run as MCP stdio server (default; for IDE integration).
   safeguard-mcp --http         Run as MCP HTTP server on http://localhost:8080/mcp.
+  safeguard-mcp login [opts]   Acquire a Safeguard user token via device-code
+                               login and print it (or write it to a file with
+                               a restrictive ACL). See `safeguard-mcp login --help`.
   safeguard-mcp --version      Print version and exit.
   safeguard-mcp --help         Print this help and exit.
 
