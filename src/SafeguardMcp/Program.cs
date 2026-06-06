@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using SafeguardMcp.Catalog;
+using SafeguardMcp.Logging;
 using SafeguardMcp.Login;
 using SafeguardMcp.Tools;
 
@@ -17,6 +19,11 @@ namespace SafeguardMcp
     {
         public static async Task<int> Main(string[] args)
         {
+            // Defense-in-depth: silence SafeguardDotNet's static Serilog
+            // logger before any code path can trigger SDK logging. The
+            // factory-aware wiring happens after the host is built.
+            SerilogStaticSilencer.Silence();
+
             if (args.Length > 0 && string.Equals(args[0], "login", StringComparison.OrdinalIgnoreCase))
             {
                 // Subcommand owns its own --help / --version flags below the
@@ -94,10 +101,15 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
             builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
 
-            // Configure all logs to go to stderr (stdout is used for the MCP protocol messages).
-            builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
-            builder.Logging.AddProvider(new FileLoggerProvider(
-                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
+            // Replace the default console provider (and any other host-
+            // installed providers) with stderr + file, both wrapped in
+            // RedactingLoggerProvider. stdio mode must keep stdout
+            // reserved for the MCP protocol — so console output goes
+            // to stderr.
+            builder.Logging.ClearProviders();
+            builder.Logging.AddProvider(new RedactingLoggerProvider(new StderrLoggerProvider()));
+            builder.Logging.AddProvider(new RedactingLoggerProvider(new FileLoggerProvider(
+                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log"))));
 
             RegisterServices(builder.Services);
             builder.Services.AddSingleton<ISafeguardSession, StdioSafeguardSession>();
@@ -105,6 +117,9 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithStdioServerTransport());
 
             var app = builder.Build();
+            SerilogStaticSilencer.ConfigureWithFactory(
+                app.Services.GetRequiredService<ILoggerFactory>(),
+                Environment.GetEnvironmentVariable);
             LogStartupAuthMode(app.Services.GetRequiredService<ILogger<Program>>());
             await app.RunAsync();
         }
@@ -115,8 +130,29 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
             builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
 
-            builder.Logging.AddProvider(new FileLoggerProvider(
-                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
+            // Replace any host-installed providers with stderr + file,
+            // both wrapped in RedactingLoggerProvider so no Bearer / JWT /
+            // OAuth code can reach a sink unscrubbed.
+            builder.Logging.ClearProviders();
+            builder.Logging.AddProvider(new RedactingLoggerProvider(new StderrLoggerProvider()));
+            builder.Logging.AddProvider(new RedactingLoggerProvider(new FileLoggerProvider(
+                Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log"))));
+
+            // Defense-in-depth HttpLogging defaults: even though we do
+            // not currently call UseHttpLogging, if a future engineer
+            // enables it the Authorization / Cookie / Set-Cookie headers
+            // and request/response bodies must never be logged.
+            builder.Services.AddHttpLogging(o =>
+            {
+                o.LoggingFields = HttpLoggingFields.RequestMethod
+                    | HttpLoggingFields.RequestPath
+                    | HttpLoggingFields.RequestProtocol
+                    | HttpLoggingFields.RequestScheme
+                    | HttpLoggingFields.ResponseStatusCode;
+                o.RequestHeaders.Clear();
+                o.ResponseHeaders.Clear();
+                o.MediaTypeOptions.Clear();
+            });
 
             RegisterServices(builder.Services);
             builder.Services.AddHttpContextAccessor();
@@ -127,6 +163,9 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
 
             var app = builder.Build();
+            SerilogStaticSilencer.ConfigureWithFactory(
+                app.Services.GetRequiredService<ILoggerFactory>(),
+                Environment.GetEnvironmentVariable);
             LogStartupAuthMode(app.Services.GetRequiredService<ILogger<Program>>());
             // HTTP mode requires SAFEGUARD_HOST at startup; warm the dynamic
             // catalog opportunistically (best-effort, anonymous load via
