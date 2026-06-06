@@ -78,6 +78,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
                 Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
 
             RegisterServices(builder.Services);
+            builder.Services.AddSingleton<ISafeguardSession, StdioSafeguardSession>();
 
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithStdioServerTransport());
 
@@ -96,15 +97,34 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
                 Path.Combine(AppContext.BaseDirectory, "safeguard-mcp.log")));
 
             RegisterServices(builder.Services);
+            builder.Services.AddHttpContextAccessor();
+            // Scoped: each MCP HTTP request gets a fresh session bound to its bearer.
+            builder.Services.AddScoped<ISafeguardSession, HttpRelaySafeguardSession>();
             builder.Services.AddHealthChecks();
 
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
 
             var app = builder.Build();
             LogStartupAuthMode(app.Services.GetRequiredService<ILogger<Program>>());
+            // HTTP mode requires SAFEGUARD_HOST at startup; warm the dynamic
+            // catalog opportunistically (best-effort, anonymous load via
+            // /service/Notification/v4/Status) so the first tool call has
+            // schemas/endpoints ready.
+            WarmCatalog(app.Services);
             app.MapHealthChecks("/healthz");
             app.MapMcp();
             await app.RunAsync();
+        }
+
+        private static void WarmCatalog(IServiceProvider services)
+        {
+            var host = Environment.GetEnvironmentVariable("SAFEGUARD_HOST");
+            if (string.IsNullOrWhiteSpace(host))
+                return;
+
+            var ignoreSsl = bool.TryParse(Environment.GetEnvironmentVariable("SAFEGUARD_IGNORE_SSL"), out var v) && v;
+            var catalog = services.GetRequiredService<CatalogProvider>();
+            _ = Task.Run(() => catalog.LoadCatalogAsync(host.Trim(), ignoreSsl));
         }
 
         // Device-code can't pre-auth (no MCP session yet); log the configured posture.
@@ -139,7 +159,6 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             services.AddSingleton<CatalogLoader>();
             services.AddSingleton<CatalogProvider>();
             services.AddSingleton<ISafeguardConnectionFactory, SafeguardConnectionFactory>();
-            services.AddSingleton<SafeguardConnectionManager>();
         }
 
         // Explicit generic registration preserves required members for trimming/AOT

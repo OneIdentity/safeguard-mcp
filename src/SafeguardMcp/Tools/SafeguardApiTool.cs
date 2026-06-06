@@ -12,7 +12,7 @@ namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
 internal sealed class SafeguardApiTool(
-    SafeguardConnectionManager connectionManager,
+    ISafeguardSession session,
     CatalogProvider catalogProvider,
     IConfiguration configuration)
 {
@@ -29,26 +29,86 @@ internal sealed class SafeguardApiTool(
 
     [McpServerTool(Name = "Safeguard_Connect", Title = "Connect to Safeguard",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Connect and authenticate to a Safeguard appliance. "
-        + "You will be prompted for the server DNS name or IP address, then a browser window will open for OAuth2 login. "
-        + "Call this once per server. You can connect to multiple servers simultaneously for cross-server operations. "
-        + "Call without parameters to check the current connection status. "
-        + "IMPORTANT: Only set ignoreSsl to true after the user has explicitly confirmed they want to skip certificate validation.")]
-    public async Task<string> Safeguard_Connect(McpServer server,
-        [Description("DNS name or IP address of the Safeguard appliance to connect to. If omitted, you will be prompted.")] string host = null,
-        [Description("Skip SSL certificate validation for this connection. Only use when the user has explicitly confirmed — never set this silently.")] bool? ignoreSsl = null,
-        CancellationToken ct = default)
+    [Description("Authenticate to the configured Safeguard appliance. "
+        + "In stdio mode this runs a device-code (or PKCE) login the first time and caches the connection. "
+        + "In HTTP mode this is OPTIONAL — every tool already executes against the appliance using the request "
+        + "`Authorization: Bearer` header; calling this tool just verifies the bearer and returns the principal "
+        + "(display name, identity provider, token expiry).")]
+    public async Task<string> Safeguard_Connect(McpServer server, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(host) && ignoreSsl == null && connectionManager.ConnectedHosts.Count > 0)
-            return connectionManager.GetStatusSummary();
+        await session.EnsureReadyAsync(server, ct);
+        var info = await session.GetPrincipalInfoAsync(ct);
+        return FormatPrincipal(info, "Connected and authenticated");
+    }
 
-        var resolvedHost = await connectionManager.EnsureAuthenticatedAsync(server, host, ct, ignoreSsl);
-        var allHosts = connectionManager.ConnectedHosts;
-        var minutes = connectionManager.GetTokenLifetimeMinutes(resolvedHost);
-        var msg = $"Connected and authenticated to Safeguard appliance at {resolvedHost}. Token expires in {minutes} minutes.";
-        if (allHosts.Count > 1)
-            msg += $"\nActive connections: {string.Join(", ", allHosts)}.";
-        return msg;
+    [McpServerTool(Name = "Safeguard_Status", Title = "Safeguard Connection Status",
+        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Report the current Safeguard authentication state. In stdio mode reports the cached "
+        + "connection's token lifetime. In HTTP mode inspects the request bearer (decoding the JWT body "
+        + "WITHOUT signature verification, display only) and reports the principal and expiry; the "
+        + "Safeguard appliance is the authority on token validity.")]
+    public async Task<string> Safeguard_Status(McpServer server, CancellationToken ct = default)
+    {
+        if (!session.HasCredentials)
+        {
+            return string.IsNullOrWhiteSpace(session.Host)
+                ? "No Safeguard appliance is configured. Set SAFEGUARD_HOST and restart the MCP server."
+                : "Not authenticated against Safeguard. Acquire a Safeguard user token (e.g., "
+                    + "`safeguard-mcp login`) and configure your client to send `Authorization: Bearer <token>`.";
+        }
+
+        try
+        {
+            await session.EnsureReadyAsync(server, ct);
+            var info = await session.GetPrincipalInfoAsync(ct);
+            return FormatPrincipal(info, "Authenticated")
+                + "\nNote: The Safeguard appliance is the authority on token validity; this output is display-only.";
+        }
+        catch (McpException ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    [McpServerTool(Name = "Safeguard_Disconnect", Title = "Disconnect from Safeguard",
+        ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = true)]
+    [Description("Log out of the current Safeguard session. In stdio mode drops the cached connection. "
+        + "In HTTP mode posts to /service/core/v4/Token/Logout with the request bearer. "
+        + "WARNING: This invalidates the bearer for any client config still holding it; remove the token "
+        + "from your MCP client configuration after calling this.")]
+    public async Task<string> Safeguard_Disconnect(CancellationToken ct = default)
+    {
+        if (!session.HasCredentials)
+            return "No active Safeguard session to disconnect.";
+        try
+        {
+            await session.LogoutAsync(ct);
+            return "Safeguard session ended. The bearer (if any) has been invalidated at the appliance.";
+        }
+        catch (McpException ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    private static string FormatPrincipal(PrincipalInfo info, string verb)
+    {
+        var sb = new StringBuilder();
+        sb.Append(verb).Append(" to Safeguard appliance at ").Append(info.ApplianceHost ?? "<unknown>").Append('.');
+        if (!string.IsNullOrWhiteSpace(info.DisplayName) || !string.IsNullOrWhiteSpace(info.Name))
+        {
+            sb.Append(" Principal: ").Append(info.DisplayName ?? info.Name);
+            if (!string.IsNullOrWhiteSpace(info.IdentityProvider))
+                sb.Append(" (").Append(info.IdentityProvider).Append(')');
+            sb.Append('.');
+        }
+        if (info.TokenLifetimeMinutes > 0)
+            sb.Append(" Token expires in ").Append(info.TokenLifetimeMinutes).Append(" minutes");
+        if (info.TokenExpiresAt.HasValue)
+            sb.Append(" (at ").Append(info.TokenExpiresAt.Value.ToString("u")).Append(')');
+        if (info.TokenLifetimeMinutes > 0 || info.TokenExpiresAt.HasValue)
+            sb.Append('.');
+        return sb.ToString();
     }
 
     [McpServerTool(Name = "Safeguard_Discover", Title = "Discover Safeguard API Endpoints",
@@ -61,16 +121,7 @@ internal sealed class SafeguardApiTool(
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null)
     {
-        string host = null;
-        try
-        {
-            host = connectionManager.ResolveHost(null);
-        }
-        catch (McpException)
-        {
-        }
-
-        var results = catalogProvider.GetEndpoints(host);
+        var results = catalogProvider.GetEndpoints();
         var sb = new StringBuilder();
         const int limit = 80;
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
@@ -157,10 +208,8 @@ internal sealed class SafeguardApiTool(
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
         [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets).")]
         string format = "json",
-        [Description("Target server (required only with multiple connections).")]
-        string host = null,
         CancellationToken ct = default)
-        => await DispatchAsync(server, method, path, query, body, format, host, ct);
+        => await DispatchAsync(server, method, path, query, body, format, ct);
 
     [McpServerTool(Name = "Safeguard_Schema", Title = "Get API Schema",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -169,20 +218,18 @@ internal sealed class SafeguardApiTool(
         + "Use this before POST or PUT calls to understand the JSON body format.")]
     public string Safeguard_Schema(
         [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users').")] string path,
-        [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST",
-        [Description("Target server for dynamic schema lookup.")] string host = null)
+        [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST")
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/AssetAccounts').");
 
         var normalizedPath = NormalizePath(path);
         var normalizedMethod = ParseMethod(method);
-        var catalogHost = TryResolveCatalogHost(host);
-        var service = ResolveService(normalizedPath, catalogHost);
+        var service = ResolveService(normalizedPath);
         var serviceName = GetServiceName(service);
 
-        var requestSchema = catalogProvider.GetSchema(normalizedMethod, serviceName, normalizedPath, catalogHost);
-        var responseSchema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath, catalogHost);
+        var requestSchema = catalogProvider.GetSchema(normalizedMethod, serviceName, normalizedPath);
+        var responseSchema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath);
 
         if (requestSchema == null && responseSchema == null)
         {
@@ -263,11 +310,10 @@ internal sealed class SafeguardApiTool(
             return sb.ToString().TrimEnd();
 
         var normalizedPath = NormalizePath(path);
-        var catalogHost = TryResolveCatalogHost(null);
-        var service = ResolveService(normalizedPath, catalogHost);
+        var service = ResolveService(normalizedPath);
         var serviceName = GetServiceName(service);
-        var schema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath, catalogHost)
-            ?? catalogProvider.GetSchema("GET", serviceName, normalizedPath, catalogHost);
+        var schema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath)
+            ?? catalogProvider.GetSchema("GET", serviceName, normalizedPath);
 
         if (schema != null && schema.Value.Properties.Length > 0)
         {
@@ -292,7 +338,6 @@ internal sealed class SafeguardApiTool(
         string query,
         string body,
         string format,
-        string host,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(method))
@@ -308,39 +353,41 @@ internal sealed class SafeguardApiTool(
         if (requestedFormat == "csv" && normalizedMethod != "GET")
             throw new McpException("CSV format is only supported for GET requests.");
 
-        var catalogHost = TryResolveCatalogHost(host);
-        var service = ResolveService(normalizedPath, catalogHost);
+        var service = ResolveService(normalizedPath);
         var relativeUrl = ToSdkRelativeUrl(normalizedPath);
         var parameters = ParseQueryParameters(query);
-        parameters = MaybeInjectLimit(normalizedMethod, normalizedPath, service, parameters, catalogHost, out var injectedLimit);
+        parameters = MaybeInjectLimit(normalizedMethod, normalizedPath, service, parameters, out var injectedLimit);
 
         try
         {
             var requiresAuthentication = service != Service.Notification || requestedFormat == "csv";
-            var resolvedHost = requiresAuthentication
-                ? await connectionManager.EnsureAuthenticatedAsync(server, host, ct)
-                : await connectionManager.EnsureHostConfiguredAsync(server, host, ct);
+            if (requiresAuthentication)
+            {
+                await session.EnsureReadyAsync(server, ct);
+            }
+            else if (string.IsNullOrWhiteSpace(session.Host))
+            {
+                throw new McpException(
+                    "Safeguard appliance host is not configured. Set SAFEGUARD_HOST and restart the MCP server.");
+            }
 
             if (requestedFormat == "csv")
             {
-                var csv = await connectionManager.InvokeCsvAsync(
-                    resolvedHost,
-                    service,
-                    Method.Get,
-                    relativeUrl,
-                    parameters,
-                    ct);
+                var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
                 return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit);
             }
 
-            var response = await connectionManager.InvokeAsync(
-                resolvedHost,
-                service,
-                normalizedMethod,
-                relativeUrl,
-                body,
-                parameters,
-                ct);
+            FullResponse response;
+            if (!requiresAuthentication)
+            {
+                response = await SafeguardInvoker.InvokeUnauthenticatedAsync(
+                    session.Host, session.IgnoreSsl, service, normalizedMethod, relativeUrl, body, parameters, ct);
+            }
+            else
+            {
+                response = await SafeguardInvoker.InvokeAsync(
+                    session, service, normalizedMethod, relativeUrl, body, parameters, ct);
+            }
 
             return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit);
         }
@@ -513,7 +560,6 @@ internal sealed class SafeguardApiTool(
         string path,
         Service service,
         IDictionary<string, string> parameters,
-        string host,
         out int injectedLimit)
     {
         injectedLimit = 0;
@@ -522,7 +568,7 @@ internal sealed class SafeguardApiTool(
             return parameters;
         if (parameters != null && parameters.ContainsKey("limit"))
             return parameters;
-        if (!ShouldInjectLimit(path, service, host))
+        if (!ShouldInjectLimit(path, service))
             return parameters;
 
         var updated = parameters == null
@@ -534,9 +580,9 @@ internal sealed class SafeguardApiTool(
         return updated;
     }
 
-    private bool ShouldInjectLimit(string path, Service service, string host)
+    private bool ShouldInjectLimit(string path, Service service)
     {
-        var endpoints = catalogProvider.GetEndpoints(host);
+        var endpoints = catalogProvider.GetEndpoints();
         var serviceName = GetServiceName(service);
 
         for (int i = 0; i < endpoints.Length; i++)
@@ -567,9 +613,9 @@ internal sealed class SafeguardApiTool(
         return !LooksLikeId(lastSegment);
     }
 
-    private Service ResolveService(string path, string host)
+    private Service ResolveService(string path)
     {
-        var endpoints = catalogProvider.GetEndpoints(host);
+        var endpoints = catalogProvider.GetEndpoints();
         for (int i = 0; i < endpoints.Length; i++)
         {
             ref readonly var endpoint = ref endpoints[i];
@@ -710,21 +756,6 @@ internal sealed class SafeguardApiTool(
         if (!normalized.StartsWith('/'))
             normalized = "/" + normalized;
         return normalized;
-    }
-
-    private string TryResolveCatalogHost(string host)
-    {
-        if (!string.IsNullOrWhiteSpace(host))
-            return host.Trim();
-
-        try
-        {
-            return connectionManager.ResolveHost(null);
-        }
-        catch (McpException)
-        {
-            return null;
-        }
     }
 
     private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema)
