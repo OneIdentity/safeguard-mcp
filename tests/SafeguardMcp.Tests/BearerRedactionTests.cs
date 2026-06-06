@@ -101,6 +101,54 @@ public class BearerRedactionTests
     }
 
     [Fact]
+    public void RedactingLoggerProvider_ExceptionChain_ScrubsInnerExceptionAndStackTrace()
+    {
+        // Defense-in-depth: a sink that walks the exception chain
+        // itself (e.g. via .InnerException.Message) must not bypass
+        // redaction. Verifies the recursive RedactedException wrap.
+        var inner = new CapturingProvider();
+        using var provider = new RedactingLoggerProvider(inner);
+        var logger = provider.CreateLogger("Test");
+
+        Exception thrown;
+        try
+        {
+            try
+            {
+                throw new InvalidOperationException(
+                    $"inner failure with Bearer {SampleJwt} on the wire");
+            }
+            catch (Exception innerEx)
+            {
+                throw new InvalidOperationException(
+                    $"outer wrapper around code=abcDEF123 failure",
+                    innerEx);
+            }
+        }
+        catch (Exception ex)
+        {
+            thrown = ex;
+        }
+
+        logger.LogError(thrown, "operation failed");
+
+        Assert.NotEmpty(inner.Records);
+        var record = inner.Records.First();
+        Assert.NotNull(record.Exception);
+
+        AssertNoSecrets(record.Exception.Message, record.Exception.Message);
+        AssertNoSecrets(record.Exception.ToString(), record.Exception.ToString());
+        Assert.NotNull(record.Exception.InnerException);
+        AssertNoSecrets(record.Exception.InnerException.Message, record.Exception.InnerException.Message);
+        AssertNoSecrets(record.Exception.InnerException.ToString(), record.Exception.InnerException.ToString());
+
+        // StackTrace may be null in synthetic exceptions, but when
+        // present must also be scrubbed.
+        if (record.Exception.StackTrace != null)
+            AssertNoSecrets(record.Exception.StackTrace, record.Exception.StackTrace);
+    }
+
+    [Fact]
     public void RedactingLoggerProvider_BelowMinimumLevel_DoesNotForward()
     {
         var inner = new CapturingProvider(minimumLevel: LogLevel.Warning);

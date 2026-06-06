@@ -31,7 +31,7 @@ file sealed class StderrLogger : ILogger
         _lock = @lock;
     }
 
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => null;
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 
     public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
 
