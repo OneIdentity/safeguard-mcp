@@ -1,0 +1,5 @@
+# Golden Helm-render output is diffed by CI against a fresh render
+# produced on a Linux runner. Pin to LF on every platform so a
+# Windows checkout doesn't introduce phantom CRLF drift.
+deploy/helm/safeguard-mcp/golden/manifests.yaml text eol=lf
+deploy/helm/safeguard-mcp/golden/render.sh    text eol=lf
