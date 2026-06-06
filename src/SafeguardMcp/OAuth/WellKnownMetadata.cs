@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 
 namespace SafeguardMcp.OAuth;
@@ -15,6 +16,8 @@ internal static class WellKnownMetadata
     public const string ProtectedResourcePath = "/.well-known/oauth-protected-resource";
     public const string AuthorizationServerPath = "/.well-known/oauth-authorization-server";
 
+    private static readonly JsonWriterOptions WriterOptions = new() { Indented = true };
+
     /// <summary>
     /// RFC 9728 protected-resource metadata. Names
     /// <see cref="BridgeOptions.McpPublicUrl"/> as the protected
@@ -24,8 +27,7 @@ internal static class WellKnownMetadata
     {
         if (options == null) throw new ArgumentNullException(nameof(options));
 
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
+        return WriteJson(w =>
         {
             w.WriteStartObject();
             w.WriteString("resource", options.McpPublicUrl);
@@ -48,8 +50,7 @@ internal static class WellKnownMetadata
             w.WriteEndArray();
 
             w.WriteEndObject();
-        }
-        return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
+        });
     }
 
     /// <summary>
@@ -60,8 +61,7 @@ internal static class WellKnownMetadata
     {
         if (options == null) throw new ArgumentNullException(nameof(options));
 
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
+        return WriteJson(w =>
         {
             w.WriteStartObject();
             w.WriteString("issuer", options.McpPublicUrl);
@@ -89,7 +89,14 @@ internal static class WellKnownMetadata
             w.WriteEndArray();
 
             w.WriteEndObject();
-        }
-        return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
+        });
+    }
+
+    private static string WriteJson(Action<Utf8JsonWriter> body)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer, WriterOptions))
+            body(w);
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 }
