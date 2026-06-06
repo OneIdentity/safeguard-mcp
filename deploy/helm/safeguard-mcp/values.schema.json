@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "safeguard-mcp Helm chart values",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "safeguardHost": { "type": "string" },
+    "mcpPublicUrl":  { "type": "string" },
+    "rstsClientId":  { "type": "string" },
+    "safeguardIgnoreSsl": { "type": "boolean" },
+
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag":        { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      },
+      "required": ["repository", "pullPolicy"]
+    },
+
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { "name": { "type": "string", "minLength": 1 } },
+        "required": ["name"]
+      }
+    },
+
+    "relay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled":     { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+          },
+          "required": ["enabled", "minReplicas", "maxReplicas"]
+        }
+      },
+      "required": ["replicaCount", "autoscaling"]
+    },
+
+    "oauthBridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      },
+      "required": ["enabled"]
+    },
+
+    "bridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount":                       { "type": "integer", "minimum": 1 },
+        "acceptInProcessStateLossOnRestart":  { "type": "boolean" },
+        "authCodeTtlSeconds":                 { "type": "integer", "minimum": 1, "maximum": 300 }
+      },
+      "required": ["replicaCount", "acceptInProcessStateLossOnRestart", "authCodeTtlSeconds"],
+
+      "allOf": [
+        {
+          "comment": "Soft guard: replicaCount > 1 requires explicit acceptInProcessStateLossOnRestart=true. The bridge holds in-flight OAuth state in process memory; multiple replicas without a shared cache split that state. This is correctness/availability, not security.",
+          "if":   { "properties": { "replicaCount": { "minimum": 2 } } },
+          "then": { "properties": { "acceptInProcessStateLossOnRestart": { "const": true } } }
+        }
+      ]
+    },
+
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": { "type": "object" },
+        "limits":   { "type": "object" }
+      }
+    },
+
+    "nodeSelector": { "type": "object" },
+    "tolerations":  { "type": "array" },
+    "affinity":     { "type": "object" },
+
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled":     { "type": "boolean" },
+        "className":   { "type": "string" },
+        "host":        { "type": "string" },
+        "annotations": { "type": "object" },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled":    { "type": "boolean" },
+            "secretName": { "type": "string" }
+          },
+          "required": ["enabled"]
+        }
+      },
+      "required": ["enabled"]
+    },
+
+    "extraEnv": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "required": ["safeguardHost", "image", "relay", "bridge", "oauthBridge"]
+}

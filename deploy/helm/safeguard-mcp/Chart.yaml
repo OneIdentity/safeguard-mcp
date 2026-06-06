@@ -1,0 +1,24 @@
+apiVersion: v2
+name: safeguard-mcp
+description: |
+  One Identity Safeguard MCP server — HTTP-mode pure-relay with an
+  optional OAuth metadata bridge. Deploys a horizontally-scaled
+  stateless relay (the MCP `/mcp` transport) and an optional
+  single-replica OAuth bridge (`/authorize`, `/authorize/callback`,
+  `/token`, `/register`).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - safeguard
+  - mcp
+  - oauth
+  - pam
+home: https://github.com/OneIdentity/safeguard-mcp
+sources:
+  - https://github.com/OneIdentity/safeguard-mcp
+maintainers:
+  - name: One Identity
+    url: https://github.com/OneIdentity
+icon: https://avatars.githubusercontent.com/u/16942695?s=200&v=4
