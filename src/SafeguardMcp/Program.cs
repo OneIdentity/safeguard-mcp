@@ -202,6 +202,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
                 OAuth.WellKnownEndpoints.Map(app, bridgeOptions);
                 OAuth.AuthorizeEndpoints.Map(app, bridgeOptions);
                 OAuth.TokenEndpoint.Map(app, bridgeOptions);
+                OAuth.RegistrationEndpoint.Map(app, bridgeOptions);
                 app.Services.GetRequiredService<ILogger<Program>>().LogInformation(
                     "OAuth metadata bridge active at {PublicUrl}; well-known metadata exposed for MCP clients.",
                     bridgeOptions.McpPublicUrl);
