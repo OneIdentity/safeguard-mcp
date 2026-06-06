@@ -6,10 +6,9 @@ namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
 /// Verifies the minimal lookup behavior of <see cref="ClientRegistry"/>
-/// required by plan §2.2.c (the /authorize endpoint must reject
-/// client_ids that did not complete /register, and must enforce
-/// exact-match redirect_uri validation per RFC 6749 §3.1.2.3).
-/// The DCR write path is task 2.2.f.
+/// used by /authorize: reject client_ids that did not complete
+/// /register, and enforce exact-match redirect_uri validation per
+/// RFC 6749 §3.1.2.3.
 /// </summary>
 public class ClientRegistryTests
 {

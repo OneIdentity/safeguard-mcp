@@ -19,8 +19,8 @@ using SafeguardMcp.OAuth;
 namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
-/// HTTP-AUTH-RELAY-PLAN Phase-2 acceptance gates that span more than
-/// one endpoint. The individual endpoint test files (
+/// Bridge acceptance gates that span more than one endpoint. The
+/// individual endpoint test files (
 /// <see cref="WellKnownMetadataTests"/>,
 /// <see cref="AuthorizeEndpointsTests"/>,
 /// <see cref="TokenEndpointTests"/>,
@@ -197,16 +197,16 @@ public class BridgePhase2AcceptanceTests
     }
 
     // ==================================================================
-    // 2.3 + 2.A — State residency / no-state post-flow
+    // ==================================================================
+    // State residency / no-state post-flow
     // ==================================================================
 
     /// <summary>
     /// Drives the full /authorize → /authorize/callback → /token
     /// pipeline in-process and asserts the post-flow state-residency
-    /// invariant in plan §2.3 and §2.A: zero auth-code-map entries,
-    /// zero flow-store entries, and no Safeguard token strings
-    /// reachable from any bridge-owned object after the flow
-    /// completes successfully.
+    /// invariant: zero auth-code-map entries, zero flow-store entries,
+    /// and no Safeguard token strings reachable from any bridge-owned
+    /// object after the flow completes successfully.
     /// </summary>
     [Fact]
     public async Task EndToEndOAuthFlow_LeavesNoStateAndNoTokensRetained()
@@ -283,9 +283,9 @@ public class BridgePhase2AcceptanceTests
     [Fact]
     public async Task EndToEndOAuthFlow_FailedPkce_DoesNotLeakAuthCodeOrCallUpstream()
     {
-        // Plan §2.3 / task 2.A corollary: the no-state guarantee
-        // must hold on the failure path too — a tampered code_verifier
-        // burns the auth-code entry without ever reaching upstream.
+        // The no-state guarantee must hold on the failure path too —
+        // a tampered code_verifier burns the auth-code entry without
+        // ever reaching upstream.
         var f = NewFixture();
         var clientVerifier = "client-verifier-OK";
         var clientChallenge = PkceUtilities.ComputeS256Challenge(clientVerifier);
@@ -315,9 +315,9 @@ public class BridgePhase2AcceptanceTests
         await TokenEndpoint.HandleTokenAsync(ctxT, Opts());
 
         Assert.Equal(400, ctxT.Response.StatusCode);
-        // Plan §2.2.e step 2: the auth-code entry is removed from the
-        // store before any upstream call. PKCE failure burns the
-        // single-use code regardless.
+        // The auth-code entry is removed from the store before any
+        // upstream call. PKCE failure burns the single-use code
+        // regardless.
         Assert.Equal(0, f.Codes.Count);
         Assert.Equal(0, f.Flow.Count);
         Assert.Equal(0, f.Exchanger.AuthCodeCalls);
@@ -362,10 +362,10 @@ public class BridgePhase2AcceptanceTests
         if (o is IDictionary dict)
         {
             // The bridge keeps DCR registrations across the 30-day
-            // window (plan §2.3 explicitly permits "DCR client
-            // registrations (no secrets)"); the assertion here is
-            // about token retention, so we only walk into entries
-            // looking for token-shaped strings, not flag presence.
+            // window — DCR records carry no secrets. The assertion
+            // here is about token retention, so we only walk into
+            // entries looking for token-shaped strings, not flag
+            // presence.
             foreach (var key in dict.Keys)
             {
                 Walk(key, seen, hits, jwtShape, depth + 1);
@@ -460,10 +460,10 @@ public class BridgePhase2AcceptanceTests
     [Fact]
     public void WellKnown_AdvertisesMcpPublicUrlAsResource_AndAuthorizationServer()
     {
-        // Plan §2.4: bridge advertises MCP_PUBLIC_URL as the
-        // protected resource (RFC 9728) and as the issuer/auth
-        // server (RFC 8414). Pin both shapes here so any future
-        // edit that breaks audience binding fails this test.
+        // Bridge advertises MCP_PUBLIC_URL as the protected resource
+        // (RFC 9728) and as the issuer/auth server (RFC 8414). Pin
+        // both shapes here so any future edit that breaks audience
+        // binding fails this test.
         using var pr = JsonDocument.Parse(WellKnownMetadata.BuildProtectedResourceJson(Opts()));
         Assert.Equal("https://mcp.example.test", pr.RootElement.GetProperty("resource").GetString());
         Assert.Equal("https://mcp.example.test",
@@ -474,14 +474,14 @@ public class BridgePhase2AcceptanceTests
     }
 
     // ==================================================================
-    // 2.5 — IdP pass-through
+    // IdP pass-through
     // ==================================================================
 
     [Fact]
     public async Task Authorize_PassesThroughBothProviderIds_Verbatim()
     {
-        // Plan §2.5: pass through, never override. Forward both
-        // provider hints to /RSTS/Login exactly as supplied.
+        // Pass through, never override. Forward both provider hints
+        // to /RSTS/Login exactly as supplied.
         var f = NewFixture();
         var qs = AuthorizeQueryWithResource("https://mcp.example.test")
             + "&primaryProviderID=local&secondaryProviderID=2fa-vendor";
@@ -592,8 +592,8 @@ public class BridgePhase2AcceptanceTests
     [Fact]
     public async Task Cors_Authorize_DoesNotAdvertiseCors()
     {
-        // Plan §2.6: /authorize is a user-agent redirect, never an
-        // XHR. Setting CORS headers there would be wrong.
+        // /authorize is a user-agent redirect, never an XHR. Setting
+        // CORS headers there would be wrong.
         var f = NewFixture();
         var ctx = NewContext(f, "GET", "/authorize",
             AuthorizeQueryWithResource("https://mcp.example.test"));

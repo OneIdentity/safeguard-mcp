@@ -1,8 +1,8 @@
 namespace SafeguardMcp.OAuth;
 
 /// <summary>
-/// Parsed Phase-2 OAuth metadata-bridge configuration per
-/// HTTP-AUTH-RELAY-PLAN §2.1. Pure value object — no I/O.
+/// Parsed OAuth metadata-bridge configuration. Pure value object —
+/// no I/O.
 ///
 /// <para>
 /// Activation signal is <c>MCP_PUBLIC_URL</c>: when absent, the bridge

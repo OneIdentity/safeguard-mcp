@@ -60,7 +60,7 @@ public class TokenEndpointTests
     /// Builds a Safeguard-shaped JWT (header.payload.signature) with
     /// a synthetic <c>exp</c> claim. Signature bytes are arbitrary —
     /// the bridge never verifies them; the appliance is the
-    /// authority on signature (plan §"Why not local JWT validation").
+    /// authority on signature.
     /// </summary>
     private static string MakeJwt(long expUnix)
     {

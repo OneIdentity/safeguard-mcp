@@ -14,23 +14,24 @@ using OneIdentity.SafeguardDotNet;
 namespace SafeguardMcp.OAuth;
 
 /// <summary>
-/// Maps <c>POST /token</c> (HTTP-AUTH-RELAY-PLAN §2.2.e) — the
-/// bridge's RFC 6749 authorization-code redemption endpoint.
+/// Maps <c>POST /token</c> — the bridge's RFC 6749 authorization-code
+/// redemption endpoint.
 ///
 /// <para>
 /// The handler runs the redemption in a strict order so the
-/// state-residency invariant in plan §2.3 holds even under upstream
-/// latency or partial failure:
+/// state-residency invariant (no token material persists in any
+/// bridge data structure) holds even under upstream latency or
+/// partial failure:
 /// </para>
 /// <list type="number">
 ///   <item>Parse the form body. Bad content type / unreadable body
 ///   → <c>400 invalid_request</c>.</item>
 ///   <item>Consume the bridge_auth_code from
-///   <see cref="AuthCodeStore"/>. This is the "delete in-memory entry
-///   before any network call" step (plan §2.2.e step 2): a missing
-///   entry — whether expired, never minted, or already consumed by
-///   a prior <c>/token</c> attempt — yields <c>400 invalid_grant</c>.
-///   That single rule covers RFC 6749 §4.1.3 replay rejection.</item>
+///   <see cref="AuthCodeStore"/>. This is the "delete in-memory
+///   entry before any network call" step: a missing entry — whether
+///   expired, never minted, or already consumed by a prior
+///   <c>/token</c> attempt — yields <c>400 invalid_grant</c>. That
+///   single rule covers RFC 6749 §4.1.3 replay rejection.</item>
 ///   <item>Verify <c>client_id</c> and <c>redirect_uri</c> match
 ///   the values captured at <c>/authorize</c> — exact, case-sensitive
 ///   string compare per RFC 6749 §3.1.2.3 / §4.1.3. Mismatch →
@@ -209,7 +210,7 @@ internal static class TokenEndpoint
         var ct = ctx.RequestAborted;
 
         // Step 5 + 6 — upstream Stage 1 then Stage 2. Token material
-        // never escapes this method (plan §2.3).
+        // never escapes this method.
         SecureString rstsAccessToken = null;
         try
         {
@@ -315,9 +316,9 @@ internal static class TokenEndpoint
             writer.WriteStartObject();
             writer.WriteString("access_token", accessToken);
             writer.WriteString("token_type", "Bearer");
-            // Plan §2.2.e: expires_in is derived from the JWT exp
-            // claim. Omit when we can't derive a positive value so
-            // we never advertise an already-expired token.
+            // expires_in is derived from the JWT exp claim. Omit when
+            // we can't derive a positive value so we never advertise
+            // an already-expired token.
             if (expiresInSeconds > 0)
                 writer.WriteNumber("expires_in", expiresInSeconds);
             writer.WriteEndObject();
@@ -361,8 +362,7 @@ internal static class TokenEndpoint
 
     private static void SetCorsHeaders(HttpContext ctx)
     {
-        // Plan §2.6: /token is server-to-server, allow * for
-        // pragmatism.
+        // /token is server-to-server, advertise * for pragmatism.
         ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
         ctx.Response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
         ctx.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";

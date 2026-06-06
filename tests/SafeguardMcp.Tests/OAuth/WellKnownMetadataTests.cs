@@ -7,12 +7,12 @@ using SafeguardMcp.OAuth;
 namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
-/// Phase 2 tasks 2.2.a and 2.2.b — verifies the JSON bodies returned
-/// from the well-known metadata endpoints against the field choices
-/// in HTTP-AUTH-RELAY-PLAN §2.2.a / §2.2.b. Parses the rendered text
-/// with <see cref="JsonDocument"/> (the same primitive used at
-/// runtime per the project's JSON-handling constraint) and asserts
-/// every field's value matches what an MCP client expects.
+/// Verifies the JSON bodies returned from the well-known metadata
+/// endpoints (RFC 9728 protected resource + RFC 8414 authorization
+/// server). Parses the rendered text with <see cref="JsonDocument"/>
+/// (the same primitive used at runtime per the project's
+/// JSON-handling constraint) and asserts every field's value matches
+/// what an MCP client expects.
 /// </summary>
 public class WellKnownMetadataTests
 {

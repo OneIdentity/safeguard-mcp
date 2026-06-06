@@ -7,9 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace SafeguardMcp.OAuth;
 
 /// <summary>
-/// Maps the bridge's user-agent OAuth endpoints
-/// <c>GET /authorize</c> (plan §2.2.c) and
-/// <c>GET /authorize/callback</c> (plan §2.2.d).
+/// Maps the bridge's user-agent OAuth endpoints <c>GET /authorize</c>
+/// and <c>GET /authorize/callback</c>.
 ///
 /// <para>
 /// <c>/authorize</c> is the entry point for an MCP client's
@@ -28,8 +27,8 @@ namespace SafeguardMcp.OAuth;
 /// back to the MCP client's <c>redirect_uri</c> with that code and
 /// the client's original <c>state</c>. <strong>No upstream token
 /// work happens here</strong> — that's deferred to <c>POST /token</c>
-/// (plan §2.2.e) where the client's PKCE check can fail before any
-/// network call is made.
+/// where the client's PKCE check can fail before any network call
+/// is made.
 /// </para>
 /// </summary>
 internal static class AuthorizeEndpoints
@@ -104,10 +103,10 @@ internal static class AuthorizeEndpoints
                 "state is required.", state);
             return;
         }
-        // Plan §2.4 / RFC 8707: the bridge advertises MCP_PUBLIC_URL
-        // as the protected resource; the client MUST name it as the
-        // resource indicator. Strict match — any other value reveals
-        // a misconfigured client trying to teleport tokens.
+        // RFC 8707: the bridge advertises MCP_PUBLIC_URL as the
+        // protected resource; the client MUST name it as the resource
+        // indicator. Strict match — any other value reveals a
+        // misconfigured client trying to teleport tokens.
         if (!string.Equals(resource, options.McpPublicUrl, StringComparison.Ordinal))
         {
             RedirectWithError(ctx, redirectUri, "invalid_target",
@@ -151,9 +150,11 @@ internal static class AuthorizeEndpoints
         string primaryProviderId,
         string secondaryProviderId)
     {
-        // Plan §2.1 fixes the front-channel URL; FACTS §rSTS §Endpoints
-        // confirms /RSTS/Login is the canonical entry (the OAuth alias
-        // /RSTS/oauth2/auth just 302s here).
+        // /RSTS/Login is the canonical rSTS front-channel entry; the
+        // OAuth alias /RSTS/oauth2/auth just 302s here. The bridge
+        // builds this URL once per /authorize request — there is no
+        // shared mutable state, just a deterministic projection from
+        // BridgeOptions + the per-request PKCE challenge and session.
         var sb = new StringBuilder("https://");
         sb.Append(options.SafeguardHost);
         sb.Append("/RSTS/Login");

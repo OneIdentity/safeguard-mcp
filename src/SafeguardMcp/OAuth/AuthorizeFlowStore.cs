@@ -5,8 +5,7 @@ namespace SafeguardMcp.OAuth;
 /// <summary>
 /// In-memory map of in-flight bridge↔rSTS authorization-code flows,
 /// keyed by an opaque <c>bridge_session_id</c> the bridge mints at
-/// <c>/authorize</c> and reads back at <c>/authorize/callback</c>
-/// (plan §2.2.c / §2.2.d).
+/// <c>/authorize</c> and reads back at <c>/authorize/callback</c>.
 ///
 /// <para>
 /// Each entry caches:
@@ -32,7 +31,7 @@ namespace SafeguardMcp.OAuth;
 /// <para>
 /// Holds zero token material. Entries hold short-lived OAuth
 /// machinery only; rSTS access tokens and Safeguard user tokens
-/// never enter this store (plan §2.3 — state-residency invariant).
+/// never enter this store — the bridge's state-residency invariant.
 /// </para>
 /// </summary>
 internal sealed class AuthorizeFlowStore

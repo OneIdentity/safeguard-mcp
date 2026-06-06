@@ -12,9 +12,8 @@ using SafeguardMcp.OAuth;
 namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
-/// Phase 2 tasks 2.2.c and 2.2.d — verifies the behavior of the
-/// bridge's <c>/authorize</c> and <c>/authorize/callback</c>
-/// handlers against plan §2.2.c / §2.2.d:
+/// Verifies the behavior of the bridge's <c>/authorize</c> and
+/// <c>/authorize/callback</c> handlers:
 ///
 /// <list type="bullet">
 ///   <item><c>/authorize</c> rejects unknown client_ids and
@@ -31,7 +30,7 @@ namespace SafeguardMcp.Tests.OAuth;
 ///   <c>/token</c> will need, and redirects to the client's
 ///   <c>redirect_uri</c> with that code and the client's original
 ///   <c>state</c> — <strong>without</strong> doing any upstream
-///   token exchange (plan §2.2.d).</item>
+///   token exchange.</item>
 ///   <item><c>/authorize/callback</c> rejects an unknown state with
 ///   a plain 400 — no open redirect via this endpoint.</item>
 /// </list>
@@ -162,9 +161,9 @@ public class AuthorizeEndpointsTests
     [Fact]
     public async Task Authorize_UnknownClientId_Returns400_NotRedirect()
     {
-        // Plan §2.2.c / RFC 6749 §4.1.2.1: do NOT redirect when
-        // client_id is not registered — even if the supplied
-        // redirect_uri looks plausible.
+        // RFC 6749 §4.1.2.1: do NOT redirect when client_id is not
+        // registered — even if the supplied redirect_uri looks
+        // plausible.
         var qs = "?client_id=unknown&redirect_uri=" + Uri.EscapeDataString(ClientRedirect);
         var (ctx, flow, _, _, _) = BuildContext(qs);
         await AuthorizeEndpoints.HandleAuthorizeAsync(ctx, Opts());

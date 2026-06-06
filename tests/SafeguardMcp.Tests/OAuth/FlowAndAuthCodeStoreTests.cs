@@ -15,7 +15,7 @@ internal sealed class FakeTime : TimeProvider
 
 /// <summary>
 /// Verifies the in-memory state stores backing the bridge's OAuth
-/// flow (plan §2.2.c / §2.2.d / §2.2.e):
+/// flow:
 /// <list type="bullet">
 ///   <item>Entries are single-use — a second consume returns false.</item>
 ///   <item>Expired entries are dropped on read so a slow caller
@@ -89,9 +89,8 @@ public class FlowAndAuthCodeStoreTests
     [Fact]
     public void AuthCodeStore_Replay_FailsSecondTime()
     {
-        // Plan §2.2.e step 2: the entry is deleted before any
-        // upstream call; a later replay of the same bridge_auth_code
-        // must return false.
+        // The entry is deleted before any upstream call; a later
+        // replay of the same bridge_auth_code must return false.
         var time = new FakeTime();
         var store = new AuthCodeStore(time);
         store.Add("code-1", NewAuthCode(time.GetUtcNow().AddSeconds(60)));

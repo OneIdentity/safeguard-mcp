@@ -5,8 +5,8 @@ namespace SafeguardMcp.OAuth;
 /// <summary>
 /// In-memory map of issued <c>bridge_auth_code</c> values awaiting
 /// redemption at <c>POST /token</c>. Populated by the
-/// <c>/authorize/callback</c> handler (plan §2.2.d) and consumed by
-/// the <c>/token</c> handler (plan §2.2.e, task 2.2.e).
+/// <c>/authorize/callback</c> handler and consumed by the
+/// <c>/token</c> handler.
 ///
 /// <para>
 /// Each entry holds the upstream rSTS authorization code (the
@@ -21,8 +21,8 @@ namespace SafeguardMcp.OAuth;
 /// TTL is <see cref="BridgeOptions.AuthCodeTtlSeconds"/> (≤60s,
 /// derived from <c>BRIDGE_AUTH_CODE_TTL_SECONDS</c>, bounded by
 /// rSTS's own 5-minute upstream limit). The entry must be deleted
-/// from this store before any upstream call (plan §2.2 step 2) so
-/// a slow rSTS exchange cannot be replayed.
+/// from this store before any upstream call so a slow rSTS exchange
+/// cannot be replayed.
 /// </para>
 ///
 /// <para>

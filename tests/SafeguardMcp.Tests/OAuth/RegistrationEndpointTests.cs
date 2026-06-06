@@ -12,8 +12,8 @@ using SafeguardMcp.OAuth;
 namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
-/// Phase 2 tasks 2.2.f and 2.E — verifies the bridge's RFC 7591
-/// dynamic client registration endpoint behaves per plan §2.2.f:
+/// Verifies the bridge's RFC 7591 dynamic client registration
+/// endpoint:
 ///
 /// <list type="bullet">
 ///   <item>Issues a synthetic <c>mcp-client-&lt;uuid&gt;</c> client_id
@@ -27,13 +27,13 @@ namespace SafeguardMcp.Tests.OAuth;
 ///   <c>Origin</c> header.</item>
 ///   <item><strong>Rejects</strong> any redirect_uri that is neither
 ///   loopback nor origin-matched — the open-redirect-rejection
-///   acceptance gate (task 2.E). Specifically: non-loopback http
-///   anywhere, https with a missing or mismatched Origin, multiple
+///   acceptance gate. Specifically: non-loopback http anywhere,
+///   https with a missing or mismatched Origin, multiple
 ///   redirect_uris where any single entry fails validation.</item>
 ///   <item>RFC 7591 §3.2.2 error shape on validation failure: HTTP
 ///   400 with <c>{"error": "invalid_redirect_uri" | "invalid_client_metadata"}</c>.</item>
 ///   <item>CORS preflight (<c>OPTIONS /register</c>) returns 204
-///   with <c>*</c> origin per plan §2.6.</item>
+///   with <c>*</c> origin.</item>
 /// </list>
 /// </summary>
 public class RegistrationEndpointTests
@@ -187,13 +187,13 @@ public class RegistrationEndpointTests
         Assert.Equal("My MCP Client", json.RootElement.GetProperty("client_name").GetString());
     }
 
-    // ---- task 2.E: open-redirect rejection -------------------------
+    // ---- open-redirect rejection -----------------------------------
 
     [Fact]
     public async Task Register_NonLoopbackHttp_RejectedAsInvalidRedirectUri()
     {
-        // Plan §2.2.f / task 2.E: http on a non-loopback host must
-        // be rejected — that's the classic open-redirect vector.
+        // http on a non-loopback host must be rejected — that's the
+        // classic open-redirect vector.
         var (ctx, reg, _) = BuildContext(Body("http://attacker.example.com/cb"));
         await RegistrationEndpoint.HandleRegisterAsync(ctx, Opts());
 
