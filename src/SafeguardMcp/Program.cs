@@ -34,6 +34,12 @@ namespace SafeguardMcp
                 return await LoginCommand.RunAsync(subArgs, CancellationToken.None);
             }
 
+            if (args.Length > 0 && string.Equals(args[0], "logout", StringComparison.OrdinalIgnoreCase))
+            {
+                var subArgs = args.Length == 1 ? Array.Empty<string>() : args[1..];
+                return await LogoutCommand.RunAsync(subArgs, CancellationToken.None);
+            }
+
             if (HasFlag(args, "-v", "--version"))
             {
                 Console.Out.WriteLine(GetVersion());
@@ -100,6 +106,8 @@ USAGE:
   safeguard-mcp login [opts]   Acquire a Safeguard user token via device-code
                                login and print it (or write it to a file with
                                a restrictive ACL). See `safeguard-mcp login --help`.
+  safeguard-mcp logout [opts]  Revoke a token previously issued by `login`.
+                               See `safeguard-mcp logout --help`.
   safeguard-mcp --version      Print version and exit.
   safeguard-mcp --help         Print this help and exit.
 
