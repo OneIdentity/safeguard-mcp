@@ -26,9 +26,12 @@ API-version selection is stable across CI runners, and the following
 fixed values:
 
 * `safeguardHost=safeguard.example.com`
-* `mcpPublicUrl=https://mcp.example.com`
-* `rstsClientId=https://mcp.example.com`
 * `ingress.host=mcp.example.com`
 * `relay.autoscaling.enabled=true` (so the HPA appears in golden)
+
+`mcpPublicUrl` / `rstsClientId` are intentionally left at their
+empty defaults so the golden exercises the inferred-URL code path —
+the bridge publishes a single ConfigMap entry block without those
+keys, matching the deploy quick-start.
 
 All other values come from the chart's defaults.

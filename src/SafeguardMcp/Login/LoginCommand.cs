@@ -201,7 +201,13 @@ internal static class LoginCommand
         }
 
         sb.AppendLine();
-        sb.AppendLine("Use this token with an HTTP-mode safeguard-mcp by configuring your MCP client to send");
+        sb.AppendLine("PRIMARY PATH (recommended): point your MCP client at https://<your-mcp-host>/mcp");
+        sb.AppendLine("and let it discover OAuth via /.well-known/oauth-authorization-server. The");
+        sb.AppendLine("client will run a browser-based PKCE login against the appliance's rSTS and");
+        sb.AppendLine("manage the bearer for you — no manual paste required.");
+        sb.AppendLine();
+        sb.AppendLine("MANUAL FALLBACK (for scripting or MCP clients that don't speak OAuth discovery):");
+        sb.AppendLine("configure your MCP client to send");
         sb.AppendLine("  Authorization: Bearer <token>");
         sb.AppendLine("on every MCP request. Example client config snippets:");
         sb.AppendLine();

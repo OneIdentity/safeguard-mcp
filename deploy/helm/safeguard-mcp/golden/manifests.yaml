@@ -12,8 +12,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   SAFEGUARD_HOST: "safeguard.example.com"
-  MCP_PUBLIC_URL: "https://mcp.example.com"
-  RSTS_CLIENT_ID: "https://mcp.example.com"
   BRIDGE_AUTH_CODE_TTL_SECONDS: "60"
 ---
 # Source: safeguard-mcp/templates/bridge-service.yaml

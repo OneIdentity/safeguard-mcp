@@ -10,9 +10,9 @@
 # The bridge endpoints (`/authorize`, `/authorize/callback`, `/token`,
 # `/register`) are NOT routed here by the Ingress; that work belongs
 # to the bridge Deployment in `20-bridge-deployment.yaml`. The relay
-# pods still receive the bridge env vars (via the shared ConfigMap)
-# because the well-known metadata documents are derived from
-# `MCP_PUBLIC_URL` and `RSTS_CLIENT_ID`.
+# pods still serve well-known metadata derived from the per-request
+# Host (or, when set, the pinned `MCP_PUBLIC_URL` / `RSTS_CLIENT_ID`
+# overrides shared via the ConfigMap).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
