@@ -62,6 +62,8 @@ internal static class AuthorizeEndpoints
         var secondaryProviderId = q["secondaryProviderID"].ToString();
 
         var registry = ctx.RequestServices.GetRequiredService<ClientRegistry>();
+        var resolver = ctx.RequestServices.GetRequiredService<BridgeUrlResolver>();
+        var urls = resolver.Resolve(ctx);
         var now = ctx.RequestServices.GetService<TimeProvider>()?.GetUtcNow()
                   ?? TimeProvider.System.GetUtcNow();
 
@@ -103,14 +105,15 @@ internal static class AuthorizeEndpoints
                 "state is required.", state);
             return;
         }
-        // RFC 8707: the bridge advertises MCP_PUBLIC_URL as the
+        // RFC 8707: the bridge advertises its public URL as the
         // protected resource; the client MUST name it as the resource
-        // indicator. Strict match — any other value reveals a
-        // misconfigured client trying to teleport tokens.
-        if (!string.Equals(resource, options.McpPublicUrl, StringComparison.Ordinal))
+        // indicator. Strict match against the resolved public URL —
+        // any other value reveals a misconfigured client trying to
+        // teleport tokens.
+        if (!string.Equals(resource, urls.PublicUrl, StringComparison.Ordinal))
         {
             RedirectWithError(ctx, redirectUri, "invalid_target",
-                "resource parameter must equal the bridge's advertised MCP_PUBLIC_URL.", state);
+                "resource parameter must equal the bridge's advertised public URL.", state);
             return;
         }
 
@@ -128,6 +131,7 @@ internal static class AuthorizeEndpoints
             clientState: state,
             clientPkceChallenge: codeChallenge,
             bridgeToRstsPkceVerifier: verifier,
+            bridgeCallbackUrl: urls.AuthorizeCallbackEndpoint,
             expiresAt: flowExpiresAt);
 
         var flowStore = ctx.RequestServices.GetRequiredService<AuthorizeFlowStore>();
@@ -135,6 +139,7 @@ internal static class AuthorizeEndpoints
 
         var rstsLoginUrl = BuildRstsLoginUrl(
             options,
+            urls,
             challenge,
             bridgeSessionId,
             primaryProviderId,
@@ -145,6 +150,7 @@ internal static class AuthorizeEndpoints
 
     private static string BuildRstsLoginUrl(
         BridgeOptions options,
+        BridgeRequestUrls urls,
         string codeChallenge,
         string bridgeSessionId,
         string primaryProviderId,
@@ -154,13 +160,14 @@ internal static class AuthorizeEndpoints
         // OAuth alias /RSTS/oauth2/auth just 302s here. The bridge
         // builds this URL once per /authorize request — there is no
         // shared mutable state, just a deterministic projection from
-        // BridgeOptions + the per-request PKCE challenge and session.
+        // BridgeOptions + the per-request resolver output + the
+        // per-request PKCE challenge and session.
         var sb = new StringBuilder("https://");
         sb.Append(options.SafeguardHost);
         sb.Append("/RSTS/Login");
         sb.Append("?response_type=code");
-        AppendQuery(sb, "client_id", options.RstsClientId);
-        AppendQuery(sb, "redirect_uri", options.AuthorizeCallbackEndpoint);
+        AppendQuery(sb, "client_id", urls.ClientId);
+        AppendQuery(sb, "redirect_uri", urls.AuthorizeCallbackEndpoint);
         AppendQuery(sb, "state", bridgeSessionId);
         AppendQuery(sb, "code_challenge", codeChallenge);
         AppendQuery(sb, "code_challenge_method", "S256");
@@ -221,6 +228,7 @@ internal static class AuthorizeEndpoints
             clientPkceChallenge: flow.ClientPkceChallenge,
             clientRedirectUri: flow.ClientRedirectUri,
             clientId: flow.ClientId,
+            bridgeCallbackUrl: flow.BridgeCallbackUrl,
             expiresAt: now.AddSeconds(options.AuthCodeTtlSeconds)));
 
         var sb = new StringBuilder(flow.ClientRedirectUri);

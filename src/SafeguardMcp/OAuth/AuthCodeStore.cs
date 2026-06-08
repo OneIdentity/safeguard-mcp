@@ -86,6 +86,12 @@ internal sealed class AuthCodeStore
         public string ClientPkceChallenge { get; }
         public string ClientRedirectUri { get; }
         public string ClientId { get; }
+        /// <summary>
+        /// The bridge's own /authorize/callback URL captured at
+        /// /authorize. /token re-uses it for the rSTS code exchange
+        /// so the callback parameter matches what rSTS recorded.
+        /// </summary>
+        public string BridgeCallbackUrl { get; }
         public DateTimeOffset ExpiresAt { get; }
 
         public Entry(
@@ -94,6 +100,7 @@ internal sealed class AuthCodeStore
             string clientPkceChallenge,
             string clientRedirectUri,
             string clientId,
+            string bridgeCallbackUrl,
             DateTimeOffset expiresAt)
         {
             RstsAuthCode = rstsAuthCode;
@@ -101,6 +108,7 @@ internal sealed class AuthCodeStore
             ClientPkceChallenge = clientPkceChallenge;
             ClientRedirectUri = clientRedirectUri;
             ClientId = clientId;
+            BridgeCallbackUrl = bridgeCallbackUrl;
             ExpiresAt = expiresAt;
         }
     }

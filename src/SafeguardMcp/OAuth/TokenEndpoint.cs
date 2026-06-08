@@ -220,7 +220,7 @@ internal static class TokenEndpoint
                     options.SafeguardHost,
                     entry.RstsAuthCode,
                     entry.BridgeToRstsPkceVerifier,
-                    options.AuthorizeCallbackEndpoint,
+                    entry.BridgeCallbackUrl,
                     options.IgnoreSsl,
                     ct);
             }
