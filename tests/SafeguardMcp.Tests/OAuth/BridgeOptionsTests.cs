@@ -189,4 +189,87 @@ public class BridgeOptionsTests
             ("SAFEGUARD_HOST", "appliance.example.test")));
         Assert.True(result.IsActive);
     }
+
+    [Fact]
+    public void Parse_BridgeDisabledUnparseable_StaysActiveAndWarns()
+    {
+        // Fail-open (typo shouldn't lock the operator out) but warn so
+        // BRIDGE_DISABLED=tru isn't silent.
+        var result = BridgeOptions.Parse(Env(
+            ("BRIDGE_DISABLED", "tru"),
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.True(result.IsActive);
+        Assert.Single(result.Warnings);
+        Assert.Contains("BRIDGE_DISABLED", result.Warnings[0]);
+        Assert.Contains("'tru'", result.Warnings[0]);
+    }
+
+    [Fact]
+    public void Parse_BridgeDisabledValid_HasNoWarnings()
+    {
+        var result = BridgeOptions.Parse(Env(
+            ("BRIDGE_DISABLED", "false"),
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.True(result.IsActive);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Parse_BridgeTrustedProxiesUnset_EmptyList()
+    {
+        var result = BridgeOptions.Parse(Env(
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.True(result.IsActive);
+        Assert.Empty(result.Options.TrustedProxies);
+    }
+
+    [Fact]
+    public void Parse_BridgeTrustedProxiesValidSingle_Parsed()
+    {
+        var result = BridgeOptions.Parse(Env(
+            ("BRIDGE_TRUSTED_PROXIES", "100.64.0.0/10"),
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.True(result.IsActive);
+        Assert.Single(result.Options.TrustedProxies);
+        Assert.Equal(System.Net.IPNetwork.Parse("100.64.0.0/10"), result.Options.TrustedProxies[0]);
+    }
+
+    [Fact]
+    public void Parse_BridgeTrustedProxiesValidMultiple_Parsed()
+    {
+        var result = BridgeOptions.Parse(Env(
+            ("BRIDGE_TRUSTED_PROXIES", "100.64.0.0/10, 2001:db8::/32 ,198.51.100.0/24"),
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.True(result.IsActive);
+        Assert.Equal(3, result.Options.TrustedProxies.Count);
+        Assert.Equal(System.Net.IPNetwork.Parse("100.64.0.0/10"), result.Options.TrustedProxies[0]);
+        Assert.Equal(System.Net.IPNetwork.Parse("2001:db8::/32"), result.Options.TrustedProxies[1]);
+        Assert.Equal(System.Net.IPNetwork.Parse("198.51.100.0/24"), result.Options.TrustedProxies[2]);
+    }
+
+    [Theory]
+    [InlineData("not-an-ip/8")]
+    [InlineData("10.0.0.0")]
+    [InlineData("10.0.0.0/")]
+    [InlineData("10.0.0.0/40")]
+    [InlineData("10.0.0.0/-1")]
+    public void Parse_BridgeTrustedProxiesInvalid_FailFast(string value)
+    {
+        var result = BridgeOptions.Parse(Env(
+            ("BRIDGE_TRUSTED_PROXIES", value),
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.False(result.IsActive);
+        Assert.NotNull(result.Error);
+        Assert.Contains("BRIDGE_TRUSTED_PROXIES", result.Error);
+    }
+
+    [Fact]
+    public void Parse_BridgeTrustedProxiesMixedValidInvalid_FailFastOnFirstInvalid()
+    {
+        var result = BridgeOptions.Parse(Env(
+            ("BRIDGE_TRUSTED_PROXIES", "10.0.0.0/8,not-a-cidr,192.168.0.0/16"),
+            ("SAFEGUARD_HOST", "appliance.example.test")));
+        Assert.False(result.IsActive);
+        Assert.Contains("'not-a-cidr'", result.Error);
+    }
 }

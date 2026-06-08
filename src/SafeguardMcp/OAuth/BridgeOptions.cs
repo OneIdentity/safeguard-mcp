@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Net;
+
 namespace SafeguardMcp.OAuth;
 
 /// <summary>
@@ -31,6 +34,7 @@ internal sealed class BridgeOptions
     public const string SafeguardHostEnvVar = "SAFEGUARD_HOST";
     public const string SafeguardIgnoreSslEnvVar = "SAFEGUARD_IGNORE_SSL";
     public const string BridgeDisabledEnvVar = "BRIDGE_DISABLED";
+    public const string BridgeTrustedProxiesEnvVar = "BRIDGE_TRUSTED_PROXIES";
 
     public const int DefaultAuthCodeTtlSeconds = 60;
     // rSTS's own auth-code TTL is 5 minutes; do not exceed it.
@@ -59,13 +63,23 @@ internal sealed class BridgeOptions
     /// <summary>Whether outbound TLS verification is suppressed (deployment-wide).</summary>
     public bool IgnoreSsl { get; }
 
-    private BridgeOptions(string overridePublicUrl, string overrideClientId, int authCodeTtlSeconds, string safeguardHost, bool ignoreSsl)
+    /// <summary>
+    /// Additional <see cref="IPNetwork"/> ranges parsed from
+    /// <c>BRIDGE_TRUSTED_PROXIES</c> (comma-separated CIDRs). The
+    /// caller layers these on top of the static loopback + RFC1918
+    /// defaults when configuring <see cref="Microsoft.AspNetCore.Builder.ForwardedHeadersExtensions"/>.
+    /// Empty when the env var is unset.
+    /// </summary>
+    public IReadOnlyList<IPNetwork> TrustedProxies { get; }
+
+    private BridgeOptions(string overridePublicUrl, string overrideClientId, int authCodeTtlSeconds, string safeguardHost, bool ignoreSsl, IReadOnlyList<IPNetwork> trustedProxies)
     {
         OverridePublicUrl = overridePublicUrl;
         OverrideClientId = overrideClientId;
         AuthCodeTtlSeconds = authCodeTtlSeconds;
         SafeguardHost = safeguardHost;
         IgnoreSsl = ignoreSsl;
+        TrustedProxies = trustedProxies;
     }
 
     /// <summary>
@@ -80,12 +94,25 @@ internal sealed class BridgeOptions
     {
         if (getEnv == null) throw new ArgumentNullException(nameof(getEnv));
 
+        var warnings = new List<string>();
+
         var disabledRaw = Trimmed(getEnv(BridgeDisabledEnvVar));
-        if (disabledRaw != null
-            && bool.TryParse(disabledRaw, out var disabled)
-            && disabled)
+        if (disabledRaw != null)
         {
-            return BridgeParseResult.Inactive();
+            if (bool.TryParse(disabledRaw, out var disabled))
+            {
+                if (disabled)
+                    return BridgeParseResult.Inactive(warnings);
+            }
+            else
+            {
+                // Fail-open is intentional (typo shouldn't lock the
+                // operator out of the bridge), but warn loudly so a
+                // BRIDGE_DISABLED=tru typo isn't silent.
+                warnings.Add(
+                    $"{BridgeDisabledEnvVar}='{disabledRaw}' is not a valid boolean; "
+                    + "treating as unset (bridge stays active). Use 'true' or 'false'.");
+            }
         }
 
         var publicUrl = Trimmed(getEnv(McpPublicUrlEnvVar));
@@ -144,7 +171,28 @@ internal sealed class BridgeOptions
 
         var ignoreSsl = bool.TryParse(getEnv(SafeguardIgnoreSslEnvVar), out var v) && v;
 
-        return BridgeParseResult.Success(new BridgeOptions(publicUrl, clientId, ttl, safeguardHost, ignoreSsl));
+        var trustedRaw = Trimmed(getEnv(BridgeTrustedProxiesEnvVar));
+        var trustedProxies = Array.Empty<IPNetwork>();
+        if (trustedRaw != null)
+        {
+            var parts = trustedRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var list = new List<IPNetwork>(parts.Length);
+            foreach (var cidr in parts)
+            {
+                if (!IPNetwork.TryParse(cidr, out var net))
+                {
+                    return BridgeParseResult.ForError(
+                        $"{BridgeTrustedProxiesEnvVar} contains invalid CIDR '{cidr}'. "
+                        + "Expected comma-separated entries like '10.0.0.0/8,192.168.0.0/16'.");
+                }
+                list.Add(net);
+            }
+            trustedProxies = list.ToArray();
+        }
+
+        return BridgeParseResult.Success(
+            new BridgeOptions(publicUrl, clientId, ttl, safeguardHost, ignoreSsl, trustedProxies),
+            warnings);
     }
 
     private static string Trimmed(string s)
@@ -165,15 +213,25 @@ internal readonly struct BridgeParseResult
     public bool IsActive { get; }
     public BridgeOptions Options { get; }
     public string Error { get; }
+    /// <summary>
+    /// Non-fatal configuration warnings discovered during parse. Caller
+    /// is expected to log each entry at startup. Always non-null; may
+    /// be empty.
+    /// </summary>
+    public IReadOnlyList<string> Warnings { get; }
 
-    private BridgeParseResult(bool isActive, BridgeOptions options, string error)
+    private BridgeParseResult(bool isActive, BridgeOptions options, string error, IReadOnlyList<string> warnings)
     {
         IsActive = isActive;
         Options = options;
         Error = error;
+        Warnings = warnings ?? Array.Empty<string>();
     }
 
-    public static BridgeParseResult Inactive() => new BridgeParseResult(false, null, null);
-    public static BridgeParseResult ForError(string message) => new BridgeParseResult(false, null, message);
-    public static BridgeParseResult Success(BridgeOptions options) => new BridgeParseResult(true, options, null);
+    public static BridgeParseResult Inactive(IReadOnlyList<string> warnings = null)
+        => new BridgeParseResult(false, null, null, warnings);
+    public static BridgeParseResult ForError(string message)
+        => new BridgeParseResult(false, null, message, null);
+    public static BridgeParseResult Success(BridgeOptions options, IReadOnlyList<string> warnings = null)
+        => new BridgeParseResult(true, options, null, warnings);
 }
