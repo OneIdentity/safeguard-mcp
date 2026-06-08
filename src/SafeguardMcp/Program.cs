@@ -66,6 +66,8 @@ namespace SafeguardMcp
                     Console.Error.WriteLine("safeguard-mcp: " + bridgeParse.Error);
                     return 2;
                 }
+                foreach (var warning in bridgeParse.Warnings)
+                    Console.Error.WriteLine("safeguard-mcp: warning: " + warning);
 
                 await RunHttpAsync(args, bridgeParse.Options);
             }
@@ -190,30 +192,21 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
                 // ForwardedHeaders trust list: loopback by default plus
                 // RFC1918 ranges (the common case is cluster-internal
-                // ingress). Override / extend via BRIDGE_TRUSTED_PROXIES
-                // (comma-separated CIDRs).
+                // ingress). Operators extend the list via the
+                // BRIDGE_TRUSTED_PROXIES env var; BridgeOptions.Parse
+                // already validated those CIDRs.
                 builder.Services.Configure<ForwardedHeadersOptions>(opts =>
                 {
                     opts.ForwardedHeaders = ForwardedHeaders.XForwardedFor
                                           | ForwardedHeaders.XForwardedProto
                                           | ForwardedHeaders.XForwardedHost;
                     opts.ForwardLimit = 2;
-                    opts.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
-                    opts.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("172.16.0.0"), 12));
-                    opts.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("192.168.0.0"), 16));
+                    opts.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("10.0.0.0/8"));
+                    opts.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("172.16.0.0/12"));
+                    opts.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("192.168.0.0/16"));
 
-                    var extra = Environment.GetEnvironmentVariable("BRIDGE_TRUSTED_PROXIES");
-                    if (!string.IsNullOrWhiteSpace(extra))
-                    {
-                        foreach (var cidr in extra.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                        {
-                            if (TryParseCidr(cidr, out var net))
-                                opts.KnownNetworks.Add(net);
-                            else
-                                throw new InvalidOperationException(
-                                    $"BRIDGE_TRUSTED_PROXIES contains invalid CIDR '{cidr}'.");
-                        }
-                    }
+                    foreach (var net in bridgeOptions.TrustedProxies)
+                        opts.KnownIPNetworks.Add(net);
                 });
             }
 
@@ -254,23 +247,6 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
                     pinning);
             }
             await app.RunAsync();
-        }
-
-        // Parse "ip/prefix" CIDR into an IPNetwork. Returns false on
-        // any malformed input so the caller can surface a clear
-        // BRIDGE_TRUSTED_PROXIES error at startup.
-        private static bool TryParseCidr(string cidr, out Microsoft.AspNetCore.HttpOverrides.IPNetwork network)
-        {
-            network = default;
-            if (string.IsNullOrWhiteSpace(cidr)) return false;
-            var slash = cidr.IndexOf('/');
-            if (slash <= 0 || slash == cidr.Length - 1) return false;
-            if (!IPAddress.TryParse(cidr.Substring(0, slash), out var ip)) return false;
-            if (!int.TryParse(cidr.Substring(slash + 1), out var prefix)) return false;
-            var maxPrefix = ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128;
-            if (prefix < 0 || prefix > maxPrefix) return false;
-            network = new Microsoft.AspNetCore.HttpOverrides.IPNetwork(ip, prefix);
-            return true;
         }
 
         private static void WarmCatalog(IServiceProvider services)
