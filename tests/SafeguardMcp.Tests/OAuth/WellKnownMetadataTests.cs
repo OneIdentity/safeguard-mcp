@@ -16,17 +16,9 @@ namespace SafeguardMcp.Tests.OAuth;
 /// </summary>
 public class WellKnownMetadataTests
 {
-    private static BridgeOptions SampleOptions()
+    private static BridgeRequestUrls SampleOptions()
     {
-        var result = BridgeOptions.Parse(name => name switch
-        {
-            "MCP_PUBLIC_URL" => "https://mcp.example.test",
-            "RSTS_CLIENT_ID" => "https://rsts.example.test/bridge",
-            "SAFEGUARD_HOST" => "appliance.example.test",
-            _ => null,
-        });
-        Assert.True(result.IsActive);
-        return result.Options;
+        return new BridgeRequestUrls("https://mcp.example.test", "https://mcp.example.test");
     }
 
     [Fact]

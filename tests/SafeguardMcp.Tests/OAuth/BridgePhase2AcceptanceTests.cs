@@ -163,6 +163,8 @@ public class BridgePhase2AcceptanceTests
         services.AddSingleton(flow);
         services.AddSingleton(codes);
         services.AddSingleton<IRstsTokenExchanger>(exchanger);
+        services.AddSingleton(Opts());
+        services.AddSingleton<BridgeUrlResolver>();
 
         return new BridgeFixture
         {
@@ -464,12 +466,14 @@ public class BridgePhase2AcceptanceTests
         // (RFC 9728) and as the issuer/auth server (RFC 8414). Pin
         // both shapes here so any future edit that breaks audience
         // binding fails this test.
-        using var pr = JsonDocument.Parse(WellKnownMetadata.BuildProtectedResourceJson(Opts()));
+        var sampleUrls = new BridgeRequestUrls("https://mcp.example.test", "https://rsts.example.test/bridge");
+
+        using var pr = JsonDocument.Parse(WellKnownMetadata.BuildProtectedResourceJson(sampleUrls));
         Assert.Equal("https://mcp.example.test", pr.RootElement.GetProperty("resource").GetString());
         Assert.Equal("https://mcp.example.test",
             pr.RootElement.GetProperty("authorization_servers")[0].GetString());
 
-        using var asd = JsonDocument.Parse(WellKnownMetadata.BuildAuthorizationServerJson(Opts()));
+        using var asd = JsonDocument.Parse(WellKnownMetadata.BuildAuthorizationServerJson(sampleUrls));
         Assert.Equal("https://mcp.example.test", asd.RootElement.GetProperty("issuer").GetString());
     }
 
@@ -610,7 +614,9 @@ public class BridgePhase2AcceptanceTests
         f.Flow.Add("sid-x", new AuthorizeFlowStore.Entry(
             clientId: ClientId, clientRedirectUri: ClientRedirect,
             clientState: ClientState, clientPkceChallenge: "pkce",
-            bridgeToRstsPkceVerifier: "v", expiresAt: f.Time.GetUtcNow().AddSeconds(60)));
+            bridgeToRstsPkceVerifier: "v",
+            bridgeCallbackUrl: "https://mcp.example.test/authorize/callback",
+            expiresAt: f.Time.GetUtcNow().AddSeconds(60)));
         var ctx = NewContext(f, "GET", "/authorize/callback", "?state=sid-x&code=rsts");
         await AuthorizeEndpoints.HandleAuthorizeCallbackAsync(ctx, Opts());
 
@@ -623,7 +629,8 @@ public class BridgePhase2AcceptanceTests
         // The metadata GET handlers themselves set the same CORS
         // headers as the OPTIONS preflight, plus Cache-Control so
         // intermediaries serve the immutable document for an hour.
-        var json = WellKnownMetadata.BuildAuthorizationServerJson(Opts());
+        var sampleUrls = new BridgeRequestUrls("https://mcp.example.test", "https://rsts.example.test/bridge");
+        var json = WellKnownMetadata.BuildAuthorizationServerJson(sampleUrls);
         Assert.False(string.IsNullOrEmpty(json));
         // The behavior is also exercised end-to-end in
         // WellKnownMetadataTests; this anchor confirms the metadata

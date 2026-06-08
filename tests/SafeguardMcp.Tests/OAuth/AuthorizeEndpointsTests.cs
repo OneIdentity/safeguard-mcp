@@ -67,6 +67,8 @@ public class AuthorizeEndpointsTests
         services.AddSingleton(flow);
         var codes = new AuthCodeStore(time);
         services.AddSingleton(codes);
+        services.AddSingleton(Opts());
+        services.AddSingleton<BridgeUrlResolver>();
 
         var ctx = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
         ctx.Request.Method = "GET";
@@ -249,6 +251,8 @@ public class AuthorizeEndpointsTests
         services.AddSingleton(flow);
         var codes = new AuthCodeStore(time);
         services.AddSingleton(codes);
+        services.AddSingleton(Opts());
+        services.AddSingleton<BridgeUrlResolver>();
 
         var sid = "bridge-session-" + Guid.NewGuid().ToString("N");
         flow.Add(sid, new AuthorizeFlowStore.Entry(
@@ -257,6 +261,7 @@ public class AuthorizeEndpointsTests
             clientState: "client-state-xyz",
             clientPkceChallenge: "client-pkce-challenge",
             bridgeToRstsPkceVerifier: "bridge-rsts-verifier",
+            bridgeCallbackUrl: "https://mcp.example.test/authorize/callback",
             expiresAt: time.GetUtcNow().AddSeconds(300)));
 
         var ctx = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
