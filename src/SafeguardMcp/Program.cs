@@ -195,7 +195,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             // schemas/endpoints ready.
             WarmCatalog(app.Services);
             app.MapHealthChecks("/healthz");
-            app.MapMcp();
+            app.MapMcp("/mcp");
             if (bridgeOptions != null)
             {
                 OAuth.WellKnownEndpoints.Map(app, bridgeOptions);
