@@ -16,6 +16,9 @@ data:
   {{- if .Values.rstsClientId }}
   RSTS_CLIENT_ID: {{ .Values.rstsClientId | quote }}
   {{- end }}
+  {{- if .Values.bridgeTrustedProxies }}
+  BRIDGE_TRUSTED_PROXIES: {{ .Values.bridgeTrustedProxies | quote }}
+  {{- end }}
   BRIDGE_AUTH_CODE_TTL_SECONDS: {{ .Values.bridge.authCodeTtlSeconds | quote }}
   {{- else }}
   BRIDGE_DISABLED: "true"

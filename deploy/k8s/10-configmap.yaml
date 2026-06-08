@@ -36,6 +36,9 @@ data:
   # RSTS_CLIENT_ID: "https://mcp.example.com"
   # Uncomment to disable the OAuth bridge and serve relay only.
   # BRIDGE_DISABLED: "true"
+  # Uncomment to extend the forwarded-headers trust list when the
+  # ingress IP falls outside loopback / RFC1918. Comma-separated CIDRs.
+  # BRIDGE_TRUSTED_PROXIES: "100.64.0.0/10,2001:db8::/32"
   # Set to "true" only if your Safeguard appliance presents a
   # certificate that the cluster cannot verify (lab/dev). Leave unset
   # in production.

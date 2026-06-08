@@ -96,7 +96,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: bridge
       annotations:
-        checksum/config: e6a8f1d15d9f96dcd1bbec326b66bae121361b8feceeb957bd658935b013e259
+        checksum/config: 47288407612cef4bf00eed04144bde05a350156fa9ad25829df3a98e36e0a8d1
     spec:
       securityContext:
         runAsNonRoot: true
@@ -117,7 +117,7 @@ spec:
           env:
             - name: ASPNETCORE_URLS
               value: http://+:8080
-          # Lenient liveness ΓÇö restart on a real lockup, not a slow
+          # Lenient liveness — restart on a real lockup, not a slow
           # rSTS round-trip. Restart invalidates in-flight /authorize
           # and unredeemed /token entries; users restart their login.
           livenessProbe:
@@ -183,7 +183,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: relay
       annotations:
-        checksum/config: e6a8f1d15d9f96dcd1bbec326b66bae121361b8feceeb957bd658935b013e259
+        checksum/config: 47288407612cef4bf00eed04144bde05a350156fa9ad25829df3a98e36e0a8d1
     spec:
       securityContext:
         runAsNonRoot: true
