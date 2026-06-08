@@ -283,7 +283,7 @@ public class AuthorizeEndpointsTests
         Assert.NotEqual("rsts-auth-code-abc", q["code"]);
 
         // Flow consumed; auth-code entry persisted with the exact
-        // material /token (task 2.2.e) will need.
+        // material /token will need.
         Assert.Equal(0, flow.Count);
         Assert.Equal(1, codes.Count);
         Assert.True(codes.TryConsume(q["code"], out var entry));

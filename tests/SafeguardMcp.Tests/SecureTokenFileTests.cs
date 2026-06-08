@@ -9,7 +9,7 @@ using SafeguardMcp.Login;
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// Phase 1 task 1.E — verifies that <c>safeguard-mcp login --output &lt;path&gt;</c>
+/// Verifies that <c>safeguard-mcp login --output &lt;path&gt;</c>
 /// writes the token with an OS-appropriate restrictive ACL via
 /// <see cref="SecureTokenFile"/>:
 ///

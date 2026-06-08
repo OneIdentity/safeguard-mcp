@@ -5,7 +5,7 @@ using System.Collections.Generic;
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// Phase 1 task 1.D — verifies the HTTP-mode startup lockdowns from
+/// Verifies the HTTP-mode startup lockdowns from
 /// <see cref="HttpModeStartup"/>:
 ///
 /// <list type="bullet">
