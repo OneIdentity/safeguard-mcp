@@ -44,11 +44,13 @@ services:
       # Optional. Only set in lab/dev where the appliance presents
       # a certificate the container cannot verify.
       SAFEGUARD_IGNORE_SSL: "${SAFEGUARD_IGNORE_SSL:-false}"
-      # Bridge configuration. Leave MCP_PUBLIC_URL unset to disable
-      # the bridge entirely (relay-only mode). When set, the bridge
-      # endpoints are mapped and well-known metadata is published.
+      # Bridge configuration. The OAuth bridge is on by default in
+      # HTTP mode; set BRIDGE_DISABLED=true (in .env) to opt out.
+      # MCP_PUBLIC_URL / RSTS_CLIENT_ID are optional pinning overrides
+      # — see .env.example for when to set them.
       MCP_PUBLIC_URL: "${MCP_PUBLIC_URL:-}"
       RSTS_CLIENT_ID: "${RSTS_CLIENT_ID:-}"
+      BRIDGE_DISABLED: "${BRIDGE_DISABLED:-}"
       BRIDGE_AUTH_CODE_TTL_SECONDS: "${BRIDGE_AUTH_CODE_TTL_SECONDS:-60}"
     healthcheck:
       # The chiseled runtime image has no shell and no curl/wget,

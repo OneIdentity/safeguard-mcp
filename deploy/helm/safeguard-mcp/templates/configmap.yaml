@@ -10,9 +10,15 @@ data:
   SAFEGUARD_IGNORE_SSL: "true"
   {{- end }}
   {{- if .Values.oauthBridge.enabled }}
-  MCP_PUBLIC_URL: {{ required "mcpPublicUrl is required when oauthBridge.enabled=true" .Values.mcpPublicUrl | quote }}
-  RSTS_CLIENT_ID: {{ required "rstsClientId is required when oauthBridge.enabled=true" .Values.rstsClientId | quote }}
+  {{- if .Values.mcpPublicUrl }}
+  MCP_PUBLIC_URL: {{ .Values.mcpPublicUrl | quote }}
+  {{- end }}
+  {{- if .Values.rstsClientId }}
+  RSTS_CLIENT_ID: {{ .Values.rstsClientId | quote }}
+  {{- end }}
   BRIDGE_AUTH_CODE_TTL_SECONDS: {{ .Values.bridge.authCodeTtlSeconds | quote }}
+  {{- else }}
+  BRIDGE_DISABLED: "true"
   {{- end }}
   {{- range $k, $v := .Values.extraEnv }}
   {{ $k }}: {{ $v | quote }}

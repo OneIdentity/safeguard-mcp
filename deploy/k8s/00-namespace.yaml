@@ -7,9 +7,11 @@
 # No Kubernetes Secrets are shipped here — by design. The relay holds
 # no Safeguard tokens (per-request bearer relay), the bridge is a
 # public PKCE client at rSTS (no `RSTS_CLIENT_SECRET`), and every
-# other env var (`SAFEGUARD_HOST`, `RSTS_CLIENT_ID`, `MCP_PUBLIC_URL`,
-# `BRIDGE_AUTH_CODE_TTL_SECONDS`) is non-secret config and lives in
-# `40-configmap.yaml`. If you pull the container image from a private
+# other env var (`SAFEGUARD_HOST`, optional `MCP_PUBLIC_URL` /
+# `RSTS_CLIENT_ID` pinning overrides, `BRIDGE_AUTH_CODE_TTL_SECONDS`,
+# optional `BRIDGE_DISABLED` kill switch) is non-secret config and
+# lives in `10-configmap.yaml`. If you pull the container image from
+# a private
 # registry, create a docker-registry pull-secret out-of-band, e.g.:
 #
 #   kubectl -n safeguard-mcp create secret docker-registry \

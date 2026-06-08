@@ -5,21 +5,33 @@
 # Public DNS name / hostname of the Safeguard appliance.
 safeguardHost: ""
 
-# Externally-visible base URL of this deployment. Published in
-# `/.well-known/*` metadata. Required when the OAuth bridge is
-# enabled (oauthBridge.enabled=true).
+# ------------------------------------------------------------------
+# Optional bridge URL pinning. Leave both empty to let the bridge
+# infer its public URL from each incoming request (Scheme + Host +
+# PathBase, where Scheme/Host honor X-Forwarded-Proto /
+# X-Forwarded-Host from a trusted ingress).
+#
+# Set them only when:
+#   * The rSTS RelyingPartyApplication.Realm was registered under a
+#     name that differs from the user-facing hostname.
+#   * You want well-known metadata to advertise a fixed canonical
+#     URL even when requests arrive on alternate hostnames.
+# ------------------------------------------------------------------
+
+# Externally-visible base URL of this deployment. When set, it is
+# published verbatim in /.well-known/* metadata.
 mcpPublicUrl: ""
 
 # rSTS RelyingPartyApplication.Realm — an absolute URI; rSTS asserts
-# this on the entity. Conventionally the same as `mcpPublicUrl`.
-# Required when the OAuth bridge is enabled. The bridge is a public
-# PKCE client at rSTS — there is no client secret.
+# this on the entity. If left empty the bridge falls back to
+# `mcpPublicUrl` (when set) or the per-request inferred URL. The
+# bridge is a public PKCE client at rSTS — no client secret.
 rstsClientId: ""
 
 # ------------------------------------------------------------------
-# Container image. Both the relay and the bridge run the same image
-# with different env (the bridge endpoints are mapped only when
-# `MCP_PUBLIC_URL` is set; the bridge Deployment sets it).
+# Container image. Both the relay and the bridge run the same image;
+# the bridge endpoints are mapped automatically in HTTP mode unless
+# BRIDGE_DISABLED=true.
 # ------------------------------------------------------------------
 image:
   repository: ghcr.io/oneidentity/safeguard-mcp

@@ -13,7 +13,5 @@ helm template safeguard-mcp "${CHART_DIR}" \
     --namespace safeguard-mcp \
     --kube-version 1.27.0 \
     --set safeguardHost=safeguard.example.com \
-    --set mcpPublicUrl=https://mcp.example.com \
-    --set rstsClientId=https://mcp.example.com \
     --set ingress.host=mcp.example.com \
     --set relay.autoscaling.enabled=true

@@ -1,17 +1,26 @@
 # Non-secret runtime configuration consumed by both the relay and
 # the bridge Deployments via `envFrom: configMapRef`.
 #
-# None of these values are sensitive:
-#   * SAFEGUARD_HOST is the appliance hostname / public DNS name.
-#   * RSTS_CLIENT_ID is the rSTS RelyingPartyApplication.Realm — an
-#     absolute URI (rSTS asserts this), conventionally the same as
-#     MCP_PUBLIC_URL. Public PKCE client; there is NO client secret.
-#   * MCP_PUBLIC_URL is the externally-visible base URL of this
-#     deployment; it is published in /.well-known/* metadata.
-#   * BRIDGE_AUTH_CODE_TTL_SECONDS is the lifetime of an unredeemed
-#     bridge auth code (default 60, max 300).
+# By default the bridge infers its public URL from each incoming
+# request (Scheme + Host + PathBase, where Scheme/Host honor
+# X-Forwarded-Proto / X-Forwarded-Host from a trusted ingress). You
+# only need to set MCP_PUBLIC_URL / RSTS_CLIENT_ID when:
 #
-# Replace the example values before applying.
+#   * Your rSTS RelyingPartyApplication is registered under a Realm
+#     that differs from the user-facing hostname (Realm pinning).
+#   * You want well-known metadata to advertise a fixed canonical URL
+#     even when requests arrive on alternate hostnames.
+#
+# When you do set them:
+#   * MCP_PUBLIC_URL is the externally-visible base URL of this
+#     deployment; published in /.well-known/* metadata.
+#   * RSTS_CLIENT_ID is the rSTS RelyingPartyApplication.Realm — an
+#     absolute URI; rSTS asserts this. If only MCP_PUBLIC_URL is set,
+#     RSTS_CLIENT_ID defaults to it.
+#
+# BRIDGE_DISABLED=true turns the bridge off entirely (relay-only).
+# BRIDGE_AUTH_CODE_TTL_SECONDS sets the unredeemed auth-code TTL
+# (default 60, max 300).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,9 +30,12 @@ metadata:
     app.kubernetes.io/name: safeguard-mcp
 data:
   SAFEGUARD_HOST: "safeguard.example.com"
-  MCP_PUBLIC_URL: "https://mcp.example.com"
-  RSTS_CLIENT_ID: "https://mcp.example.com"
   BRIDGE_AUTH_CODE_TTL_SECONDS: "60"
+  # Uncomment to pin the bridge's published URL / rSTS Realm.
+  # MCP_PUBLIC_URL: "https://mcp.example.com"
+  # RSTS_CLIENT_ID: "https://mcp.example.com"
+  # Uncomment to disable the OAuth bridge and serve relay only.
+  # BRIDGE_DISABLED: "true"
   # Set to "true" only if your Safeguard appliance presents a
   # certificate that the cluster cannot verify (lab/dev). Leave unset
   # in production.

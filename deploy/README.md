@@ -132,8 +132,9 @@ Nothing in `safeguard-mcp` is secret enough to need a
   request as a `Bearer` header, are bound to per-request scope via
   `HttpRelaySafeguardSession`, and are dropped when the request ends.
 * The bridge has no rSTS client secret (public PKCE client).
-* `SAFEGUARD_HOST`, `RSTS_CLIENT_ID`, `MCP_PUBLIC_URL`,
-  `BRIDGE_AUTH_CODE_TTL_SECONDS` are non-secret config.
+* `SAFEGUARD_HOST`, `MCP_PUBLIC_URL` (optional), `RSTS_CLIENT_ID`
+  (optional), `BRIDGE_AUTH_CODE_TTL_SECONDS`, `BRIDGE_DISABLED`
+  (optional kill switch) are non-secret config.
 
 If you pull the container image from a private registry, create a
 docker-registry pull-secret out-of-band and add an `imagePullSecrets`
@@ -163,13 +164,33 @@ Ingress.
 helm install safeguard-mcp deploy/helm/safeguard-mcp \
   --create-namespace -n safeguard-mcp \
   --set safeguardHost=safeguard.example.com \
-  --set mcpPublicUrl=https://mcp.example.com \
-  --set rstsClientId=https://mcp.example.com \
   --set ingress.host=mcp.example.com
 
 # Optional smoke tests (curl-based pods that verify /healthz and
 # the well-known metadata documents).
 helm test safeguard-mcp -n safeguard-mcp
+```
+
+The bridge is on by default; URLs are inferred from each incoming
+request via `X-Forwarded-Proto` / `X-Forwarded-Host`. Pass
+`--set oauthBridge.enabled=false` to run relay only.
+
+### Advanced: pinning the published URL
+
+Set `mcpPublicUrl` (and optionally `rstsClientId`) only when:
+
+* The rSTS `RelyingPartyApplication.Realm` was registered under a
+  name that differs from the user-facing hostname, or
+* You want well-known metadata to advertise a fixed canonical URL
+  even when requests arrive on alternate hostnames.
+
+```sh
+helm install safeguard-mcp deploy/helm/safeguard-mcp \
+  --create-namespace -n safeguard-mcp \
+  --set safeguardHost=safeguard.example.com \
+  --set mcpPublicUrl=https://mcp.example.com \
+  --set rstsClientId=https://mcp.example.com \
+  --set ingress.host=mcp.example.com
 ```
 
 Enable the relay HPA with `--set relay.autoscaling.enabled=true`.
@@ -179,9 +200,26 @@ Enable the relay HPA with `--set relay.autoscaling.enabled=true`.
 ```sh
 cd deploy/compose
 cp .env.example .env
-$EDITOR .env             # set SAFEGUARD_HOST, MCP_PUBLIC_URL, RSTS_CLIENT_ID
+$EDITOR .env             # set SAFEGUARD_HOST (only)
 docker compose up -d
 ```
 
-Front the container with a reverse proxy that terminates TLS at
-`MCP_PUBLIC_URL` and forwards to `127.0.0.1:8080`.
+Front the container with a reverse proxy that terminates TLS, sets
+`X-Forwarded-Proto` and `X-Forwarded-Host`, and forwards to
+`127.0.0.1:8080`. The bridge will publish well-known metadata under
+the user-facing hostname automatically. Set `MCP_PUBLIC_URL` /
+`RSTS_CLIENT_ID` in `.env` only if you need to pin the published URL.
+
+## Inferred URLs and forwarded-headers trust
+
+The OAuth bridge derives its public URL from `Request.Scheme +
+Request.Host + Request.PathBase` on each request. To keep that
+inference correct behind an ingress, the server enables
+`UseForwardedHeaders` with a trust list that includes loopback +
+RFC1918 (10/8, 172.16/12, 192.168/16) by default — covering the
+common cluster-internal-ingress case. Production deployments behind
+ingress should ensure their proxy is in a trusted CIDR, or extend the
+list via `BRIDGE_TRUSTED_PROXIES` (comma-separated CIDRs). Untrusted
+hops are ignored, so a malicious client cannot spoof
+`X-Forwarded-Host` to make the bridge publish a different
+authorization-server URL.

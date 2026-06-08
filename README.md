@@ -131,9 +131,19 @@ Add to `.vscode/mcp.json` in your workspace:
 A single server process is bound to one appliance via `SAFEGUARD_HOST`; the bearer
 rides on each MCP request, so the server holds no per-user state.
 
-**Paste-bearer setup** — works against any MCP client that supports a custom
-`Authorization` header. Each user runs `safeguard-mcp login` locally to acquire a
-Safeguard user token from the appliance, then drops it into their MCP client config:
+**OAuth-bridge setup (recommended)** — point your MCP client at
+`https://<your-mcp-host>/mcp` and let it discover OAuth via the
+server's `/.well-known/*` metadata. The client opens a browser-based
+PKCE login against the appliance's rSTS, and the resulting bearer is
+sent on each request automatically. The bridge is on by default in
+HTTP mode, holds no long-lived secrets, and never retains a Safeguard
+token. Set `BRIDGE_DISABLED=true` if you front the deployment with a
+separate OAuth gateway.
+
+**Paste-bearer setup (manual fallback)** — for scripting or MCP
+clients that don't speak OAuth discovery. Each user runs
+`safeguard-mcp login` locally to acquire a Safeguard user token and
+drops it into their MCP client config:
 
 ```bash
 safeguard-mcp login --host safeguard.corp.example.com --print-bearer-only > token.txt
@@ -149,13 +159,6 @@ safeguard-mcp login --host safeguard.corp.example.com --print-bearer-only > toke
   }
 }
 ```
-
-**OAuth-bridge setup** — for MCP clients that speak OAuth. The server publishes
-RFC 8414 / RFC 9728 metadata at `/.well-known/oauth-authorization-server` and
-`/.well-known/oauth-protected-resource`; pointing a client at the server's public URL
-triggers a browser-based PKCE login against the appliance's rSTS, and the resulting
-bearer is sent on each request automatically. The bridge holds no long-lived secrets
-and never retains a Safeguard token.
 
 For production HTTP deployments, see [`deploy/README.md`](deploy/README.md).
 
@@ -559,6 +562,14 @@ The HTTP relay was designed around a few hard invariants worth stating explicitl
 - **Single appliance per process.** A given server process is bound to one
   appliance via `SAFEGUARD_HOST`. Cross-appliance token confusion is not possible
   in HTTP mode because no process serves more than one appliance.
+- **Forwarded-headers trust is bounded.** The bridge derives its public URL from
+  each incoming request, with `UseForwardedHeaders` enabled but configured to
+  trust only loopback + RFC1918 (10/8, 172.16/12, 192.168/16) by default. That
+  covers the common cluster-internal-ingress case; production deployments behind
+  ingress should ensure their proxy is in a trusted CIDR or extend the trust list
+  via `BRIDGE_TRUSTED_PROXIES` (comma-separated CIDRs). Untrusted hops are
+  ignored, so a malicious client cannot spoof `X-Forwarded-Host` to make the
+  bridge publish a different authorization-server URL.
 
 ## Building from Source
 
