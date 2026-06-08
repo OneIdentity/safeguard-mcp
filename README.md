@@ -86,6 +86,10 @@ cosign verify --key cosign.pub ghcr.io/oneidentity/safeguard-mcp:<tag>
 
 ## Quick Start
 
+Once your client is wired up (see below), see [`docs/EXAMPLES.md`](docs/EXAMPLES.md) for
+example prompts covering discovery, account/asset management, access requests, password
+and SSH key rotation, health checks, audits, and cross-server workflows.
+
 ### Claude Desktop
 
 Add to `claude_desktop_config.json`:
