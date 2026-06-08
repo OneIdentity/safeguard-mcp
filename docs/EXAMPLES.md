@@ -1,4 +1,4 @@
-# Usage Guide
+# Example Prompts
 
 This guide shows example prompts for common Safeguard MCP workflows. These prompts work
 with any MCP-compatible AI client (Claude Desktop, VS Code with Copilot, etc.).

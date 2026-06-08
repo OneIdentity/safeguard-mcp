@@ -1,0 +1,148 @@
+# ------------------------------------------------------------------
+# Required configuration. Override these on every install.
+# ------------------------------------------------------------------
+
+# Public DNS name / hostname of the Safeguard appliance.
+safeguardHost: ""
+
+# ------------------------------------------------------------------
+# Optional bridge URL pinning. Leave both empty to let the bridge
+# infer its public URL from each incoming request (Scheme + Host +
+# PathBase, where Scheme/Host honor X-Forwarded-Proto /
+# X-Forwarded-Host from a trusted ingress).
+#
+# Set them only when:
+#   * The rSTS RelyingPartyApplication.Realm was registered under a
+#     name that differs from the user-facing hostname.
+#   * You want well-known metadata to advertise a fixed canonical
+#     URL even when requests arrive on alternate hostnames.
+# ------------------------------------------------------------------
+
+# Externally-visible base URL of this deployment. When set, it is
+# published verbatim in /.well-known/* metadata.
+mcpPublicUrl: ""
+
+# rSTS RelyingPartyApplication.Realm — an absolute URI; rSTS asserts
+# this on the entity. If left empty the bridge falls back to
+# `mcpPublicUrl` (when set) or the per-request inferred URL. The
+# bridge is a public PKCE client at rSTS — no client secret.
+rstsClientId: ""
+
+# ------------------------------------------------------------------
+# Forwarded-headers trust (advanced).
+#
+# The bridge derives its public URL from each incoming request's
+# Scheme + Host. To keep that inference correct behind an ingress, the
+# server enables UseForwardedHeaders with a built-in trust list that
+# already covers loopback + RFC1918 (10/8, 172.16/12, 192.168/16) —
+# the common cluster-internal-ingress case.
+#
+# Set this only when your ingress / proxy IP falls outside the default
+# list (carrier-grade NAT, public-cloud LB on a non-RFC1918 range,
+# etc.). Comma-separated CIDRs; both IPv4 and IPv6 supported. An
+# unparseable entry is a fail-fast error at startup.
+# Example: "100.64.0.0/10,2001:db8::/32"
+bridgeTrustedProxies: ""
+
+# ------------------------------------------------------------------
+# Container image. Both the relay and the bridge run the same image;
+# the bridge endpoints are mapped automatically in HTTP mode unless
+# BRIDGE_DISABLED=true.
+# ------------------------------------------------------------------
+image:
+  repository: ghcr.io/oneidentity/safeguard-mcp
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Optional list of imagePullSecrets, e.g. [{ name: my-registry }].
+# Create the underlying secret out-of-band:
+#   kubectl -n <ns> create secret docker-registry <name> ...
+imagePullSecrets: []
+
+# ------------------------------------------------------------------
+# Stateless relay. Serves the MCP `/mcp` streamable-HTTP transport,
+# `/healthz`, and (when the bridge is enabled) the OAuth
+# `/.well-known/*` metadata documents.
+# ------------------------------------------------------------------
+relay:
+  replicaCount: 3
+
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+
+# ------------------------------------------------------------------
+# OAuth metadata bridge. Single-replica by design. Set
+# `oauthBridge.enabled: false` to disable bridge endpoints entirely
+# (e.g., if you front the deployment with a different OAuth gateway
+# or only need the relay).
+# ------------------------------------------------------------------
+oauthBridge:
+  enabled: true
+
+bridge:
+  replicaCount: 1
+
+  # The bridge holds in-flight `/authorize` and unredeemed `/token`
+  # state in process memory (no shared cache yet). A second replica
+  # would split that state across pods, so a user could `/authorize`
+  # against pod A and arrive at `/authorize/callback` on pod B with
+  # no entry to bind to. Setting `replicaCount > 1` is therefore
+  # gated by an explicit `acceptInProcessStateLossOnRestart: true`
+  # opt-in (enforced by values.schema.json). This is a
+  # correctness/availability soft-guard, NOT a security control —
+  # the security guarantees (no token storage, PKCE binding, exact
+  # redirect-URI match) hold regardless of replica count.
+  acceptInProcessStateLossOnRestart: false
+
+  # Lifetime of an unredeemed bridge auth code (seconds, 1..300).
+  authCodeTtlSeconds: 60
+
+# ------------------------------------------------------------------
+# Per-component knobs (resources, scheduling). Apply to both
+# Deployments unless overridden under `relay.*`/`bridge.*`.
+# ------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# ------------------------------------------------------------------
+# Ingress. A single Ingress with path-based routing fans out to the
+# bridge service for `/authorize`, `/authorize/callback`, `/token`,
+# `/register`, and to the relay service for `/mcp`, `/healthz`,
+# `/.well-known/*`.
+# ------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  host: ""
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    enabled: true
+    secretName: safeguard-mcp-tls
+
+# ------------------------------------------------------------------
+# Optional toggles.
+# ------------------------------------------------------------------
+
+# Set to true only if your appliance presents a certificate the
+# cluster cannot verify (lab/dev). Leave false in production.
+safeguardIgnoreSsl: false
+
+# Override the chart-derived ConfigMap values with literal entries.
+# Keys here win over the computed configMap.
+extraEnv: {}

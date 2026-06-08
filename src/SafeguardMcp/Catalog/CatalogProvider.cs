@@ -1,18 +1,19 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using SafeguardMcp.Tools;
 
 namespace SafeguardMcp.Catalog;
 
 /// <summary>
-/// Provides access to the API catalog and schemas, preferring dynamic (per-host) data
-/// with fallback to the compiled static catalog.
+/// Provides access to the API catalog and schemas. Single-target:
+/// at most one dynamic catalog (loaded from the configured Safeguard
+/// appliance) is cached at any time; falls back to the compiled static
+/// catalog when none has been loaded.
 /// </summary>
 public class CatalogProvider
 {
-    private readonly ConcurrentDictionary<string, DynamicCatalog> _perHostCatalogs = new(StringComparer.OrdinalIgnoreCase);
     private readonly CatalogLoader _loader;
     private readonly ILogger<CatalogProvider> _logger;
+    private DynamicCatalog _dynamic;
 
     public CatalogProvider(CatalogLoader loader, ILogger<CatalogProvider> logger)
     {
@@ -21,19 +22,22 @@ public class CatalogProvider
     }
 
     /// <summary>
-    /// Triggers dynamic catalog loading for a host. Called after successful connection.
-    /// Runs in the background and does not block connection.
+    /// Triggers dynamic catalog loading from the appliance. Safe to
+    /// call multiple times — the latest successful load wins.
     /// </summary>
-    public async Task LoadCatalogForHostAsync(string host, bool ignoreSsl, CancellationToken ct = default)
+    public async Task LoadCatalogAsync(string host, bool ignoreSsl, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(host))
+            return;
+
         try
         {
             var catalog = await _loader.LoadFromApplianceAsync(host, ignoreSsl, ct);
             if (catalog != null)
             {
-                _perHostCatalogs[host] = catalog;
+                _dynamic = catalog;
                 _logger.LogInformation(
-                    "Dynamic catalog loaded for '{Host}': {Endpoints} endpoints, {Schemas} schemas.",
+                    "Dynamic catalog loaded from '{Host}': {Endpoints} endpoints, {Schemas} schemas.",
                     host,
                     catalog.Endpoints.Length,
                     catalog.Schemas.Count);
@@ -41,62 +45,41 @@ public class CatalogProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load dynamic catalog for '{Host}'. Using static catalog.", host);
+            _logger.LogWarning(ex, "Failed to load dynamic catalog from '{Host}'. Using static catalog.", host);
         }
     }
 
     /// <summary>
-    /// Gets the endpoint catalog for a given host, preferring dynamic, falling back to static.
+    /// Gets the endpoint catalog. Prefers the dynamic catalog when
+    /// available; otherwise returns the compiled static catalog.
     /// </summary>
-    public ReadOnlySpan<ApiEndpoint> GetEndpoints(string host = null)
-    {
-        if (!string.IsNullOrWhiteSpace(host) && _perHostCatalogs.TryGetValue(host, out var dynamicCatalog))
-            return dynamicCatalog.Endpoints.AsSpan();
-
-        return SafeguardCatalog.Endpoints.AsSpan();
-    }
+    public ReadOnlySpan<ApiEndpoint> GetEndpoints()
+        => _dynamic != null ? _dynamic.Endpoints.AsSpan() : SafeguardCatalog.Endpoints.AsSpan();
 
     /// <summary>
-    /// Gets the schema for a specific endpoint key (e.g. "POST Core /v4/AssetAccounts").
+    /// Gets the request schema for a specific endpoint key
+    /// (e.g. <c>"POST Core /v4/AssetAccounts"</c>).
     /// </summary>
-    public ApiSchema? GetSchema(string method, string service, string path, string host = null)
+    public ApiSchema? GetSchema(string method, string service, string path)
     {
         var key = $"{method.ToUpperInvariant()} {service} {path}";
-
-        if (!string.IsNullOrWhiteSpace(host)
-            && _perHostCatalogs.TryGetValue(host, out var dynamicCatalog)
-            && dynamicCatalog.Schemas.TryGetValue(key, out var schema))
-        {
+        if (_dynamic != null && _dynamic.Schemas.TryGetValue(key, out var schema))
             return schema;
-        }
-
         return null;
     }
 
-    /// <summary>
-    /// Gets the response schema for a specific endpoint.
-    /// </summary>
-    public ApiSchema? GetResponseSchema(string method, string service, string path, string host = null)
+    /// <summary>Gets the response schema for a specific endpoint.</summary>
+    public ApiSchema? GetResponseSchema(string method, string service, string path)
     {
         var key = $"RESPONSE {method.ToUpperInvariant()} {service} {path}";
-
-        if (!string.IsNullOrWhiteSpace(host)
-            && _perHostCatalogs.TryGetValue(host, out var dynamicCatalog)
-            && dynamicCatalog.Schemas.TryGetValue(key, out var schema))
-        {
+        if (_dynamic != null && _dynamic.Schemas.TryGetValue(key, out var schema))
             return schema;
-        }
-
         return null;
     }
 
-    /// <summary>Returns whether a dynamic catalog is loaded for the given host.</summary>
-    public bool HasDynamicCatalog(string host) => _perHostCatalogs.ContainsKey(host);
+    /// <summary>Whether a dynamic catalog has been loaded.</summary>
+    public bool HasDynamicCatalog => _dynamic != null;
 
-    /// <summary>Removes cached catalog for a host (e.g. on disconnect).</summary>
-    public void RemoveCatalog(string host)
-    {
-        if (!string.IsNullOrWhiteSpace(host))
-            _perHostCatalogs.TryRemove(host, out _);
-    }
+    /// <summary>Drops any cached dynamic catalog (e.g. on disconnect).</summary>
+    public void ClearCatalog() => _dynamic = null;
 }

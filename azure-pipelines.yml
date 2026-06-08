@@ -27,6 +27,77 @@ jobs:
       - template: pipeline-templates/build-steps.yml
 
   # ──────────────────────────────────────────────────────────────
+  # Deployment-manifest validation. Runs on every build (PR or
+  # otherwise) — fast, no toolchain dependencies beyond helm and
+  # kubectl. Catches:
+  #   * Schema regressions in the plain k8s manifests
+  #     (`kubectl apply --dry-run=client --validate=true`).
+  #   * Helm chart issues (`helm lint`).
+  #   * Unintended drift in the rendered chart output, by diffing
+  #     a fresh render against the checked-in golden file at
+  #     deploy/helm/safeguard-mcp/golden/manifests.yaml.
+  # If you intentionally change a template, regenerate the golden
+  # via the render.sh script in that directory and commit it
+  # alongside the template change.
+  # ──────────────────────────────────────────────────────────────
+  - job: ValidateDeploy
+    displayName: 'Validate deploy/ manifests'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: KubectlInstaller@0
+        displayName: 'Install kubectl'
+        inputs:
+          kubectlVersion: 'v1.27.0'
+
+      - task: HelmInstaller@1
+        displayName: 'Install helm'
+        inputs:
+          helmVersionToInstall: 'v3.16.3'
+
+      - script: |
+          set -euo pipefail
+          kubectl apply --dry-run=client --validate=true -f deploy/k8s/
+        displayName: 'kubectl --dry-run=client apply -f deploy/k8s/'
+
+      - script: |
+          set -euo pipefail
+          helm lint deploy/helm/safeguard-mcp \
+            --set safeguardHost=safeguard.example.com \
+            --set mcpPublicUrl=https://mcp.example.com \
+            --set rstsClientId=https://mcp.example.com \
+            --set ingress.host=mcp.example.com
+        displayName: 'helm lint deploy/helm/safeguard-mcp'
+
+      - script: |
+          set -euo pipefail
+          # Render with the same fixed values used to produce the
+          # checked-in golden, then diff. A non-empty diff fails
+          # the job; the diff itself is printed for the reviewer.
+          fresh=$(mktemp)
+          deploy/helm/safeguard-mcp/golden/render.sh > "$fresh"
+          if ! diff -u deploy/helm/safeguard-mcp/golden/manifests.yaml "$fresh"; then
+            echo ""
+            echo "ERROR: Helm template render no longer matches golden."
+            echo "If this change is intentional, regenerate via:"
+            echo "  deploy/helm/safeguard-mcp/golden/render.sh > deploy/helm/safeguard-mcp/golden/manifests.yaml"
+            echo "and commit the result alongside your template changes."
+            exit 1
+          fi
+        displayName: 'helm template == golden (drift check)'
+
+      - script: |
+          set -euo pipefail
+          # Render the golden once more and pipe it through the same
+          # client-side schema validator we ran against deploy/k8s/.
+          # This catches issues that helm lint alone misses (e.g.,
+          # cross-resource references that only resolve at apply
+          # time).
+          deploy/helm/safeguard-mcp/golden/render.sh \
+            | kubectl apply --dry-run=client --validate=true -f -
+        displayName: 'kubectl --dry-run=client on rendered chart'
+
+  # ──────────────────────────────────────────────────────────────
   # Per-RID AOT publish jobs (non-PR builds)
   # Native AOT cannot cross-compile across operating systems,
   # so each RID is built on its own pool.
@@ -109,8 +180,8 @@ jobs:
   # we build natively on arm64. If the project does not have access to
   # the `ubuntu-22.04-arm` hosted pool, the documented fallback is to
   # build on `ubuntu-latest` (x64) with a cross-toolchain
-  # (`gcc-aarch64-linux-gnu`, clang `--target` flags) -- see
-  # DEVICE-CODE-AOT-PLAN.md §7a. Do not switch silently.
+  # (`gcc-aarch64-linux-gnu`, clang `--target` flags). Do not switch
+  # silently.
   # ──────────────────────────────────────────────────────────────
   - job: Publish_linux_arm64
     displayName: 'Publish linux-arm64 (AOT)'

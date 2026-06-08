@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "safeguard-mcp.configMapName" . }}
+  labels:
+    {{- include "safeguard-mcp.labels" . | nindent 4 }}
+data:
+  SAFEGUARD_HOST: {{ required "safeguardHost is required" .Values.safeguardHost | quote }}
+  {{- if .Values.safeguardIgnoreSsl }}
+  SAFEGUARD_IGNORE_SSL: "true"
+  {{- end }}
+  {{- if .Values.oauthBridge.enabled }}
+  {{- if .Values.mcpPublicUrl }}
+  MCP_PUBLIC_URL: {{ .Values.mcpPublicUrl | quote }}
+  {{- end }}
+  {{- if .Values.rstsClientId }}
+  RSTS_CLIENT_ID: {{ .Values.rstsClientId | quote }}
+  {{- end }}
+  {{- if .Values.bridgeTrustedProxies }}
+  BRIDGE_TRUSTED_PROXIES: {{ .Values.bridgeTrustedProxies | quote }}
+  {{- end }}
+  BRIDGE_AUTH_CODE_TTL_SECONDS: {{ .Values.bridge.authCodeTtlSeconds | quote }}
+  {{- else }}
+  BRIDGE_DISABLED: "true"
+  {{- end }}
+  {{- range $k, $v := .Values.extraEnv }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

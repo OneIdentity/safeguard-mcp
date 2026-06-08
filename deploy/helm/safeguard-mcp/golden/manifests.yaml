@@ -1,0 +1,412 @@
+---
+# Source: safeguard-mcp/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: safeguard-mcp-config
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  SAFEGUARD_HOST: "safeguard.example.com"
+  BRIDGE_AUTH_CODE_TTL_SECONDS: "60"
+---
+# Source: safeguard-mcp/templates/bridge-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: safeguard-mcp-bridge
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: bridge
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/component: bridge
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# Source: safeguard-mcp/templates/relay-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: safeguard-mcp-relay
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: relay
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/component: relay
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# Source: safeguard-mcp/templates/bridge-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safeguard-mcp-bridge
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: bridge
+spec:
+  replicas: 1
+  strategy:
+    # Single-replica: Recreate so we never run two bridge pods
+    # simultaneously, even transiently during rollout. The bridge
+    # holds in-flight OAuth state in process memory.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: safeguard-mcp
+      app.kubernetes.io/instance: safeguard-mcp
+      app.kubernetes.io/component: bridge
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: safeguard-mcp-0.1.0
+        app.kubernetes.io/name: safeguard-mcp
+        app.kubernetes.io/instance: safeguard-mcp
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: bridge
+      annotations:
+        checksum/config: 47288407612cef4bf00eed04144bde05a350156fa9ad25829df3a98e36e0a8d1
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: safeguard-mcp
+          image: ghcr.io/oneidentity/safeguard-mcp:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: ["--http"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: safeguard-mcp-config
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+          # Lenient liveness — restart on a real lockup, not a slow
+          # rSTS round-trip. Restart invalidates in-flight /authorize
+          # and unredeemed /token entries; users restart their login.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+# Source: safeguard-mcp/templates/relay-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safeguard-mcp-relay
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: relay
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: safeguard-mcp
+      app.kubernetes.io/instance: safeguard-mcp
+      app.kubernetes.io/component: relay
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: safeguard-mcp-0.1.0
+        app.kubernetes.io/name: safeguard-mcp
+        app.kubernetes.io/instance: safeguard-mcp
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: relay
+      annotations:
+        checksum/config: 47288407612cef4bf00eed04144bde05a350156fa9ad25829df3a98e36e0a8d1
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: safeguard-mcp
+          image: ghcr.io/oneidentity/safeguard-mcp:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: ["--http"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: safeguard-mcp-config
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+# Source: safeguard-mcp/templates/relay-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: safeguard-mcp-relay
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: relay
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: safeguard-mcp-relay
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Source: safeguard-mcp/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: safeguard-mcp
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - "mcp.example.com"
+      secretName: "safeguard-mcp-tls"
+  rules:
+    - host: "mcp.example.com"
+      http:
+        paths:
+          - path: /authorize
+            pathType: Prefix
+            backend:
+              service:
+                name: safeguard-mcp-bridge
+                port:
+                  name: http
+          - path: /token
+            pathType: Exact
+            backend:
+              service:
+                name: safeguard-mcp-bridge
+                port:
+                  name: http
+          - path: /register
+            pathType: Exact
+            backend:
+              service:
+                name: safeguard-mcp-bridge
+                port:
+                  name: http
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: safeguard-mcp-relay
+                port:
+                  name: http
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: safeguard-mcp-relay
+                port:
+                  name: http
+          - path: /.well-known/
+            pathType: Prefix
+            backend:
+              service:
+                name: safeguard-mcp-relay
+                port:
+                  name: http
+---
+# Source: safeguard-mcp/templates/tests/test-healthz.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: safeguard-mcp-test-healthz
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: healthz
+      image: curlimages/curl:8.10.1
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -eu
+          # The relay must serve /healthz on its ClusterIP.
+          curl -sS -f -o /dev/null -w '%{http_code}\n' \
+            "http://safeguard-mcp-relay/healthz" \
+            | grep -qx '200'
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+---
+# Source: safeguard-mcp/templates/tests/test-wellknown.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: safeguard-mcp-test-wellknown
+  labels:
+    helm.sh/chart: safeguard-mcp-0.1.0
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/instance: safeguard-mcp
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: wellknown
+      image: curlimages/curl:8.10.1
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -eu
+          # Bridge enabled: well-known metadata documents must be
+          # served by the relay (the bridge fan-out is via Ingress
+          # path-routing; in-cluster we hit the relay Service
+          # directly).
+          for path in /.well-known/oauth-protected-resource \
+                      /.well-known/oauth-authorization-server; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "http://safeguard-mcp-relay${path}")
+            if [ "$code" != "200" ]; then
+              echo "FAIL: ${path} returned ${code}" >&2
+              exit 1
+            fi
+          done
+          echo "well-known metadata served"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]

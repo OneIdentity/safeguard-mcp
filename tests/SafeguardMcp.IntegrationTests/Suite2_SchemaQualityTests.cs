@@ -84,7 +84,8 @@ public class Suite2_SchemaQualityTests
         var hintsSection = ExtractSection(schema, "AGENT HINTS:");
 
         Assert.Contains("RoleId", requestSection);
-        Assert.Contains("AccessRequestProperties (object)", requestSection);
+        // Nested $ref types are rendered as "object<TypeName>" by AppendSchemaProperty.
+        Assert.Contains("AccessRequestProperties (object", requestSection);
         Assert.Contains("AccessRequestProperties: Nested object", hintsSection);
     }
 
@@ -116,15 +117,26 @@ public class Suite2_SchemaQualityTests
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogLoader>());
         var catalogProvider = new SafeguardMcp.Catalog.CatalogProvider(
             catalogLoader, new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogProvider>());
-        using var disconnectedMgr = new SafeguardMcp.Tools.SafeguardConnectionManager(
-            new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.SafeguardConnectionManager>(),
-            config, catalogProvider);
-        var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
+        // Set SAFEGUARD_HOST so the "missing host" code path is bypassed
+        // and the test exercises the "no bearer in request" path.
+        var prevHost = Environment.GetEnvironmentVariable("SAFEGUARD_HOST");
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", "disconnected-host.example");
+        try
+        {
+            using var disconnectedMgr = new SafeguardMcp.Tools.HttpRelaySafeguardSession(
+                new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.HttpRelaySafeguardSession>(),
+                config, new Microsoft.AspNetCore.Http.HttpContextAccessor());
+            var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
 
-        var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(
-            () => tool.Safeguard_Execute(null, method: "GET", path: "/v4/Users", host: "disconnected-host"));
+            var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(
+                () => tool.Safeguard_Execute(null, method: "GET", path: "/v4/Users"));
 
-        Assert.Contains("Connect", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("authenticated", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SAFEGUARD_HOST", prevHost);
+        }
     }
 
     [Fact]
