@@ -27,10 +27,11 @@ public class DeviceCodeAuthTests
     public async Task EnsureAuthenticated_NoEnvVars_UsesDeviceCode()
     {
         using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
         var factory = new FakeConnectionFactory();
-        var manager = CreateManager(factory);
+        using var manager = CreateManager(factory);
 
-        await manager.EnsureAuthenticatedAsync(server: null, host: TestHost, ct: CancellationToken.None, ignoreSsl: false);
+        await manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, factory.DeviceCodeCallCount);
         Assert.Equal(0, factory.PkceCallCount);
@@ -41,14 +42,15 @@ public class DeviceCodeAuthTests
     public async Task EnsureAuthenticated_AllPkceEnvVarsSet_UsesPkce()
     {
         using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
         Environment.SetEnvironmentVariable("SAFEGUARD_PROVIDER", "local");
         Environment.SetEnvironmentVariable("SAFEGUARD_USER", "admin");
         Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", "secret");
 
         var factory = new FakeConnectionFactory();
-        var manager = CreateManager(factory);
+        using var manager = CreateManager(factory);
 
-        await manager.EnsureAuthenticatedAsync(server: null, host: TestHost, ct: CancellationToken.None, ignoreSsl: false);
+        await manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, factory.DeviceCodeCallCount);
         Assert.Equal(1, factory.PkceCallCount);
@@ -61,13 +63,14 @@ public class DeviceCodeAuthTests
     public async Task EnsureAuthenticated_PartialEnvVars_UsesDeviceCode()
     {
         using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
         Environment.SetEnvironmentVariable("SAFEGUARD_USER", "admin");
         Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", "secret");
 
         var factory = new FakeConnectionFactory();
-        var manager = CreateManager(factory);
+        using var manager = CreateManager(factory);
 
-        await manager.EnsureAuthenticatedAsync(server: null, host: TestHost, ct: CancellationToken.None, ignoreSsl: false);
+        await manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, factory.DeviceCodeCallCount);
         Assert.Equal(0, factory.PkceCallCount);
@@ -77,6 +80,7 @@ public class DeviceCodeAuthTests
     public async Task EnsureAuthenticated_DeviceCodeDisplayCallback_LogsUrlAndCode()
     {
         using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
         var info = new DeviceCodeInfo
         {
             VerificationUri = "https://safeguard.example.test/RSTS/Login/DeviceCode",
@@ -84,10 +88,10 @@ public class DeviceCodeAuthTests
             ExpiresIn = 600,
         };
         var factory = new FakeConnectionFactory { DeviceCodeInfoToFire = info };
-        var capturingLogger = new CapturingLogger<SafeguardConnectionManager>();
-        var manager = CreateManager(factory, connectionLogger: capturingLogger);
+        var capturingLogger = new CapturingLogger<StdioSafeguardSession>();
+        using var manager = CreateManager(factory, sessionLogger: capturingLogger);
 
-        await manager.EnsureAuthenticatedAsync(server: null, host: TestHost, ct: CancellationToken.None, ignoreSsl: false);
+        await manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None);
 
         Assert.Contains(capturingLogger.Messages, m =>
             m.Contains("Device code for") &&
@@ -99,28 +103,29 @@ public class DeviceCodeAuthTests
     public async Task EnsureAuthenticated_DeviceCodeFails_WrapsAsMcpException()
     {
         using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
         var factory = new FakeConnectionFactory
         {
             DeviceCodeException = new SafeguardDotNetException("device code grant disabled"),
         };
-        var manager = CreateManager(factory);
+        using var manager = CreateManager(factory);
 
         var ex = await Assert.ThrowsAsync<McpException>(
-            () => manager.EnsureAuthenticatedAsync(server: null, host: TestHost, ct: CancellationToken.None, ignoreSsl: false));
+            () => manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None));
 
         Assert.Contains("Authentication failed", ex.Message);
         Assert.Contains("PKCE fallback", ex.Message);
     }
 
-    private static SafeguardConnectionManager CreateManager(
+    private static StdioSafeguardSession CreateManager(
         FakeConnectionFactory factory,
-        ILogger<SafeguardConnectionManager> connectionLogger = null)
+        ILogger<StdioSafeguardSession> sessionLogger = null)
     {
         var config = new ConfigurationBuilder().Build();
         var catalogLoader = new CatalogLoader(NullLogger<CatalogLoader>.Instance);
         var catalogProvider = new CatalogProvider(catalogLoader, NullLogger<CatalogProvider>.Instance);
-        var logger = connectionLogger ?? NullLogger<SafeguardConnectionManager>.Instance;
-        return new SafeguardConnectionManager(logger, config, catalogProvider, factory);
+        var logger = sessionLogger ?? NullLogger<StdioSafeguardSession>.Instance;
+        return new StdioSafeguardSession(logger, config, catalogProvider, factory);
     }
 
     private sealed class EnvVarScope : IDisposable
@@ -128,6 +133,7 @@ public class DeviceCodeAuthTests
         private readonly Dictionary<string, string> _saved = new();
         private static readonly string[] AuthVars =
         {
+            "SAFEGUARD_HOST",
             "SAFEGUARD_PROVIDER",
             "SAFEGUARD_USER",
             "SAFEGUARD_PASSWORD",
@@ -209,6 +215,14 @@ public class DeviceCodeAuthTests
             LastPkceUser = user;
             return new FakeSafeguardConnection();
         }
+
+        public ISafeguardConnection ConnectWithAccessToken(
+            string host,
+            SecureString accessToken,
+            int apiVersion,
+            bool ignoreSsl)
+            => throw new NotSupportedException(
+                "Stdio session does not use bearer-token relay.");
     }
 
     private sealed class FakeSafeguardConnection : ISafeguardConnection

@@ -59,24 +59,49 @@ dotnet run -- --http
 
 Set environment variables before running:
 
+**Common (both transports):**
+
 | Variable | Purpose |
 |----------|---------|
-| `SAFEGUARD_HOST` | Appliance hostname or IP |
-| `SAFEGUARD_USER` | Login username |
-| `SAFEGUARD_PASSWORD` | Login password |
-| `SAFEGUARD_PROVIDER` | Identity provider (default: `local`) |
-| `SAFEGUARD_IGNORE_SSL` | Set `true` for self-signed certs |
+| `SAFEGUARD_HOST` | Appliance DNS name or IP. Stdio mode can elicit this at runtime if omitted; HTTP mode requires it at startup. |
+| `SAFEGUARD_IGNORE_SSL` | Set `true` for self-signed/internal-CA appliance certs (lab/dev only). |
+
+**Stdio mode — optional non-interactive PKCE login** (skips device-code if all three
+are set; intended for headless/test scenarios):
+
+| Variable | Purpose |
+|----------|---------|
+| `SAFEGUARD_PROVIDER` | Identity provider ID (e.g. `local`) |
+| `SAFEGUARD_USER` | Username for PKCE login |
+| `SAFEGUARD_PASSWORD` | Password for PKCE login |
+
+**HTTP mode — OAuth metadata bridge** (on by default; opt out only if you front the
+deployment with a separate OAuth gateway):
+
+| Variable | Purpose |
+|----------|---------|
+| `MCP_PUBLIC_URL` | Pin the bridge's public URL. If unset, it is inferred per-request from `Host` / `X-Forwarded-*`. |
+| `RSTS_CLIENT_ID` | Override the rSTS client id the bridge advertises. |
+| `BRIDGE_DISABLED` | Set `true` to skip wiring the bridge entirely (pure relay). |
+| `BRIDGE_TRUSTED_PROXIES` | Comma-separated CIDRs of trusted reverse-proxy hops, in addition to loopback + RFC1918. |
 
 ## Project Structure
 
 ```
 src/SafeguardMcp/
-├── Program.cs          # Entry point, dual-transport setup
-├── Tools/              # MCP tool classes (auto-discovered via [McpServerToolType])
+├── Program.cs          # Entry point: stdio/HTTP dispatch, login/logout subcommands
+├── Tools/              # MCP tool classes (auto-discovered via [McpServerToolType]),
+│                       # plus ISafeguardSession + Stdio/HttpRelay implementations
 ├── Catalog/            # Dynamic API catalog, MCP resources, terminology mapping
-└── Workflows/          # Embedded markdown workflow recipes (YAML front matter)
+├── Workflows/          # Embedded markdown workflow recipes (YAML front matter)
+├── OAuth/              # HTTP-mode OAuth metadata bridge (well-known endpoints,
+│                       # authorize/token/registration, PKCE, client registry)
+├── Login/              # `safeguard-mcp login` / `logout` CLI subcommands and
+│                       # SecureTokenFile (OS-restrictive token-file ACL writer)
+└── Logging/            # RedactingLoggerProvider + stderr/file sinks
 
-tests/SafeguardMcp.Tests/   # xUnit tests for pure logic (no live appliance needed)
+tests/SafeguardMcp.Tests/             # xUnit tests for pure logic (no live appliance needed)
+tests/SafeguardMcp.IntegrationTests/  # Tests that exercise wired-up host plumbing
 ```
 
 ## Adding a Workflow Recipe

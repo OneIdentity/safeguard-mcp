@@ -149,8 +149,8 @@ public class Suite5_ErrorGuidanceTests
                 new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogLoader>());
             var catalogProvider = new SafeguardMcp.Catalog.CatalogProvider(
                 catalogLoader, new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Catalog.CatalogProvider>());
-            using var limitedMgr = new SafeguardMcp.Tools.SafeguardConnectionManager(
-                new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.SafeguardConnectionManager>(),
+            using var limitedMgr = new SafeguardMcp.IntegrationTests.TestConnectionManager(
+                new Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardMcp.Tools.StdioSafeguardSession>(),
                 config, catalogProvider);
 
             Environment.SetEnvironmentVariable("SAFEGUARD_USER", limitedUserName);
@@ -164,7 +164,7 @@ public class Suite5_ErrorGuidanceTests
             {
                 response = await tool.Safeguard_Execute(null,
                     method: "POST", path: "/v4/Users",
-                    body: "{\"Name\":\"ShouldFail\"}", host: _fixture.Host);
+                    body: "{\"Name\":\"ShouldFail\"}");
             }
             catch (Exception ex)
             {

@@ -1,0 +1,92 @@
+{{- if .Values.oauthBridge.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "safeguard-mcp.bridgeName" . }}
+  labels:
+    {{- include "safeguard-mcp.bridgeLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.bridge.replicaCount }}
+  strategy:
+    {{- if eq (int .Values.bridge.replicaCount) 1 }}
+    # Single-replica: Recreate so we never run two bridge pods
+    # simultaneously, even transiently during rollout. The bridge
+    # holds in-flight OAuth state in process memory.
+    type: Recreate
+    {{- else }}
+    # >1 replica: user has opted into in-process state loss on
+    # restart (acceptInProcessStateLossOnRestart=true, enforced by
+    # values.schema.json). RollingUpdate is reasonable in that
+    # mode; users will retry login on misses.
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "safeguard-mcp.bridgeSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "safeguard-mcp.bridgeLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "safeguard-mcp.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: safeguard-mcp
+          image: {{ include "safeguard-mcp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--http"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "safeguard-mcp.configMapName" . }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+          # Lenient liveness — restart on a real lockup, not a slow
+          # rSTS round-trip. Restart invalidates in-flight /authorize
+          # and unredeemed /token entries; users restart their login.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- include "safeguard-mcp.containerSecurityContext" . | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

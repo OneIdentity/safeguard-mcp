@@ -1,0 +1,115 @@
+# Relay Deployment.
+#
+# The relay serves the MCP streamable-HTTP transport (`/mcp`),
+# `/healthz`, and the OAuth `/.well-known/*` metadata documents.
+# It is **stateless** — any pod can serve any MCP request because the
+# bearer token rides on each call (`HttpRelaySafeguardSession` is
+# scoped per-request) — so the relay can be horizontally scaled
+# freely.
+#
+# The bridge endpoints (`/authorize`, `/authorize/callback`, `/token`,
+# `/register`) are NOT routed here by the Ingress; that work belongs
+# to the bridge Deployment in `20-bridge-deployment.yaml`. The relay
+# pods still serve well-known metadata derived from the per-request
+# Host (or, when set, the pinned `MCP_PUBLIC_URL` / `RSTS_CLIENT_ID`
+# overrides shared via the ConfigMap).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safeguard-mcp-relay
+  namespace: safeguard-mcp
+  labels:
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/component: relay
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: safeguard-mcp
+      app.kubernetes.io/component: relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safeguard-mcp
+        app.kubernetes.io/component: relay
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: safeguard-mcp
+          image: ghcr.io/oneidentity/safeguard-mcp:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--http"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: safeguard-mcp-config
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+# Sample HorizontalPodAutoscaler for the relay. Tune to your traffic
+# profile. Because the relay is stateless, scale-out is safe at any
+# time and scale-in only needs respectful connection draining (the
+# default `terminationGracePeriodSeconds` of 30s is normally enough
+# for in-flight MCP calls).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: safeguard-mcp-relay
+  namespace: safeguard-mcp
+  labels:
+    app.kubernetes.io/name: safeguard-mcp
+    app.kubernetes.io/component: relay
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: safeguard-mcp-relay
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

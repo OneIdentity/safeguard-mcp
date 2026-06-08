@@ -38,19 +38,21 @@ docker run -d --rm \
   ghcr.io/oneidentity/safeguard-mcp
 ```
 
-To run the container in **stdio** mode (e.g. wired into an MCP client that
-launches its own subprocess), pass `--stdio` and use `-i` so stdin stays
+The container's `ENTRYPOINT` is pinned to `--http`; to run it in
+stdio mode (e.g. wired into an MCP client that launches its own
+subprocess), override the entrypoint and pass `-i` so stdin stays
 attached:
 
 ```bash
 docker run -i --rm \
+  --entrypoint /app/SafeguardMcp \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
-  ghcr.io/oneidentity/safeguard-mcp --stdio
+  ghcr.io/oneidentity/safeguard-mcp
 ```
 
-Authenticate via device code flow on first tool call, or pre-configure
-`SAFEGUARD_USER` / `SAFEGUARD_PASSWORD` for non-interactive runs. The
-container runs as a built-in nonroot user (`app`, UID 1654).
+The container runs as a built-in nonroot user (`app`, UID 1654).
+For production HTTP deployments, see the
+[reference deployment shapes](deploy/README.md).
 
 ### Binary Downloads
 
@@ -83,6 +85,10 @@ cosign verify --key cosign.pub ghcr.io/oneidentity/safeguard-mcp:<tag>
 ```
 
 ## Quick Start
+
+Once your client is wired up (see below), see [`docs/EXAMPLES.md`](docs/EXAMPLES.md) for
+example prompts covering discovery, account/asset management, access requests, password
+and SSH key rotation, health checks, audits, and cross-server workflows.
 
 ### Claude Desktop
 
@@ -123,32 +129,88 @@ Add to `.vscode/mcp.json` in your workspace:
 }
 ```
 
-### HTTP Mode (Network/Container Deployment)
+### HTTP Mode (Shared Server Deployment)
+
+`safeguard-mcp` can also run as a long-lived HTTP server that multiple users share.
+A single server process is bound to one appliance via `SAFEGUARD_HOST`; the bearer
+rides on each MCP request, so the server holds no per-user state.
+
+**OAuth-bridge setup (recommended)** — point your MCP client at
+`https://<your-mcp-host>/mcp` and let it discover OAuth via the
+server's `/.well-known/*` metadata. The client opens a browser-based
+PKCE login against the appliance's rSTS, and the resulting bearer is
+sent on each request automatically. The bridge is on by default in
+HTTP mode, holds no long-lived secrets, and never retains a Safeguard
+token. Set `BRIDGE_DISABLED=true` if you front the deployment with a
+separate OAuth gateway.
+
+**Paste-bearer setup (manual fallback)** — only for older MCP clients
+that don't yet implement OAuth discovery, or for scripts/CI. Each user
+acquires a Safeguard user token locally and drops it into their MCP
+client config:
 
 ```bash
-SafeguardMcp --http --urls "http://0.0.0.0:5000"
+safeguard-mcp login --host safeguard.corp.example.com --print-bearer-only > token.txt
 ```
 
-Clients connect to `http://your-host:5000/mcp`. See [Transport Modes](#transport-modes) for
-TLS and Kubernetes deployment options.
+```jsonc
+{
+  "mcpServers": {
+    "safeguard": {
+      "url": "https://mcp.corp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <paste-token-here>" }
+    }
+  }
+}
+```
+
+When you're done with the token (e.g. switching machines, ending a
+shift), revoke it server-side with the paired command:
+
+```bash
+safeguard-mcp logout --host safeguard.corp.example.com --input token.txt
+```
+
+Both `login` and `logout` exist solely to bridge clients that can't run
+the OAuth flow themselves; once your client supports MCP OAuth
+discovery, neither is needed.
+
+For production HTTP deployments, see [`deploy/README.md`](deploy/README.md).
 
 ## Authentication
 
-The server connects to your Safeguard appliance using the **OAuth 2.0 Device Authorization
-Grant** ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) by default. When you
-(or your agent) initiate a connection, the server prints a verification URL and a short
-one-time code; you complete sign-in from any browser — on the same machine or a different
-one — and the token flows back automatically. This works in containers and headless
-environments without needing a local browser, and supports any authentication method your
-appliance allows (LDAP, RADIUS, SAML, etc.).
+The Safeguard appliance is the **sole authentication authority** in every deployment
+shape. No service-account credentials are stored in MCP config and no Safeguard tokens
+ever live in the MCP server's persistent state.
+
+### Stdio mode
+
+When `safeguard-mcp` runs as a child process of an MCP client (the default), it uses
+the **OAuth 2.0 Device Authorization Grant**
+([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)). On first use the server
+prints a verification URL and a short one-time code; you complete sign-in from any
+browser — same machine or a different one — and the token flows back automatically.
+This works in containers and headless environments without needing a local browser,
+and supports any authentication method your appliance allows (LDAP, RADIUS, SAML, etc.).
 
 > Device code grant must be enabled on the Safeguard appliance (Safeguard Access settings).
 
+### HTTP mode
+
+When the server runs as a shared HTTP service, each MCP request carries its own
+`Authorization: Bearer <token>` header and the server forwards that bearer verbatim
+to the appliance. The server has no ambient identity of its own; the appliance
+validates the bearer on every call, so a revoked or expired token stops working the
+moment the appliance says so.
+
+Bearers reach the client one of two ways — see [HTTP Mode](#http-mode-shared-server-deployment)
+above for the paste-bearer and OAuth-bridge flows.
+
 ### Typical Setup
 
-Most users simply set `SAFEGUARD_HOST` to tell the server which appliance to connect to.
-On first use, the server displays a verification URL and code — no passwords stored in
-config files:
+Most stdio users simply set `SAFEGUARD_HOST` to tell the server which appliance to
+connect to. On first use, the server displays a verification URL and code — no
+passwords stored in config files:
 
 ```json
 {
@@ -158,9 +220,10 @@ config files:
 }
 ```
 
-You can also omit `SAFEGUARD_HOST` entirely. In that case, the server starts with no connection
-and the agent will prompt you for the appliance address at runtime via `Safeguard_Connect`.
-See [Multi-Server Support](#multi-server-support) for details.
+You can also omit `SAFEGUARD_HOST` entirely in stdio mode. The server then starts
+with no connection and the agent will prompt you for the appliance address at
+runtime via `Safeguard_Connect`. See [One appliance per process](#one-appliance-per-process)
+for details.
 
 ### SSL Certificate Validation
 
@@ -177,6 +240,136 @@ For appliances using self-signed or internal CA certificates, set `SAFEGUARD_IGN
 
 The agent can also pass `ignoreSsl` per-connection at runtime via `Safeguard_Connect`, but the
 server will always prompt you for confirmation before disabling SSL validation.
+
+## Threat Model
+
+The HTTP relay was designed around a few hard invariants worth stating explicitly:
+
+- **The appliance is the sole authentication authority.** The relay never validates
+  a Safeguard bearer locally — every MCP request is forwarded to the appliance, and
+  appliance-side revocation takes effect immediately.
+- **No long-lived secrets in the server.** The relay holds no client secrets, no
+  service accounts, no refresh tokens, no cookie keys. The OAuth bridge is a public
+  PKCE client; it issues no shared secrets to MCP clients and stores none itself.
+- **Bearers never enter persistent state.** The bearer rides on each request in a
+  per-request scoped `HttpRelaySafeguardSession` and is discarded when the request
+  completes. See [Bearer token handling](#bearer-token-handling) below for the full
+  lifecycle in both modes.
+- **Logs are scrubbed.** Both stdio and HTTP modes route through a single
+  redaction provider that strips JWT-shaped tokens, OAuth `code`/`code_verifier`
+  values, and `Authorization: Bearer …` headers before any log sink sees them.
+- **Single appliance per process.** A given server process is bound to one
+  appliance via `SAFEGUARD_HOST`. Cross-appliance token confusion is not possible
+  in HTTP mode because no process serves more than one appliance.
+- **Forwarded-headers trust is bounded.** The bridge derives its public URL from
+  each incoming request, with `UseForwardedHeaders` enabled but configured to
+  trust only loopback + RFC1918 (10/8, 172.16/12, 192.168/16) by default. That
+  covers the common cluster-internal-ingress case; production deployments behind
+  ingress should ensure their proxy is in a trusted CIDR or extend the trust list
+  via `BRIDGE_TRUSTED_PROXIES` (comma-separated CIDRs). Untrusted hops are
+  ignored, so a malicious client cannot spoof `X-Forwarded-Host` to make the
+  bridge publish a different authorization-server URL.
+
+### Bearer token handling
+
+Both transports must hold a Safeguard user token in memory while they are
+actively calling the appliance on the caller's behalf. The window is bounded,
+deterministic, and as defensively allocated as the framework allows. Neither
+mode persists the token to disk; neither mode logs it; neither mode keeps a
+managed-string copy on a long-lived field. The two transports differ only in
+how long the in-memory hold lasts, because their trust boundaries differ.
+
+#### HTTP mode — per-request hold, then wiped
+
+The HTTP relay does not authenticate users itself. Every MCP request must
+arrive carrying its own `Authorization: Bearer <token>`; the relay forwards
+that bearer to the appliance for the duration of that one request and is
+done with it when the request returns.
+
+1. **Per-request scope, never wider.** `HttpRelaySafeguardSession` is
+   registered with ASP.NET Core's scoped lifetime, so a fresh instance is
+   created for every MCP HTTP request and disposed when the request ends.
+   There is no singleton, no static field, and no cross-request dictionary
+   anywhere in the process that holds a bearer. The next request from the
+   same caller must bring its own `Authorization` header — the server has
+   nothing to fall back on.
+
+2. **`SecureString` for the in-flight copy.** When the session first needs
+   to call the appliance during a request, it extracts the bearer from the
+   request's `Authorization` header, copies it into a sealed `SecureString`
+   via `SessionHelpers.ToSecureString`, and hands that `SecureString` to the
+   SafeguardDotNet SDK's `Safeguard.Connect(host, secureBearer, …)`. The SDK
+   keeps its own `SecureString` copy inside the connection it returns; our
+   local copy is wrapped in `using` and zeroed the moment the SDK has the
+   connection. The SDK uses its copy transiently when building each outbound
+   `Authorization` header to the appliance.
+
+3. **Deterministic zeroing on disposal.** When the DI scope ends —
+   `HttpRelaySafeguardSession.Dispose()` → `_connection.Dispose()` —
+   the SDK's `SecureString` is zeroed before its buffer is released. The
+   bytes do not sit in the managed heap waiting for GC to maybe-someday
+   reclaim them. Disposal is driven by the framework's scope teardown;
+   no code path can forget to release the connection.
+
+4. **No appliance-side state to clean up.** A 401 from the appliance during
+   a request is surfaced to the caller as "token expired or revoked;
+   re-acquire and retry" — the relay does not attempt to refresh, because
+   the bearer is not the relay's to refresh. Token rotation is the caller's
+   responsibility.
+
+The end-to-end shape: the bearer enters with the request, is held just
+long enough to talk to the appliance, and is wiped from process memory
+when the request returns. The agent is the sole long-term holder of the
+token; the relay borrows it briefly for each request.
+
+#### Stdio mode — process-lifetime hold, then wiped
+
+A stdio process is a single user's local agent talking to a single local
+MCP client over the process's stdin/stdout. The process itself performs
+the Safeguard login that produces the token — device-code by default, or
+PKCE when `SAFEGUARD_PROVIDER` / `SAFEGUARD_USER` / `SAFEGUARD_PASSWORD`
+are all set — so the trust boundary is the process boundary itself.
+
+1. **One cached connection per process.** `StdioSafeguardSession` is a
+   singleton; on first tool call it drives the login flow and caches the
+   resulting `ISafeguardConnection`. The SDK holds the token inside a
+   `SecureString` on that connection; all subsequent tool calls in the
+   same process reuse it. There is no second copy on the session object,
+   no on-disk file, no environment variable that retains the token after
+   login completes.
+
+2. **Refresh in place, never re-materialized as a string.** Before every
+   tool call the session checks `GetAccessTokenLifetimeRemaining()` and
+   silently calls `RefreshAccessToken()` if fewer than five minutes
+   remain. Both calls happen entirely inside the SDK against its own
+   `SecureString`; the bearer is never lifted back into a managed
+   `string` on our side.
+
+3. **Deterministic zeroing on logout or graceful shutdown.**
+   `Safeguard_Disconnect` (the MCP tool) and graceful host shutdown both
+   route through `DisposeConnectionLocked()`, which calls
+   `connection.LogOut()` — the SDK posts to the appliance's
+   `/Token/Logout` to revoke server-side and zeroes its `SecureString` —
+   then `connection.Dispose()`. The session's `_connection` field is
+   nulled; the next tool call re-auths from scratch. The companion CLI
+   `safeguard-mcp logout` runs in its own short-lived process and reaches
+   the same appliance endpoint directly; the stdio server it pairs with
+   discovers the resulting invalidation on the next API call (a 401
+   surfaces as "re-authenticate" to the agent).
+
+4. **No disk persistence, ever.** Tokens are never written to disk by the
+   stdio server. `safeguard-mcp login --output <path>` is the one and
+   only path that places a token on disk, and only because the user
+   explicitly asked for it — and it does so with a restrictive ACL
+   (Unix 0600; Windows: explicit user-only ACE, inheritance disabled).
+   `safeguard-mcp logout` revokes that token server-side; the file
+   itself is the user's to manage.
+
+In both modes, `RedactingLoggerProvider` is wired in front of every log
+sink (stderr and the rolling file) and strips JWT-shaped tokens, OAuth
+`code`/`code_verifier` values, and `Authorization: Bearer …` headers
+before any sink sees them — so even an exception that surfaces a
+request/response payload cannot leak the bearer to disk through a log.
 
 ## Architecture & Design
 
@@ -195,11 +388,13 @@ that give the agent the ability to navigate, understand, and execute against any
 dynamically. Think of it as providing a map and a car rather than building 1,000 individual
 roads.
 
-The complete tool surface is **7 tools**:
+The complete tool surface is **8 tools**:
 
 | Tool | Purpose |
 |------|---------|
 | `Safeguard_Connect` | Authenticate to one or more appliances via device code |
+| `Safeguard_Status` | Report the current connection/authentication state without a round-trip |
+| `Safeguard_Disconnect` | Revoke the active Safeguard token and drop the cached connection |
 | `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
@@ -328,33 +523,62 @@ agent "day-one knowledge" of Safeguard's API without consuming tool-call round t
 Clients that support MCP resource preloading can inject all four at session start. Clients that don't can still access the same content
 via tool calls (`Safeguard_QueryHelp`, `Safeguard_Discover`).
 
-### Multi-Server Support
+### One appliance per process
 
-The server maintains connections to multiple Safeguard appliances simultaneously. This
-enables cross-server workflows — comparing configurations between production and DR,
-migrating assets from one appliance to another, or auditing multiple sites from a single
-agent conversation.
+A single `safeguard-mcp` process binds to a single appliance. To address more than
+one appliance from a single agent conversation, run more than one server and wire
+the agent to all of them — each gets its own MCP server entry in your client's
+config.
 
-#### How connections work
+In **stdio mode** this falls out naturally: most MCP clients let you declare
+multiple servers in one config file, each launched with its own `SAFEGUARD_HOST`.
 
-You do **not** need to configure a host in advance. There are two ways to establish
-connections:
+In **HTTP mode**, the same applies: deploy each appliance behind its own URL. Same
+image, same chart, same configuration schema — the only thing that changes between
+deployments is the value of `SAFEGUARD_HOST`.
 
-1. **Auto-connect at startup** — Set `SAFEGUARD_HOST` (and optionally credentials) in your
-   config to connect automatically when the server starts. This is convenient when you
-   always work with the same appliance.
+#### Read-only replica fleets
 
-2. **Agent-driven connect at runtime** — The agent calls `Safeguard_Connect` during the
-   conversation to connect on demand. This works with no environment variables at all —
-   just start the server and let the agent connect when needed.
+A Safeguard cluster can include **read-only replica** appliances. Replicas serve the
+full access-request workflow (credential retrieval, sessions), A2A, and all
+configuration **reads**; they reject only configuration **writes**. That makes them
+useful targets for an MCP fleet in two ways:
 
-Both approaches can be combined. For example, auto-connect to your production appliance
-via config, then have the agent connect to a DR appliance mid-conversation for comparison.
+1. **Read scaling / load isolation** — run a second HTTP deployment with
+   `SAFEGUARD_HOST` pointed at a replica. Agents that mostly read the catalog,
+   query objects, or fetch credentials route there; agents that need to mutate
+   configuration go through the primary deployment.
+2. **No-config-mutation safety boundary** — to make AI agents incapable of
+   mutating Safeguard configuration at all, deploy *only* an MCP fleet pointed at
+   a replica. Credential retrieval, sessions, and A2A still work; configuration
+   writes return a clean appliance-level error.
 
-#### Minimal config (no pre-configured host)
+The deployment shape is identical to the primary fleet. The only operational
+difference is which address you put in `SAFEGUARD_HOST`.
 
-If you prefer to let the agent decide which appliance to connect to, omit `SAFEGUARD_HOST`
-entirely:
+#### Agent-driven connect (stdio only)
+
+In stdio mode the agent can also call `Safeguard_Connect` at runtime to connect on
+demand — handy if you launch the server with no `SAFEGUARD_HOST` and let the agent
+prompt you for the appliance address. Once a single stdio process is connected to
+multiple appliances this way, pass `host=...` on `Safeguard_Execute` to target a
+specific one:
+
+```
+Agent: Safeguard_Connect host="prod.safeguard.corp.com"    → authenticates to prod
+Agent: Safeguard_Connect host="dr.safeguard.corp.com"      → authenticates to DR
+Agent: Safeguard_Execute path="/v4/Users" host="prod.safeguard.corp.com"
+Agent: Safeguard_Execute path="/v4/Users" host="dr.safeguard.corp.com"
+```
+
+When only one connection is active, the `host` parameter is optional. This pattern
+does not apply to HTTP mode — each HTTP server is bound to one appliance for the
+process lifetime.
+
+#### Minimal stdio config (no pre-configured host)
+
+If you prefer to let the agent decide which appliance to connect to, omit
+`SAFEGUARD_HOST` entirely:
 
 **Claude Desktop** (`claude_desktop_config.json`):
 ```json
@@ -371,22 +595,8 @@ entirely:
 }
 ```
 
-The agent will call `Safeguard_Connect` when it needs to interact with an appliance and
-the server will display a verification URL and code for you to authenticate.
-
-#### Multi-server example
-
-Once connected to multiple appliances, use the `host` parameter on `Safeguard_Execute`
-to target a specific server:
-
-```
-Agent: Safeguard_Connect host="prod.safeguard.corp.com"    → authenticates to prod
-Agent: Safeguard_Connect host="dr.safeguard.corp.com"      → authenticates to DR
-Agent: Safeguard_Execute path="/v4/Users" host="prod.safeguard.corp.com"
-Agent: Safeguard_Execute path="/v4/Users" host="dr.safeguard.corp.com"
-```
-
-When only one connection is active, the `host` parameter is optional.
+The agent will call `Safeguard_Connect` when it needs to interact with an appliance
+and the server will display a verification URL and code for you to authenticate.
 
 ### Unified Dispatcher with Service Auto-Routing
 
@@ -448,71 +658,37 @@ All response thresholds are configurable in `appsettings.json`:
 
 The server supports two transport modes:
 
-**Stdio (default)** — the standard MCP transport used by VS Code, Claude Desktop, and most
-MCP clients. The server reads/writes JSON-RPC messages over stdin/stdout:
+**Stdio (default)** — the standard MCP transport used by VS Code, Claude Desktop,
+and most MCP clients. The server reads/writes JSON-RPC messages over stdin/stdout:
 
 ```bash
 SafeguardMcp          # stdio mode (default)
 ```
 
-**HTTP (Streamable HTTP)** — for network-accessible deployments, containers, or multi-client
-scenarios. The server starts a web endpoint that MCP clients connect to over HTTP:
+**HTTP (Streamable HTTP)** — for shared, network-accessible deployments. The server
+starts a web endpoint at `/mcp` that MCP clients connect to over HTTP. In this mode
+the server is a pure relay: it holds no Safeguard tokens; every MCP request must
+carry its own `Authorization: Bearer <token>` header, which the server forwards to
+the appliance. The appliance is what validates the bearer on every call.
 
 ```bash
-SafeguardMcp --http   # HTTP mode, default port 5000
+SafeguardMcp --http   # HTTP mode, default http://0.0.0.0:8080
 ```
 
-In HTTP mode, clients connect to the `/mcp` endpoint (e.g., `http://localhost:5000/mcp`).
-Configure the listening URL via standard ASP.NET Core mechanisms (`--urls`, `ASPNETCORE_URLS`
-environment variable, or `appsettings.json`).
+Configure the listening URL via standard ASP.NET Core mechanisms (`--urls`,
+`ASPNETCORE_URLS` environment variable, or `appsettings.json`).
 
-A `/healthz` endpoint is exposed alongside `/mcp` for Kubernetes liveness/readiness probes
-and load-balancer health checks; it returns `200 Healthy` once the host is up.
+A `/healthz` endpoint is exposed alongside `/mcp` for Kubernetes liveness/readiness
+probes and load-balancer health checks; it returns `200 Healthy` once the host is up.
 
-> **HTTP mode does not perform authentication on `/mcp`.** The transport itself is
-> unauthenticated by design — when binding to anything other than loopback, deploy the
-> server behind an authenticated reverse proxy, ingress controller, or service mesh
-> sidecar (mTLS, OAuth proxy, API gateway, etc.). TLS termination upstream is the
-> standard pattern; see below.
+> **TLS termination is your responsibility.** The server binds plain HTTP by default;
+> production deployments must front it with an authenticated reverse proxy, ingress
+> controller, or service mesh (mTLS, OAuth proxy, API gateway, etc.) that terminates
+> TLS. The bundled OAuth bridge enforces RFC 6749/8252 redirect-uri rules but does
+> not itself perform TLS.
 
-#### TLS / HTTPS
-
-For production deployments, TLS should protect the MCP transport. Two approaches:
-
-**Reverse proxy (recommended for Kubernetes / enterprise)** — terminate TLS at your existing
-ingress controller (nginx, Traefik, cloud load balancer) and proxy to the MCP server over
-plain HTTP internally:
-
-```
-Client → HTTPS → Ingress/LB (TLS termination) → HTTP → SafeguardMcp --http
-```
-
-No server configuration needed — this is the standard enterprise pattern.
-
-**Direct TLS via Kestrel** — for simpler single-host deployments, ASP.NET Core's built-in
-web server handles HTTPS natively:
-
-```bash
-SafeguardMcp --http --urls "https://+:8443"
-```
-
-Configure the certificate in `appsettings.json`:
-
-```json
-{
-  "Kestrel": {
-    "Certificates": {
-      "Default": {
-        "Path": "/certs/server.pfx",
-        "Password": "your-cert-password"
-      }
-    }
-  }
-}
-```
-
-Or via environment variables: `ASPNETCORE_Kestrel__Certificates__Default__Path` and
-`ASPNETCORE_Kestrel__Certificates__Default__Password`.
+For production HTTP deployments — Kubernetes manifests, Helm chart, Docker Compose,
+and the operational runbook — see [`deploy/README.md`](deploy/README.md).
 
 ## Building from Source
 

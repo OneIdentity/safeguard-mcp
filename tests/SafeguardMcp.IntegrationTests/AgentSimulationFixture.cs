@@ -28,7 +28,7 @@ public class AgentSimulationFixture : IAsyncLifetime
 
     private readonly Stack<(string Method, string Path)> _cleanupStack = new();
 
-    public SafeguardConnectionManager ConnectionManager { get; private set; }
+    internal TestConnectionManager ConnectionManager { get; private set; }
     public CatalogProvider CatalogProvider { get; private set; }
     internal SafeguardApiTool ApiTool { get; private set; }
     internal SafeguardWorkflows Workflows { get; private set; }
@@ -72,8 +72,8 @@ public class AgentSimulationFixture : IAsyncLifetime
 
         var catalogLoader = new CatalogLoader(new NullLogger<CatalogLoader>());
         CatalogProvider = new CatalogProvider(catalogLoader, new NullLogger<CatalogProvider>());
-        ConnectionManager = new SafeguardConnectionManager(
-            new NullLogger<SafeguardConnectionManager>(), config, CatalogProvider);
+        ConnectionManager = new TestConnectionManager(
+            new NullLogger<StdioSafeguardSession>(), config, CatalogProvider);
 
         // If SPP_HOST is configured, connection failures must propagate — not silently pass.
         Environment.SetEnvironmentVariable("SAFEGUARD_PROVIDER", provider);
@@ -83,21 +83,24 @@ public class AgentSimulationFixture : IAsyncLifetime
         Environment.SetEnvironmentVariable("SAFEGUARD_IGNORE_SSL", ignoreSsl.ToString());
 
         await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
-        await Task.Delay(4000);
+        // Production fires catalog loading fire-and-forget after
+        // auth; tests need it loaded before they run. Await
+        // deterministically instead of racing a fixed Task.Delay.
+        await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
         await PreCleanStaleObjectsAsync();
         await CreateTestAdminAsync(password);
 
         ConnectionManager.Dispose();
         CatalogProvider = new CatalogProvider(catalogLoader, new NullLogger<CatalogProvider>());
-        ConnectionManager = new SafeguardConnectionManager(
-            new NullLogger<SafeguardConnectionManager>(), config, CatalogProvider);
+        ConnectionManager = new TestConnectionManager(
+            new NullLogger<StdioSafeguardSession>(), config, CatalogProvider);
 
         Environment.SetEnvironmentVariable("SAFEGUARD_USER", $"{TestPrefix}Admin");
         Environment.SetEnvironmentVariable("SAFEGUARD_PASSWORD", password);
 
         await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
-        await Task.Delay(3000);
+        await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
         ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
         Workflows = new SafeguardWorkflows();
@@ -138,8 +141,8 @@ public class AgentSimulationFixture : IAsyncLifetime
                     .Build();
                 var catalogLoader = new CatalogLoader(new NullLogger<CatalogLoader>());
                 var catalogProvider = new CatalogProvider(catalogLoader, new NullLogger<CatalogProvider>());
-                using var cleanupMgr = new SafeguardConnectionManager(
-                    new NullLogger<SafeguardConnectionManager>(), config, catalogProvider);
+                using var cleanupMgr = new TestConnectionManager(
+                    new NullLogger<StdioSafeguardSession>(), config, catalogProvider);
                 await cleanupMgr.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
                 await cleanupMgr.InvokeAsync(Host, Service.Core, "DELETE", $"Users/{TestAdminUserId}");
             }
@@ -169,11 +172,11 @@ public class AgentSimulationFixture : IAsyncLifetime
 
     /// <summary>Calls Safeguard_Schema — gets request/response schema for an endpoint.</summary>
     public string Schema(string path, string method = "POST")
-        => ApiTool.Safeguard_Schema(path: path, method: method, host: Host);
+        => ApiTool.Safeguard_Schema(path: path, method: method);
 
     /// <summary>Calls Safeguard_Execute — executes an API call.</summary>
     public async Task<string> ExecuteAsync(string method, string path, string query = null, string body = null, string format = "json")
-        => await ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format, host: Host);
+        => await ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
 
     /// <summary>Calls Safeguard_QueryHelp — gets query syntax help.</summary>
     public string QueryHelp(string path = null)

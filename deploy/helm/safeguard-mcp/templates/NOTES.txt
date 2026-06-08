@@ -1,0 +1,21 @@
+{{- $name := include "safeguard-mcp.fullname" . -}}
+safeguard-mcp installed as release {{ .Release.Name | quote }} in namespace {{ .Release.Namespace | quote }}.
+
+Relay deployment: {{ include "safeguard-mcp.relayName" . }} ({{ .Values.relay.replicaCount }} replicas{{- if .Values.relay.autoscaling.enabled }}, HPA {{ .Values.relay.autoscaling.minReplicas }}–{{ .Values.relay.autoscaling.maxReplicas }} @ {{ .Values.relay.autoscaling.targetCPUUtilizationPercentage }}% CPU{{- end }}).
+
+{{- if .Values.oauthBridge.enabled }}
+Bridge deployment:  {{ include "safeguard-mcp.bridgeName" . }} ({{ .Values.bridge.replicaCount }} replica{{- if gt (int .Values.bridge.replicaCount) 1 }}s{{- end }}).
+{{- if gt (int .Values.bridge.replicaCount) 1 }}
+WARNING: bridge.replicaCount={{ .Values.bridge.replicaCount }} runs without a shared OAuth state cache. In-flight logins on one pod are invisible to the others; affected users must retry. You opted in via bridge.acceptInProcessStateLossOnRestart=true.
+{{- end }}
+{{- else }}
+OAuth bridge:        disabled (oauthBridge.enabled=false). Only the relay (/mcp, /healthz) is reachable.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress:             {{ .Values.ingress.host }} (class={{ .Values.ingress.className }}{{- if .Values.ingress.tls.enabled }}, TLS via {{ .Values.ingress.tls.secretName }}{{- end }}).
+{{- end }}
+
+To run the chart's smoke test:
+    helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

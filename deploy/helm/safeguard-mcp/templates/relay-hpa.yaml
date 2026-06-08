@@ -1,0 +1,22 @@
+{{- if .Values.relay.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "safeguard-mcp.relayName" . }}
+  labels:
+    {{- include "safeguard-mcp.relayLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "safeguard-mcp.relayName" . }}
+  minReplicas: {{ .Values.relay.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.relay.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.relay.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

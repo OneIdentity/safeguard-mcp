@@ -1,0 +1,88 @@
+# Single Ingress with path-based routing.
+#
+# /authorize, /authorize/callback, /token, /register
+#     -> bridge service  (single-replica OAuth state)
+# /mcp, /healthz, /.well-known/*
+#     -> relay service   (stateless, horizontally scaled)
+#
+# IMPORTANT — no session affinity, no sticky sessions.
+# ----------------------------------------------------
+# Sticky sessions break the OAuth flow. A typical login crosses
+# multiple user-agents/origins (the MCP client opens the system
+# browser to hit /authorize, rSTS redirects to /authorize/callback,
+# the MCP client then POSTs /token from its own process), so any
+# cookie- or source-IP-based affinity will route those calls to
+# different pods than the one that holds the in-flight state. The
+# bridge solves this by being single-replica (see
+# 20-bridge-deployment.yaml); the relay solves it by being stateless.
+# Do NOT add `nginx.ingress.kubernetes.io/affinity` or any equivalent
+# on this Ingress.
+#
+# TLS is provisioned by cert-manager (https://cert-manager.io/). If
+# you don't run cert-manager, drop the annotation and pre-create the
+# Secret named in `tls.secretName`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: safeguard-mcp
+  namespace: safeguard-mcp
+  labels:
+    app.kubernetes.io/name: safeguard-mcp
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcp.example.com
+      secretName: safeguard-mcp-tls
+  rules:
+    - host: mcp.example.com
+      http:
+        paths:
+          # Bridge-served OAuth endpoints. Order matters in some
+          # ingress controllers; keep the more specific bridge paths
+          # ahead of the relay catch-alls.
+          - path: /authorize
+            pathType: Prefix
+            backend:
+              service:
+                name: safeguard-mcp-bridge
+                port:
+                  name: http
+          - path: /token
+            pathType: Exact
+            backend:
+              service:
+                name: safeguard-mcp-bridge
+                port:
+                  name: http
+          - path: /register
+            pathType: Exact
+            backend:
+              service:
+                name: safeguard-mcp-bridge
+                port:
+                  name: http
+          # Relay-served paths.
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: safeguard-mcp-relay
+                port:
+                  name: http
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: safeguard-mcp-relay
+                port:
+                  name: http
+          - path: /.well-known/
+            pathType: Prefix
+            backend:
+              service:
+                name: safeguard-mcp-relay
+                port:
+                  name: http

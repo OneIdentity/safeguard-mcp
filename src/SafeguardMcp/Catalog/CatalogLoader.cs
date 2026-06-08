@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -11,15 +12,20 @@ namespace SafeguardMcp.Catalog;
 /// </summary>
 public class CatalogLoader
 {
+    // AutomaticDecompression is required: the Safeguard appliance serves large swagger
+    // documents (notably Core, ~3.5 MB) very slowly when the client does not negotiate
+    // gzip — uncompressed chunked transfers can take 40+ seconds, while gzip completes
+    // in under a second. See integration-test fixture timing investigation.
     private static readonly HttpClient IgnoreSslClient = new(new HttpClientHandler
     {
-        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+        AutomaticDecompression = DecompressionMethods.All
     }) { Timeout = TimeSpan.FromSeconds(30) };
 
-    private static readonly HttpClient StrictSslClient = new()
+    private static readonly HttpClient StrictSslClient = new(new HttpClientHandler
     {
-        Timeout = TimeSpan.FromSeconds(30)
-    };
+        AutomaticDecompression = DecompressionMethods.All
+    }) { Timeout = TimeSpan.FromSeconds(30) };
 
     private readonly ILogger<CatalogLoader> _logger;
 

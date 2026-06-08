@@ -1,0 +1,30 @@
+# Namespace for the safeguard-mcp deployment.
+#
+# Replace `safeguard-mcp` with your environment's preferred namespace
+# and update the corresponding `metadata.namespace` fields in every
+# other manifest in this directory.
+#
+# No Kubernetes Secrets are shipped here — by design. The relay holds
+# no Safeguard tokens (per-request bearer relay), the bridge is a
+# public PKCE client at rSTS (no `RSTS_CLIENT_SECRET`), and every
+# other env var (`SAFEGUARD_HOST`, optional `MCP_PUBLIC_URL` /
+# `RSTS_CLIENT_ID` pinning overrides, `BRIDGE_AUTH_CODE_TTL_SECONDS`,
+# optional `BRIDGE_DISABLED` kill switch, optional
+# `BRIDGE_TRUSTED_PROXIES`) is non-secret config and lives in
+# `10-configmap.yaml`. If you pull the container image from a private
+# registry, create a docker-registry pull-secret out-of-band, e.g.:
+#
+#   kubectl -n safeguard-mcp create secret docker-registry \
+#     safeguard-mcp-pull \
+#     --docker-server=<registry> \
+#     --docker-username=<user> \
+#     --docker-password=<token>
+#
+# and add `imagePullSecrets: [{ name: safeguard-mcp-pull }]` to the
+# relay and bridge Deployments.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: safeguard-mcp
+  labels:
+    app.kubernetes.io/name: safeguard-mcp
