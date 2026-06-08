@@ -291,5 +291,9 @@ OPTIONS:
 
 The token printed is the Stage 2 Safeguard user token, suitable for use as
 the `Authorization: Bearer <token>` header against an HTTP-mode
-safeguard-mcp server. Tokens are never logged.";
+safeguard-mcp server. Tokens are never logged.
+
+When you're done with the token, revoke it server-side before its natural
+TTL with `safeguard-mcp logout --host <appliance> --input <path>` (or pipe
+the token to `logout --input -`).";
 }
