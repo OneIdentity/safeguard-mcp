@@ -207,6 +207,32 @@ public class LogoutCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task MissingInputDirectory_ReturnsTwo_NoHttpCall()
+    {
+        // Parent directory missing surfaces as DirectoryNotFoundException
+        // rather than FileNotFoundException; logout must treat both as
+        // the same "input not found" usage error.
+        var tokenPath = Path.Combine(_tempDir, "does-not-exist-dir", "token");
+
+        var called = false;
+        LogoutCommand.HandlerFactory = _ =>
+        {
+            called = true;
+            return new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        };
+
+        var result = await CaptureAsync(() =>
+            LogoutCommand.RunAsync(
+                new[] { "--host", "appliance.example.com", "--input", tokenPath },
+                CancellationToken.None));
+
+        Assert.Equal(2, result.exitCode);
+        Assert.Contains("not found", result.errText);
+        Assert.DoesNotContain("IO_PathNotFound", result.errText);
+        Assert.False(called);
+    }
+
+    [Fact]
     public async Task StdinInput_DashFlag_ReadsTokenFromStdin()
     {
         LogoutCommand.StdinFactory = () => new StringReader("piped-token\n");

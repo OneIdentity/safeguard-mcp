@@ -73,6 +73,11 @@ internal static class LogoutCommand
             Console.Error.WriteLine($"Error: token input file not found: {ex.FileName ?? inputPath}.");
             return 2;
         }
+        catch (DirectoryNotFoundException)
+        {
+            Console.Error.WriteLine($"Error: token input file not found: {inputPath}.");
+            return 2;
+        }
         catch (IOException ex)
         {
             Console.Error.WriteLine($"Error: failed to read token from '{inputPath}': {ex.Message}");
