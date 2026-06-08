@@ -50,7 +50,7 @@ internal static class WellKnownEndpoints
         return Task.CompletedTask;
     }
 
-    private static Task WriteMetadataAsync(HttpContext ctx, Func<BridgeRequestUrls, string> render)
+    internal static Task WriteMetadataAsync(HttpContext ctx, Func<BridgeRequestUrls, string> render)
     {
         SetMetadataCorsHeaders(ctx);
         ctx.Response.Headers.CacheControl = "public, max-age=300";

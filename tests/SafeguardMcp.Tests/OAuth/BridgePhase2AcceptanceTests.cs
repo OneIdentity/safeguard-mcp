@@ -627,8 +627,11 @@ public class BridgePhase2AcceptanceTests
     public void Cors_WellKnownGet_CarriesStarOriginAndCacheControl()
     {
         // The metadata GET handlers themselves set the same CORS
-        // headers as the OPTIONS preflight, plus Cache-Control so
-        // intermediaries serve the immutable document for an hour.
+        // headers as the OPTIONS preflight, plus Cache-Control with a
+        // 5-minute window and Vary: Host so a shared cache cannot
+        // serve one host's per-request-inferred document to clients
+        // hitting a different host. WellKnownEndpointsHeaderTests
+        // pin the response-header values directly.
         var sampleUrls = new BridgeRequestUrls("https://mcp.example.test", "https://rsts.example.test/bridge");
         var json = WellKnownMetadata.BuildAuthorizationServerJson(sampleUrls);
         Assert.False(string.IsNullOrEmpty(json));
