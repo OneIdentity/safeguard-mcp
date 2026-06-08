@@ -555,7 +555,8 @@ The HTTP relay was designed around a few hard invariants worth stating explicitl
   PKCE client; it issues no shared secrets to MCP clients and stores none itself.
 - **Bearers never enter persistent state.** The bearer rides on each request in a
   per-request scoped `HttpRelaySafeguardSession` and is discarded when the request
-  completes.
+  completes. See [Bearer token handling](#bearer-token-handling) below for the full
+  lifecycle in both modes.
 - **Logs are scrubbed.** Both stdio and HTTP modes route through a single
   redaction provider that strips JWT-shaped tokens, OAuth `code`/`code_verifier`
   values, and `Authorization: Bearer …` headers before any log sink sees them.
@@ -570,6 +571,107 @@ The HTTP relay was designed around a few hard invariants worth stating explicitl
   via `BRIDGE_TRUSTED_PROXIES` (comma-separated CIDRs). Untrusted hops are
   ignored, so a malicious client cannot spoof `X-Forwarded-Host` to make the
   bridge publish a different authorization-server URL.
+
+### Bearer token handling
+
+Both transports must hold a Safeguard user token in memory while they are
+actively calling the appliance on the caller's behalf. The window is bounded,
+deterministic, and as defensively allocated as the framework allows. Neither
+mode persists the token to disk; neither mode logs it; neither mode keeps a
+managed-string copy on a long-lived field. The two transports differ only in
+how long the in-memory hold lasts, because their trust boundaries differ.
+
+#### HTTP mode — per-request hold, then wiped
+
+The HTTP relay does not authenticate users itself. Every MCP request must
+arrive carrying its own `Authorization: Bearer <token>`; the relay forwards
+that bearer to the appliance for the duration of that one request and is
+done with it when the request returns.
+
+1. **Per-request scope, never wider.** `HttpRelaySafeguardSession` is
+   registered with ASP.NET Core's scoped lifetime, so a fresh instance is
+   created for every MCP HTTP request and disposed when the request ends.
+   There is no singleton, no static field, and no cross-request dictionary
+   anywhere in the process that holds a bearer. The next request from the
+   same caller must bring its own `Authorization` header — the server has
+   nothing to fall back on.
+
+2. **`SecureString` for the in-flight copy.** When the session first needs
+   to call the appliance during a request, it extracts the bearer from the
+   request's `Authorization` header, copies it into a sealed `SecureString`
+   via `SessionHelpers.ToSecureString`, and hands that `SecureString` to the
+   SafeguardDotNet SDK's `Safeguard.Connect(host, secureBearer, …)`. The SDK
+   keeps its own `SecureString` copy inside the connection it returns; our
+   local copy is wrapped in `using` and zeroed the moment the SDK has the
+   connection. The SDK uses its copy transiently when building each outbound
+   `Authorization` header to the appliance.
+
+3. **Deterministic zeroing on disposal.** When the DI scope ends —
+   `HttpRelaySafeguardSession.Dispose()` → `_connection.Dispose()` —
+   the SDK's `SecureString` is zeroed before its buffer is released. The
+   bytes do not sit in the managed heap waiting for GC to maybe-someday
+   reclaim them. Disposal is driven by the framework's scope teardown;
+   no code path can forget to release the connection.
+
+4. **No appliance-side state to clean up.** A 401 from the appliance during
+   a request is surfaced to the caller as "token expired or revoked;
+   re-acquire and retry" — the relay does not attempt to refresh, because
+   the bearer is not the relay's to refresh. Token rotation is the caller's
+   responsibility.
+
+The end-to-end shape: the bearer enters with the request, is held just
+long enough to talk to the appliance, and is wiped from process memory
+when the request returns. The agent is the sole long-term holder of the
+token; the relay borrows it briefly for each request.
+
+#### Stdio mode — process-lifetime hold, then wiped
+
+A stdio process is a single user's local agent talking to a single local
+MCP client over the process's stdin/stdout. The process itself performs
+the Safeguard login that produces the token — device-code by default, or
+PKCE when `SAFEGUARD_PROVIDER` / `SAFEGUARD_USER` / `SAFEGUARD_PASSWORD`
+are all set — so the trust boundary is the process boundary itself.
+
+1. **One cached connection per process.** `StdioSafeguardSession` is a
+   singleton; on first tool call it drives the login flow and caches the
+   resulting `ISafeguardConnection`. The SDK holds the token inside a
+   `SecureString` on that connection; all subsequent tool calls in the
+   same process reuse it. There is no second copy on the session object,
+   no on-disk file, no environment variable that retains the token after
+   login completes.
+
+2. **Refresh in place, never re-materialized as a string.** Before every
+   tool call the session checks `GetAccessTokenLifetimeRemaining()` and
+   silently calls `RefreshAccessToken()` if fewer than five minutes
+   remain. Both calls happen entirely inside the SDK against its own
+   `SecureString`; the bearer is never lifted back into a managed
+   `string` on our side.
+
+3. **Deterministic zeroing on logout or graceful shutdown.**
+   `Safeguard_Disconnect` (the MCP tool) and graceful host shutdown both
+   route through `DisposeConnectionLocked()`, which calls
+   `connection.LogOut()` — the SDK posts to the appliance's
+   `/Token/Logout` to revoke server-side and zeroes its `SecureString` —
+   then `connection.Dispose()`. The session's `_connection` field is
+   nulled; the next tool call re-auths from scratch. The companion CLI
+   `safeguard-mcp logout` runs in its own short-lived process and reaches
+   the same appliance endpoint directly; the stdio server it pairs with
+   discovers the resulting invalidation on the next API call (a 401
+   surfaces as "re-authenticate" to the agent).
+
+4. **No disk persistence, ever.** Tokens are never written to disk by the
+   stdio server. `safeguard-mcp login --output <path>` is the one and
+   only path that places a token on disk, and only because the user
+   explicitly asked for it — and it does so with a restrictive ACL
+   (Unix 0600; Windows: explicit user-only ACE, inheritance disabled).
+   `safeguard-mcp logout` revokes that token server-side; the file
+   itself is the user's to manage.
+
+In both modes, `RedactingLoggerProvider` is wired in front of every log
+sink (stderr and the rolling file) and strips JWT-shaped tokens, OAuth
+`code`/`code_verifier` values, and `Authorization: Bearer …` headers
+before any sink sees them — so even an exception that surfaces a
+request/response payload cannot leak the bearer to disk through a log.
 
 ## Building from Source
 
