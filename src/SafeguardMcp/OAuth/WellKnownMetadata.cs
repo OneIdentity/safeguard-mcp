@@ -19,21 +19,21 @@ internal static class WellKnownMetadata
     private static readonly JsonWriterOptions WriterOptions = new() { Indented = true };
 
     /// <summary>
-    /// RFC 9728 protected-resource metadata. Names
-    /// <see cref="BridgeOptions.McpPublicUrl"/> as the protected
-    /// resource and the bridge itself as its authorization server.
+    /// RFC 9728 protected-resource metadata. Names the bridge's
+    /// public URL as the protected resource and the bridge itself
+    /// as its authorization server.
     /// </summary>
-    public static string BuildProtectedResourceJson(BridgeOptions options)
+    public static string BuildProtectedResourceJson(BridgeRequestUrls urls)
     {
-        if (options == null) throw new ArgumentNullException(nameof(options));
+        if (urls == null) throw new ArgumentNullException(nameof(urls));
 
         return WriteJson(w =>
         {
             w.WriteStartObject();
-            w.WriteString("resource", options.McpPublicUrl);
+            w.WriteString("resource", urls.PublicUrl);
 
             w.WriteStartArray("authorization_servers");
-            w.WriteStringValue(options.McpPublicUrl);
+            w.WriteStringValue(urls.PublicUrl);
             w.WriteEndArray();
 
             w.WriteStartArray("bearer_methods_supported");
@@ -56,17 +56,17 @@ internal static class WellKnownMetadata
     /// <summary>
     /// RFC 8414 authorization-server metadata for the bridge.
     /// </summary>
-    public static string BuildAuthorizationServerJson(BridgeOptions options)
+    public static string BuildAuthorizationServerJson(BridgeRequestUrls urls)
     {
-        if (options == null) throw new ArgumentNullException(nameof(options));
+        if (urls == null) throw new ArgumentNullException(nameof(urls));
 
         return WriteJson(w =>
         {
             w.WriteStartObject();
-            w.WriteString("issuer", options.McpPublicUrl);
-            w.WriteString("authorization_endpoint", options.AuthorizeEndpoint);
-            w.WriteString("token_endpoint", options.TokenEndpoint);
-            w.WriteString("registration_endpoint", options.RegistrationEndpoint);
+            w.WriteString("issuer", urls.PublicUrl);
+            w.WriteString("authorization_endpoint", urls.AuthorizeEndpoint);
+            w.WriteString("token_endpoint", urls.TokenEndpoint);
+            w.WriteString("registration_endpoint", urls.RegistrationEndpoint);
 
             w.WriteStartArray("response_types_supported");
             w.WriteStringValue("code");

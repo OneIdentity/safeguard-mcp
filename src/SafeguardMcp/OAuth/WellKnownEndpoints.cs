@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SafeguardMcp.OAuth;
 
@@ -13,30 +14,32 @@ namespace SafeguardMcp.OAuth;
 ///   expects metadata to be publicly readable.</item>
 ///   <item>Implement an <c>OPTIONS</c> preflight that mirrors the
 ///   ACAO/ACAM headers and returns 204.</item>
-///   <item>Send <c>Cache-Control: public, max-age=3600</c> — the
-///   document is keyed on <c>MCP_PUBLIC_URL</c>, which is immutable
-///   for the process lifetime.</item>
+///   <item>Send <c>Cache-Control: public, max-age=300</c> with
+///   <c>Vary: Host</c>. The 5-minute window keeps the document fresh
+///   if DNS or ingress hostnames change; <c>Vary: Host</c> keeps a
+///   shared cache (CDN, proxy) from serving one host's metadata to
+///   another, which matters now that <see cref="BridgeUrlResolver"/>
+///   may infer the public URL from the inbound <c>Host</c> header.</item>
 /// </list>
 /// Safe to call only after <see cref="BridgeOptions.Parse"/> returns
-/// an active result.
+/// an active result and <see cref="BridgeUrlResolver"/> has been
+/// registered in DI.
 /// </summary>
 internal static class WellKnownEndpoints
 {
-    public static void Map(IEndpointRouteBuilder endpoints, BridgeOptions options)
+    public static void Map(IEndpointRouteBuilder endpoints)
     {
         if (endpoints == null) throw new ArgumentNullException(nameof(endpoints));
-        if (options == null) throw new ArgumentNullException(nameof(options));
 
-        var protectedResourceJson = WellKnownMetadata.BuildProtectedResourceJson(options);
-        var authServerJson = WellKnownMetadata.BuildAuthorizationServerJson(options);
-
-        MapMetadata(endpoints, WellKnownMetadata.ProtectedResourcePath, protectedResourceJson);
-        MapMetadata(endpoints, WellKnownMetadata.AuthorizationServerPath, authServerJson);
+        MapMetadata(endpoints, WellKnownMetadata.ProtectedResourcePath,
+            urls => WellKnownMetadata.BuildProtectedResourceJson(urls));
+        MapMetadata(endpoints, WellKnownMetadata.AuthorizationServerPath,
+            urls => WellKnownMetadata.BuildAuthorizationServerJson(urls));
     }
 
-    private static void MapMetadata(IEndpointRouteBuilder endpoints, string path, string body)
+    private static void MapMetadata(IEndpointRouteBuilder endpoints, string path, Func<BridgeRequestUrls, string> render)
     {
-        endpoints.MapGet(path, ctx => WriteMetadataAsync(ctx, body));
+        endpoints.MapGet(path, ctx => WriteMetadataAsync(ctx, render));
         endpoints.MapMethods(path, new[] { "OPTIONS" }, HandleOptionsAsync);
     }
 
@@ -47,12 +50,16 @@ internal static class WellKnownEndpoints
         return Task.CompletedTask;
     }
 
-    private static Task WriteMetadataAsync(HttpContext ctx, string body)
+    private static Task WriteMetadataAsync(HttpContext ctx, Func<BridgeRequestUrls, string> render)
     {
         SetMetadataCorsHeaders(ctx);
-        ctx.Response.Headers.CacheControl = "public, max-age=3600";
+        ctx.Response.Headers.CacheControl = "public, max-age=300";
+        ctx.Response.Headers["Vary"] = "Host";
         ctx.Response.ContentType = "application/json; charset=utf-8";
-        return ctx.Response.WriteAsync(body);
+
+        var resolver = ctx.RequestServices.GetRequiredService<BridgeUrlResolver>();
+        var urls = resolver.Resolve(ctx);
+        return ctx.Response.WriteAsync(render(urls));
     }
 
     private static void SetMetadataCorsHeaders(HttpContext ctx)
@@ -60,8 +67,8 @@ internal static class WellKnownEndpoints
         ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
         ctx.Response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
         ctx.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
-        // Match the body's 1-hour Cache-Control window so browsers don't
-        // re-preflight every cached metadata GET.
-        ctx.Response.Headers["Access-Control-Max-Age"] = "3600";
+        // Match the body's 5-minute Cache-Control window.
+        ctx.Response.Headers["Access-Control-Max-Age"] = "300";
     }
 }
+

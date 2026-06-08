@@ -88,6 +88,14 @@ internal sealed class AuthorizeFlowStore
         public string ClientState { get; }
         public string ClientPkceChallenge { get; }
         public string BridgeToRstsPkceVerifier { get; }
+        /// <summary>
+        /// The bridge's own /authorize/callback URL as resolved at
+        /// the time of /authorize. Persisted so /token uses the same
+        /// callback value for the rSTS exchange that was sent on the
+        /// /authorize hop, even if the host inferred from a later
+        /// request differs.
+        /// </summary>
+        public string BridgeCallbackUrl { get; }
         public DateTimeOffset ExpiresAt { get; }
 
         public Entry(
@@ -96,6 +104,7 @@ internal sealed class AuthorizeFlowStore
             string clientState,
             string clientPkceChallenge,
             string bridgeToRstsPkceVerifier,
+            string bridgeCallbackUrl,
             DateTimeOffset expiresAt)
         {
             ClientId = clientId;
@@ -103,6 +112,7 @@ internal sealed class AuthorizeFlowStore
             ClientState = clientState;
             ClientPkceChallenge = clientPkceChallenge;
             BridgeToRstsPkceVerifier = bridgeToRstsPkceVerifier;
+            BridgeCallbackUrl = bridgeCallbackUrl;
             ExpiresAt = expiresAt;
         }
     }
