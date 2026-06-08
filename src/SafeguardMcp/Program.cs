@@ -1,4 +1,6 @@
+using System.Net;
 using Microsoft.AspNetCore.HttpLogging;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -53,10 +55,11 @@ namespace SafeguardMcp
                     return 2;
                 }
 
-                // Parse Phase-2 OAuth metadata bridge configuration. The
-                // bridge is opt-in via MCP_PUBLIC_URL; when absent, the
-                // server runs in pure-relay-only mode. When set but
-                // misconfigured, fail-fast with a clear stderr message.
+                // Parse OAuth metadata bridge configuration. The bridge
+                // is on by default in HTTP mode; set BRIDGE_DISABLED=true
+                // to opt out. MCP_PUBLIC_URL and RSTS_CLIENT_ID are
+                // optional pinning overrides — when absent, the bridge
+                // infers its public URL from each incoming request.
                 var bridgeParse = OAuth.BridgeOptions.Parse(Environment.GetEnvironmentVariable);
                 if (bridgeParse.Error != null)
                 {
@@ -90,6 +93,8 @@ Model Context Protocol server for One Identity Safeguard for Privileged Password
 USAGE:
   safeguard-mcp                Run as MCP stdio server (default; for IDE integration).
   safeguard-mcp --http         Run as MCP HTTP server on http://localhost:8080/mcp.
+                               OAuth metadata bridge is active by default;
+                               set BRIDGE_DISABLED=true to opt out (relay only).
   safeguard-mcp login [opts]   Acquire a Safeguard user token via device-code
                                login and print it (or write it to a file with
                                a restrictive ACL). See `safeguard-mcp login --help`.
@@ -176,10 +181,40 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
 
             if (bridgeOptions != null)
             {
+                builder.Services.AddSingleton(bridgeOptions);
+                builder.Services.AddSingleton<OAuth.BridgeUrlResolver>();
                 builder.Services.AddSingleton<OAuth.ClientRegistry>();
                 builder.Services.AddSingleton<OAuth.AuthorizeFlowStore>();
                 builder.Services.AddSingleton<OAuth.AuthCodeStore>();
                 builder.Services.AddSingleton<OAuth.IRstsTokenExchanger, OAuth.SdkRstsTokenExchanger>();
+
+                // ForwardedHeaders trust list: loopback by default plus
+                // RFC1918 ranges (the common case is cluster-internal
+                // ingress). Override / extend via BRIDGE_TRUSTED_PROXIES
+                // (comma-separated CIDRs).
+                builder.Services.Configure<ForwardedHeadersOptions>(opts =>
+                {
+                    opts.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+                                          | ForwardedHeaders.XForwardedProto
+                                          | ForwardedHeaders.XForwardedHost;
+                    opts.ForwardLimit = 2;
+                    opts.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
+                    opts.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("172.16.0.0"), 12));
+                    opts.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("192.168.0.0"), 16));
+
+                    var extra = Environment.GetEnvironmentVariable("BRIDGE_TRUSTED_PROXIES");
+                    if (!string.IsNullOrWhiteSpace(extra))
+                    {
+                        foreach (var cidr in extra.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            if (TryParseCidr(cidr, out var net))
+                                opts.KnownNetworks.Add(net);
+                            else
+                                throw new InvalidOperationException(
+                                    $"BRIDGE_TRUSTED_PROXIES contains invalid CIDR '{cidr}'.");
+                        }
+                    }
+                });
             }
 
             AddSafeguardMcpComponents(builder.Services.AddMcpServer().WithHttpTransport());
@@ -194,19 +229,48 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             // /service/Notification/v4/Status) so the first tool call has
             // schemas/endpoints ready.
             WarmCatalog(app.Services);
+            if (bridgeOptions != null)
+            {
+                // Trust X-Forwarded-* from configured upstreams so
+                // BridgeUrlResolver sees the externally-visible scheme
+                // and host when the bridge is fronted by an ingress /
+                // reverse proxy.
+                app.UseForwardedHeaders();
+            }
             app.MapHealthChecks("/healthz");
             app.MapMcp("/mcp");
             if (bridgeOptions != null)
             {
-                OAuth.WellKnownEndpoints.Map(app, bridgeOptions);
+                OAuth.WellKnownEndpoints.Map(app);
                 OAuth.AuthorizeEndpoints.Map(app, bridgeOptions);
                 OAuth.TokenEndpoint.Map(app, bridgeOptions);
                 OAuth.RegistrationEndpoint.Map(app, bridgeOptions);
+
+                var pinning = !string.IsNullOrEmpty(bridgeOptions.OverridePublicUrl)
+                    ? $"pinned to {bridgeOptions.OverridePublicUrl}"
+                    : "inferred per-request from forwarded Host";
                 app.Services.GetRequiredService<ILogger<Program>>().LogInformation(
-                    "OAuth metadata bridge active at {PublicUrl}; well-known metadata exposed for MCP clients.",
-                    bridgeOptions.McpPublicUrl);
+                    "OAuth metadata bridge active ({Mode}); well-known metadata exposed for MCP clients.",
+                    pinning);
             }
             await app.RunAsync();
+        }
+
+        // Parse "ip/prefix" CIDR into an IPNetwork. Returns false on
+        // any malformed input so the caller can surface a clear
+        // BRIDGE_TRUSTED_PROXIES error at startup.
+        private static bool TryParseCidr(string cidr, out Microsoft.AspNetCore.HttpOverrides.IPNetwork network)
+        {
+            network = default;
+            if (string.IsNullOrWhiteSpace(cidr)) return false;
+            var slash = cidr.IndexOf('/');
+            if (slash <= 0 || slash == cidr.Length - 1) return false;
+            if (!IPAddress.TryParse(cidr.Substring(0, slash), out var ip)) return false;
+            if (!int.TryParse(cidr.Substring(slash + 1), out var prefix)) return false;
+            var maxPrefix = ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128;
+            if (prefix < 0 || prefix > maxPrefix) return false;
+            network = new Microsoft.AspNetCore.HttpOverrides.IPNetwork(ip, prefix);
+            return true;
         }
 
         private static void WarmCatalog(IServiceProvider services)
