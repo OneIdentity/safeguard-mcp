@@ -90,44 +90,18 @@ Once your client is wired up (see below), see [`docs/EXAMPLES.md`](docs/EXAMPLES
 example prompts covering discovery, account/asset management, access requests, password
 and SSH key rotation, health checks, audits, and cross-server workflows.
 
-### Claude Desktop
+### Wiring up your MCP client
 
-Add to `claude_desktop_config.json`:
+See [`docs/CLIENT-SETUP.md`](docs/CLIENT-SETUP.md) for copy-pasteable stdio
+configurations for **Claude Desktop**, **Claude Code**, **VS Code (GitHub
+Copilot)**, and **GitHub Copilot CLI**.
 
-```json
-{
-  "mcpServers": {
-    "safeguard": {
-      "command": "npx",
-      "args": ["-y", "@oneidentity/safeguard-mcp"],
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com"
-      }
-    }
-  }
-}
-```
+All four clients launch the same server (`npx -y @oneidentity/safeguard-mcp`)
+and read the same `SAFEGUARD_HOST` environment variable; they differ only in
+config file location and JSON key names.
 
-On first use, the server displays a verification URL and one-time code; complete the
-sign-in from any browser to authorize the connection.
-
-### VS Code (GitHub Copilot)
-
-Add to `.vscode/mcp.json` in your workspace:
-
-```json
-{
-  "servers": {
-    "safeguard": {
-      "command": "npx",
-      "args": ["-y", "@oneidentity/safeguard-mcp"],
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com"
-      }
-    }
-  }
-}
-```
+On first use, the server prints a verification URL and one-time code; complete
+the sign-in from any browser to authorize the connection.
 
 ### HTTP Mode (Shared Server Deployment)
 
@@ -578,9 +552,9 @@ process lifetime.
 #### Minimal stdio config (no pre-configured host)
 
 If you prefer to let the agent decide which appliance to connect to, omit
-`SAFEGUARD_HOST` entirely:
+`SAFEGUARD_HOST` entirely. For example, in Claude Desktop's
+`claude_desktop_config.json`:
 
-**Claude Desktop** (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -594,6 +568,10 @@ If you prefer to let the agent decide which appliance to connect to, omit
   }
 }
 ```
+
+The equivalent for other clients is the same snippet with their respective
+top-level keys and config locations — see
+[`docs/CLIENT-SETUP.md`](docs/CLIENT-SETUP.md).
 
 The agent will call `Safeguard_Connect` when it needs to interact with an appliance
 and the server will display a verification URL and code for you to authenticate.
