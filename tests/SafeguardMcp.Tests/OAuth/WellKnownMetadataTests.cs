@@ -16,7 +16,7 @@ namespace SafeguardMcp.Tests.OAuth;
 /// </summary>
 public class WellKnownMetadataTests
 {
-    private static BridgeRequestUrls SampleOptions()
+    private static BridgeRequestUrls SampleUrls()
     {
         return new BridgeRequestUrls("https://mcp.example.test", "https://mcp.example.test");
     }
@@ -24,7 +24,7 @@ public class WellKnownMetadataTests
     [Fact]
     public void ProtectedResource_AdvertisesMcpPublicUrlAsResourceAndAuthServer()
     {
-        var json = WellKnownMetadata.BuildProtectedResourceJson(SampleOptions());
+        var json = WellKnownMetadata.BuildProtectedResourceJson(SampleUrls());
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
@@ -42,7 +42,7 @@ public class WellKnownMetadataTests
     [Fact]
     public void AuthorizationServer_HasEveryFieldFromPlan_2_2_b()
     {
-        var json = WellKnownMetadata.BuildAuthorizationServerJson(SampleOptions());
+        var json = WellKnownMetadata.BuildAuthorizationServerJson(SampleUrls());
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
@@ -64,7 +64,7 @@ public class WellKnownMetadataTests
         // does not implement device-code, password, or client-credentials
         // grants, and does not implement implicit. None of those tokens
         // must appear in grant_types_supported / response_types_supported.
-        var json = WellKnownMetadata.BuildAuthorizationServerJson(SampleOptions());
+        var json = WellKnownMetadata.BuildAuthorizationServerJson(SampleUrls());
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
@@ -82,7 +82,7 @@ public class WellKnownMetadataTests
     [Fact]
     public void Both_AreValidJson()
     {
-        var opts = SampleOptions();
+        var opts = SampleUrls();
         JsonDocument.Parse(WellKnownMetadata.BuildProtectedResourceJson(opts)).Dispose();
         JsonDocument.Parse(WellKnownMetadata.BuildAuthorizationServerJson(opts)).Dispose();
     }
