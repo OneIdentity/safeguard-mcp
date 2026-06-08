@@ -117,6 +117,7 @@ public class FlowAndAuthCodeStoreTests
             clientState: "client-state",
             clientPkceChallenge: "challenge",
             bridgeToRstsPkceVerifier: "verifier",
+            bridgeCallbackUrl: "https://mcp.example.test/authorize/callback",
             expiresAt: exp);
 
     private static AuthCodeStore.Entry NewAuthCode(DateTimeOffset exp) =>
@@ -126,5 +127,6 @@ public class FlowAndAuthCodeStoreTests
             clientPkceChallenge: "challenge",
             clientRedirectUri: "http://127.0.0.1:8765/cb",
             clientId: "mcp-client-1",
+            bridgeCallbackUrl: "https://mcp.example.test/authorize/callback",
             expiresAt: exp);
 }

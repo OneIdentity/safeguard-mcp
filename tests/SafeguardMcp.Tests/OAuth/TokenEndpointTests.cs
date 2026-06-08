@@ -135,6 +135,7 @@ public class TokenEndpointTests
             clientPkceChallenge: challenge,
             clientRedirectUri: ClientRedirect,
             clientId: ClientId,
+            bridgeCallbackUrl: "https://mcp.example.test/authorize/callback",
             expiresAt: time.GetUtcNow().AddSeconds(60)));
 
         var fakeJwt = MakeJwt(time.GetUtcNow().AddHours(1).ToUnixTimeSeconds());
