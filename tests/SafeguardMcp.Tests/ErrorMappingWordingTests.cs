@@ -15,8 +15,8 @@ using DeviceCodeLoginParameters = OneIdentity.SafeguardDotNet.DeviceCodeLogin.De
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// Phase 1 task 1.9 — pins the exact error-mapping wording the plan
-/// requires so it cannot drift silently:
+/// Pins the exact error-mapping wording presented to MCP clients so
+/// it cannot drift silently:
 ///
 /// <list type="bullet">
 ///   <item><b>Missing bearer (HTTP):</b> "Not authenticated against

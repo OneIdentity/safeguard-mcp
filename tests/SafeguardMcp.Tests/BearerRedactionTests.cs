@@ -10,7 +10,7 @@ using SafeguardMcp.Logging;
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// Phase 1 task 1.C — bearer-redaction log-capture tests.
+/// Bearer-redaction log-capture tests.
 ///
 /// <para>
 /// Captures every <see cref="ILoggerProvider"/> configured by

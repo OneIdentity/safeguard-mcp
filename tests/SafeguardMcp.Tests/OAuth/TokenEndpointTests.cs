@@ -17,21 +17,21 @@ using SafeguardMcp.OAuth;
 namespace SafeguardMcp.Tests.OAuth;
 
 /// <summary>
-/// Phase 2 task 2.2.e plus the two acceptance gates 2.B and 2.C
-/// pinned by this file:
+/// Verifies <c>POST /token</c> behavior and pins two acceptance gates:
 ///
 /// <list type="bullet">
-///   <item><strong>2.2.e</strong> — <c>POST /token</c> exchanges a
-///   stored bridge_auth_code for a Safeguard user token via the SDK
-///   helpers (mocked here), returns RFC 6749 §5.1 JSON, and never
-///   stores token material anywhere outside the response body.</item>
-///   <item><strong>2.B</strong>
+///   <item><strong>Successful exchange</strong> — <c>POST /token</c>
+///   exchanges a stored bridge_auth_code for a Safeguard user token
+///   via the SDK helpers (mocked here), returns RFC 6749 §5.1 JSON,
+///   and never stores token material anywhere outside the response
+///   body.</item>
+///   <item><strong>PKCE binding</strong>
 ///   (<see cref="Token_TamperedCodeVerifier_RejectsAsInvalidGrant_NoUpstreamCall"/>)
 ///   — a manipulated <c>code_verifier</c> rejects with
 ///   <c>invalid_grant</c> <em>and the upstream exchanger is never
 ///   called</em>, because PKCE validation happens before any
 ///   network I/O.</item>
-///   <item><strong>2.C</strong>
+///   <item><strong>Single-use replay gate</strong>
 ///   (<see cref="Token_AuthCodeReplay_SecondCallRejected"/>) — a
 ///   second <c>POST /token</c> with a previously-redeemed
 ///   <c>code</c> rejects with <c>invalid_grant</c>; the upstream

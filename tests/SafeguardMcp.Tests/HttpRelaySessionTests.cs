@@ -16,10 +16,10 @@ using DeviceCodeLoginParameters = OneIdentity.SafeguardDotNet.DeviceCodeLogin.De
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// Phase 1 verification tests for <see cref="HttpRelaySafeguardSession"/>.
-/// Covers tasks 1.A (two concurrent sessions with distinct bearers never
-/// cross-contaminate) and 1.B (after the session is disposed no Safeguard
-/// access-token state is retained on the heap).
+/// Verification tests for <see cref="HttpRelaySafeguardSession"/>.
+/// Asserts that two concurrent sessions with distinct bearers never
+/// cross-contaminate, and that after the session is disposed no
+/// Safeguard access-token state is retained on the heap.
 /// </summary>
 [Collection("EnvVars")]
 public class HttpRelaySessionTests

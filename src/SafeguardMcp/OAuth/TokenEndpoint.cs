@@ -159,10 +159,10 @@ internal static class TokenEndpoint
             return;
         }
 
-        // Step 2 — single-use consume. This is also the replay gate
-        // (plan task 2.C): any second redemption attempt — whether
-        // by an attacker or a buggy client — finds no entry and
-        // falls through to invalid_grant below.
+        // Step 2 — single-use consume. This is also the replay gate:
+        // any second redemption attempt — whether by an attacker or
+        // a buggy client — finds no entry and falls through to
+        // invalid_grant below.
         var authCodeStore = ctx.RequestServices.GetRequiredService<AuthCodeStore>();
         if (!authCodeStore.TryConsume(code, out var entry))
         {
@@ -183,11 +183,11 @@ internal static class TokenEndpoint
             return;
         }
 
-        // Step 4 — PKCE binding (plan task 2.B). Hash the verifier
-        // and compare in constant time to the challenge captured at
-        // /authorize. A bad verifier here means the redeeming party
-        // is not the same client that initiated /authorize, so the
-        // exchange must fail before any upstream call.
+        // Step 4 — PKCE binding. Hash the verifier and compare in
+        // constant time to the challenge captured at /authorize. A
+        // bad verifier here means the redeeming party is not the
+        // same client that initiated /authorize, so the exchange
+        // must fail before any upstream call.
         string actualChallenge;
         try
         {

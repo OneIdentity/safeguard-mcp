@@ -206,8 +206,8 @@ public class RegistrationEndpointTests
     [Fact]
     public async Task Register_HttpsWithoutOrigin_Rejected()
     {
-        // Task 2.E: an https redirect_uri with no Origin to compare
-        // against could redirect anywhere; reject.
+        // An https redirect_uri with no Origin to compare against
+        // could redirect anywhere; reject.
         var (ctx, reg, _) = BuildContext(Body("https://attacker.example.com/cb"));
         await RegistrationEndpoint.HandleRegisterAsync(ctx, Opts());
 
@@ -220,9 +220,8 @@ public class RegistrationEndpointTests
     [Fact]
     public async Task Register_HttpsWithMismatchedOrigin_Rejected()
     {
-        // Task 2.E: the canonical open-redirect attack — claim to
-        // be an extension of trusted-origin.com but redirect to
-        // attacker.com.
+        // The canonical open-redirect attack — claim to be an
+        // extension of trusted-origin.com but redirect to attacker.com.
         var (ctx, reg, _) = BuildContext(
             Body("https://attacker.example.com/cb"),
             origin: "https://trusted.example.com");
