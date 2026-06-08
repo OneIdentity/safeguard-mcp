@@ -276,10 +276,18 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
                     Message =
                         $"To finish signing in to Safeguard '{host}', open {url} in a browser "
                         + $"and confirm code {info.UserCode}. The code expires in {info.ExpiresIn} seconds. "
-                        + "You can dismiss this dialog after signing in.",
+                        + "Press Enter (accept) to dismiss this dialog once you have signed in.",
                     RequestedSchema = new ElicitRequestParams.RequestSchema
                     {
-                        Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>(),
+                        Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
+                        {
+                            ["acknowledged"] = new ElicitRequestParams.BooleanSchema
+                            {
+                                Title = "Signed in",
+                                Description = "Leave as-is and press Enter after completing the browser sign-in.",
+                                Default = true
+                            }
+                        },
                         Required = []
                     }
                 }, ct);
