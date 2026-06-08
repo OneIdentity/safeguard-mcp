@@ -5,11 +5,22 @@ namespace SafeguardMcp.OAuth;
 /// no I/O.
 ///
 /// <para>
-/// Activation signal is <c>MCP_PUBLIC_URL</c>: when absent, the bridge
-/// is inactive and the well-known endpoints are not mapped. When
-/// present, <c>RSTS_CLIENT_ID</c> is also required (the bridge cannot
-/// drive an rSTS auth-code flow without a pre-registered
-/// <c>RelyingPartyApplication.Realm</c>).
+/// In HTTP mode the bridge is on by default. The only opt-out is
+/// <c>BRIDGE_DISABLED=true</c>, intended for operators who front
+/// safeguard-mcp with a separate OAuth gateway and want the relay
+/// only.
+/// </para>
+///
+/// <para>
+/// <see cref="OverridePublicUrl"/> and <see cref="OverrideClientId"/>
+/// are <em>optional</em> pinning overrides. When unset (the common
+/// case), the bridge infers its public URL from each incoming
+/// request's <c>Scheme</c> + <c>Host</c> + <c>PathBase</c> via
+/// <see cref="BridgeUrlResolver"/>, and reuses that inferred URL as
+/// the rSTS <c>RelyingPartyApplication.Realm</c> (i.e. the
+/// <c>client_id</c> sent on the bridge↔rSTS hop). Operators only need
+/// to pin these values when the rSTS Realm was pre-registered under a
+/// different name from the user-facing hostname.
 /// </para>
 /// </summary>
 internal sealed class BridgeOptions
@@ -19,26 +30,39 @@ internal sealed class BridgeOptions
     public const string AuthCodeTtlEnvVar = "BRIDGE_AUTH_CODE_TTL_SECONDS";
     public const string SafeguardHostEnvVar = "SAFEGUARD_HOST";
     public const string SafeguardIgnoreSslEnvVar = "SAFEGUARD_IGNORE_SSL";
+    public const string BridgeDisabledEnvVar = "BRIDGE_DISABLED";
 
     public const int DefaultAuthCodeTtlSeconds = 60;
     // rSTS's own auth-code TTL is 5 minutes; do not exceed it.
     public const int MaxAuthCodeTtlSeconds = 300;
 
-    /// <summary>Externally-resolvable URL of the MCP server, no trailing slash.</summary>
-    public string McpPublicUrl { get; }
-    /// <summary>The <c>RelyingPartyApplication.Realm</c> registered in rSTS for this bridge.</summary>
-    public string RstsClientId { get; }
+    /// <summary>
+    /// Optional pinned public URL for the bridge (no trailing slash).
+    /// When null/empty, the bridge infers its public URL per-request
+    /// via <see cref="BridgeUrlResolver"/>.
+    /// </summary>
+    public string OverridePublicUrl { get; }
+
+    /// <summary>
+    /// Optional pinned <c>RelyingPartyApplication.Realm</c> for the
+    /// bridge↔rSTS hop. When null/empty, the resolver defaults the
+    /// <c>client_id</c> to whatever public URL the request resolves to.
+    /// </summary>
+    public string OverrideClientId { get; }
+
     /// <summary>Authorization-code TTL, in seconds.</summary>
     public int AuthCodeTtlSeconds { get; }
+
     /// <summary>The Safeguard appliance host the bridge brokers tokens for.</summary>
     public string SafeguardHost { get; }
+
     /// <summary>Whether outbound TLS verification is suppressed (deployment-wide).</summary>
     public bool IgnoreSsl { get; }
 
-    private BridgeOptions(string mcpPublicUrl, string rstsClientId, int authCodeTtlSeconds, string safeguardHost, bool ignoreSsl)
+    private BridgeOptions(string overridePublicUrl, string overrideClientId, int authCodeTtlSeconds, string safeguardHost, bool ignoreSsl)
     {
-        McpPublicUrl = mcpPublicUrl;
-        RstsClientId = rstsClientId;
+        OverridePublicUrl = overridePublicUrl;
+        OverrideClientId = overrideClientId;
         AuthCodeTtlSeconds = authCodeTtlSeconds;
         SafeguardHost = safeguardHost;
         IgnoreSsl = ignoreSsl;
@@ -46,44 +70,51 @@ internal sealed class BridgeOptions
 
     /// <summary>
     /// Returns a populated <see cref="BridgeOptions"/>, a structured
-    /// "bridge is inactive" result, or a fail-fast error string.
-    /// Caller (Program.cs) writes the error to stderr and exits with a
-    /// non-zero status before <see cref="Microsoft.AspNetCore.Builder.WebApplication.RunAsync"/>.
+    /// "bridge is inactive" result (only when
+    /// <c>BRIDGE_DISABLED=true</c>), or a fail-fast error string when
+    /// any provided override is malformed. Caller (Program.cs) writes
+    /// the error to stderr and exits with a non-zero status before
+    /// <see cref="Microsoft.AspNetCore.Builder.WebApplication.RunAsync"/>.
     /// </summary>
     public static BridgeParseResult Parse(Func<string, string> getEnv)
     {
         if (getEnv == null) throw new ArgumentNullException(nameof(getEnv));
 
+        var disabledRaw = Trimmed(getEnv(BridgeDisabledEnvVar));
+        if (disabledRaw != null
+            && bool.TryParse(disabledRaw, out var disabled)
+            && disabled)
+        {
+            return BridgeParseResult.Inactive();
+        }
+
         var publicUrl = Trimmed(getEnv(McpPublicUrlEnvVar));
         var clientId = Trimmed(getEnv(RstsClientIdEnvVar));
         var ttlRaw = Trimmed(getEnv(AuthCodeTtlEnvVar));
 
-        // No MCP_PUBLIC_URL → bridge inactive. Tolerate stray related
-        // vars rather than fail-fast: an operator running pure-relay
-        // shouldn't be blocked by leftover Phase-2 configuration.
-        if (publicUrl == null)
-            return BridgeParseResult.Inactive();
-
-        if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out var publicUri)
-            || (publicUri.Scheme != Uri.UriSchemeHttp && publicUri.Scheme != Uri.UriSchemeHttps))
+        if (publicUrl != null)
         {
-            return BridgeParseResult.ForError(
-                $"{McpPublicUrlEnvVar} must be an absolute http(s) URI. "
-                + "Set it to the externally-resolvable URL of the MCP server, e.g. https://mcp.example.com.");
+            if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out var publicUri)
+                || (publicUri.Scheme != Uri.UriSchemeHttp && publicUri.Scheme != Uri.UriSchemeHttps))
+            {
+                return BridgeParseResult.ForError(
+                    $"{McpPublicUrlEnvVar} must be an absolute http(s) URI when set. "
+                    + "Leave it unset to let the bridge infer its public URL from each incoming request, "
+                    + "or set it to the externally-resolvable URL of the MCP server, e.g. https://mcp.example.com.");
+            }
+            // Normalize trailing slash off the override so derived
+            // URLs never produce "//authorize".
+            publicUrl = publicUrl.TrimEnd('/');
         }
 
-        if (clientId == null)
+        if (clientId != null)
         {
-            return BridgeParseResult.ForError(
-                $"{RstsClientIdEnvVar} is required when {McpPublicUrlEnvVar} is set. "
-                + "Set it to the Realm of the RelyingPartyApplication pre-registered in rSTS for this bridge.");
-        }
-
-        if (!Uri.TryCreate(clientId, UriKind.Absolute, out _))
-        {
-            return BridgeParseResult.ForError(
-                $"{RstsClientIdEnvVar} must be an absolute URI — rSTS asserts "
-                + "RelyingPartyApplication.Realm is an absolute URI in its constructor.");
+            if (!Uri.TryCreate(clientId, UriKind.Absolute, out _))
+            {
+                return BridgeParseResult.ForError(
+                    $"{RstsClientIdEnvVar} must be an absolute URI when set — rSTS asserts "
+                    + "RelyingPartyApplication.Realm is an absolute URI in its constructor.");
+            }
         }
 
         int ttl = DefaultAuthCodeTtlSeconds;
@@ -107,17 +138,13 @@ internal sealed class BridgeOptions
         if (safeguardHost == null)
         {
             return BridgeParseResult.ForError(
-                $"{SafeguardHostEnvVar} must be set before {McpPublicUrlEnvVar} is parsed "
+                $"{SafeguardHostEnvVar} must be set before bridge options are parsed "
                 + "(HTTP-mode startup lockdown should have caught this).");
         }
 
         var ignoreSsl = bool.TryParse(getEnv(SafeguardIgnoreSslEnvVar), out var v) && v;
 
-        // Normalize trailing slash off MCP_PUBLIC_URL so derived URLs
-        // never produce "//authorize".
-        var normalized = publicUrl.TrimEnd('/');
-
-        return BridgeParseResult.Success(new BridgeOptions(normalized, clientId, ttl, safeguardHost, ignoreSsl));
+        return BridgeParseResult.Success(new BridgeOptions(publicUrl, clientId, ttl, safeguardHost, ignoreSsl));
     }
 
     private static string Trimmed(string s)
@@ -126,17 +153,10 @@ internal sealed class BridgeOptions
         var t = s.Trim();
         return t.Length == 0 ? null : t;
     }
-
-    public string AuthorizeEndpoint => McpPublicUrl + "/authorize";
-    public string AuthorizeCallbackEndpoint => McpPublicUrl + "/authorize/callback";
-    public string TokenEndpoint => McpPublicUrl + "/token";
-    public string RegistrationEndpoint => McpPublicUrl + "/register";
-    public string ProtectedResourceMetadataUrl => McpPublicUrl + "/.well-known/oauth-protected-resource";
-    public string AuthorizationServerMetadataUrl => McpPublicUrl + "/.well-known/oauth-authorization-server";
 }
 
 /// <summary>
-/// Discriminated return shape: bridge inactive (no env vars set),
+/// Discriminated return shape: bridge inactive (BRIDGE_DISABLED=true),
 /// bridge misconfigured (return error to caller), or bridge active
 /// (return populated <see cref="BridgeOptions"/>).
 /// </summary>
