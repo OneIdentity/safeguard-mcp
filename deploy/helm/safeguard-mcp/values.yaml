@@ -29,6 +29,22 @@ mcpPublicUrl: ""
 rstsClientId: ""
 
 # ------------------------------------------------------------------
+# Forwarded-headers trust (advanced).
+#
+# The bridge derives its public URL from each incoming request's
+# Scheme + Host. To keep that inference correct behind an ingress, the
+# server enables UseForwardedHeaders with a built-in trust list that
+# already covers loopback + RFC1918 (10/8, 172.16/12, 192.168/16) —
+# the common cluster-internal-ingress case.
+#
+# Set this only when your ingress / proxy IP falls outside the default
+# list (carrier-grade NAT, public-cloud LB on a non-RFC1918 range,
+# etc.). Comma-separated CIDRs; both IPv4 and IPv6 supported. An
+# unparseable entry is a fail-fast error at startup.
+# Example: "100.64.0.0/10,2001:db8::/32"
+bridgeTrustedProxies: ""
+
+# ------------------------------------------------------------------
 # Container image. Both the relay and the bridge run the same image;
 # the bridge endpoints are mapped automatically in HTTP mode unless
 # BRIDGE_DISABLED=true.

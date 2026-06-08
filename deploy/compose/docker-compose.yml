@@ -51,6 +51,7 @@ services:
       MCP_PUBLIC_URL: "${MCP_PUBLIC_URL:-}"
       RSTS_CLIENT_ID: "${RSTS_CLIENT_ID:-}"
       BRIDGE_DISABLED: "${BRIDGE_DISABLED:-}"
+      BRIDGE_TRUSTED_PROXIES: "${BRIDGE_TRUSTED_PROXIES:-}"
       BRIDGE_AUTH_CODE_TTL_SECONDS: "${BRIDGE_AUTH_CODE_TTL_SECONDS:-60}"
     healthcheck:
       # The chiseled runtime image has no shell and no curl/wget,
