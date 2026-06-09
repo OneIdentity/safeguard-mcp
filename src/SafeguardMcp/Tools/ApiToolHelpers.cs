@@ -363,6 +363,23 @@ internal static class ApiToolHelpers
                 return BuildPropertyHint(apiMessage, paths, QueryParamKind.Fields, ctx);
         }
 
+        // Access-request 90408: "not authorized to use this request type" — wire-accurate but
+        // misleading. The real cause is almost always (account, asset) selected ≠ asset the
+        // policy is scoped to. Surface the entitlements check that resolves it, and point at
+        // the composite tool that pre-validates the same combination.
+        if (!string.IsNullOrWhiteSpace(apiMessage)
+            && (apiMessage.Contains("not authorized to use this request type", StringComparison.OrdinalIgnoreCase)
+                || apiMessage.Contains("90408", StringComparison.Ordinal)))
+        {
+            return "Appliance error 90408 ('not authorized to use this request type') usually means "
+                + "the (AccountId, AssetId) pair you posted does not have a policy of the requested "
+                + "AccessRequestType — the entitlement exists for that account but on a different asset. "
+                + "Run Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements "
+                + "query=accountIds=<id>&accessRequestType=<type> to see which asset the entitlement is "
+                + "scoped to, then re-POST with that AssetId. Or use Safeguard_LaunchAccessRequest, "
+                + "which performs this pre-flight check automatically.";
+        }
+
         return GetErrorHint(statusCode, apiMessage, hasModelState);
     }
 
