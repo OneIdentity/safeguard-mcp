@@ -72,6 +72,43 @@ The server maintains multiple connections simultaneously, enabling cross-server 
 
 > Request an SSH session to linux-prod-03 using the root account
 
+The agent uses `Safeguard_OpenAccessRequest`, which pre-checks entitlements
+before submitting and waits briefly for auto-approval so simple flows
+finish in one call.
+
+### Retrieve a checked-out credential
+
+> Get me the password for access request 12345
+
+> Show me the SSH key for the access request I just opened
+
+The agent calls `Safeguard_RetrieveCredential` (kind
+`access-request-password` or `access-request-ssh-key`). The response is
+split into two MCP blocks: an assistant-audience metadata block
+(kind, subject ids, notices) and a user-audience block carrying the
+plaintext. Hosts that honor MCP `audience` annotations render the
+plaintext directly to a secure pane without exposing it to the model;
+hosts that don't will surface it in the transcript, and rotation
+remains an option if the host's behavior is wrong for your environment.
+
+`Safeguard_Execute` against the underlying credential paths is refused
+with a structured `sensitive_endpoint_redirected` envelope naming the
+correct `Safeguard_RetrieveCredential` kind — so the agent never gets
+a single-block response addressed to the assistant that contains the
+plaintext.
+
+### Close an access request
+
+> Close access request 12345
+
+> Cancel the access request I just opened — I don't need it anymore
+
+The agent uses `Safeguard_CloseAccessRequest`, which reads the
+request's current state and dispatches to the appropriate verb
+(Cancel before approval, CheckIn while a password / SSH key /
+session is held, Close after CheckIn, Acknowledge after expiry).
+The agent doesn't have to encode the state matrix itself.
+
 ### Emergency access
 
 > I need emergency breakglass access to the domain admin account

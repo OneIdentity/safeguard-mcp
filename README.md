@@ -252,6 +252,14 @@ The HTTP relay was designed around a few hard invariants worth stating explicitl
 - **Single appliance per process.** A given server process is bound to one
   appliance via `SAFEGUARD_HOST`. Cross-appliance token confusion is not possible
   in HTTP mode because no process serves more than one appliance.
+- **Plaintext credentials never share an audience with the bearer.** Account
+  passwords, SSH private keys, API client secrets, TOTP codes, and secure-file
+  contents are returned only through `Safeguard_RetrieveCredential`, in a
+  two-block response that puts the plaintext under `audience=["user"]` so
+  spec-honoring hosts can route it to a secure pane without it entering the
+  LLM's context. `Safeguard_Execute` refuses every sensitive path and
+  redirects the caller to the matching `Safeguard_RetrieveCredential` kind.
+  See [Sensitive credential delivery](#sensitive-credential-delivery) below.
 - **Forwarded-headers trust is bounded.** The bridge derives its public URL from
   each incoming request, with `UseForwardedHeaders` enabled but configured to
   trust only loopback + RFC1918 (10/8, 172.16/12, 192.168/16) by default. That
@@ -362,6 +370,89 @@ sink (stderr and the rolling file) and strips JWT-shaped tokens, OAuth
 before any sink sees them — so even an exception that surfaces a
 request/response payload cannot leak the bearer to disk through a log.
 
+### Sensitive credential delivery
+
+Bearer tokens authenticate the caller; the plaintext secrets Safeguard
+manages (account passwords, SSH private keys, API client secrets, TOTP
+codes, generated passwords, secure-file contents) are a separate class
+of sensitive material with their own delivery contract. The server's goal
+is that the LLM can drive the workflow that produces those secrets
+without the secret itself ever needing to enter the assistant's context
+window.
+
+#### Two-block, audience-split response
+
+`Safeguard_RetrieveCredential` is the single tool that returns plaintext
+credential material. Every call returns a two-block MCP response:
+
+- **Block 1 — `audience=["assistant"]`.** A JSON envelope: `kind`, the
+  subject ids (`accessRequestId`, `accountId`, `apiKeyId` as applicable),
+  delivery flags, and any notices. This block carries **no secret value**;
+  it is what the LLM reads to confirm "yes, the credential was delivered
+  for the right subject" and to plan the next step.
+- **Block 2 — `audience=["user"]`.** The human-formatted plaintext
+  (`PlatformAccount password = …`, `BEGIN OPENSSH PRIVATE KEY …`, the
+  TOTP code with its validity window, etc.).
+
+The MCP spec says hosts SHOULD render `audience=["user"]` content
+directly to the human — secure pane, copy-to-clipboard, confirmation
+dialog — **without including it in the assistant's transcript**. Hosts
+that honor the annotation keep the plaintext out of the model's context
+entirely; the LLM only ever sees the metadata in block 1. Hosts that
+ignore audience annotations will surface the plaintext to the LLM as
+well; this is documented degrade-gracefully behavior rather than a
+refusal, because Safeguard credentials can be rotated if a host turns
+out not to honor the hint and the operator wants a stronger separation.
+
+#### Refuse-and-redirect on `Safeguard_Execute`
+
+The dynamic catalog flags every Safeguard API path that returns plaintext
+credential material as sensitive. When `Safeguard_Execute` is called
+against any of those paths, the appliance is **not** contacted — the
+server returns a structured `sensitive_endpoint_redirected` envelope
+naming the matching `Safeguard_RetrieveCredential` kind and the
+arguments to pass. The agent lifts `data.next_call` into a follow-up
+tool invocation, which routes through the two-block response above.
+This makes the audience split the **only** path the plaintext can take
+out of the server: there is no Execute escape hatch that returns a raw
+secret in a single block addressed to the assistant.
+
+A heuristic backstop covers any future sensitive path that hasn't been
+added to the catalog yet (response shape and field-name pattern
+matching), tuned to not fire on audit-log payloads. If a future build
+adds a sensitive endpoint and the catalog hasn't been updated, the
+heuristic still steers the agent toward
+`Safeguard_RetrieveCredential` instead of returning the secret through
+`Safeguard_Execute`.
+
+#### Supported kinds
+
+- Access-request material: `access-request-password`,
+  `access-request-ssh-key`, `access-request-api-key`,
+  `access-request-totp`, `access-request-file` (each requires
+  `accessRequestId`).
+- Personal vault material: `personal-account-password`,
+  `personal-account-password-history`, `personal-account-totp` (each
+  requires `accountId`).
+- Asset-account API material: `asset-account-api-secret-history`
+  (requires `accountId` AND `apiKeyId`).
+- Out-of-band generation: `generated-password` (no extra args; produces
+  a rule-compliant value without persisting it).
+
+#### What the server still never does
+
+- It never persists plaintext credential material to disk or any log
+  sink, regardless of audience. The redaction pipeline in front of the
+  log sinks treats credential blocks the same as bearer tokens.
+- It never reuses block-2 content for any in-process purpose other than
+  returning it to the caller — there is no cache, no rolling buffer, no
+  envelope around it that an internal handler reads.
+- It never mints credentials client-side (no `Get-Random`, no LLM-
+  generated values) for managed accounts; password generation goes
+  through the appliance's password rule via
+  `POST /v4/AssetAccounts/{id}/GeneratePassword` or
+  `.../ChangePassword`, captured by the `generated-password` kind.
+
 ## Architecture & Design
 
 ### The Problem: Large API Surfaces and AI Agents
@@ -393,6 +484,8 @@ The complete tool surface is **10 tools**:
 | `Safeguard_Workflows` | Get step-by-step recipes for common multi-step operations |
 | `Safeguard_Execute` | Call any endpoint on any service (auto-routes to the correct service) |
 | `Safeguard_OpenAccessRequest` | One-call composite that pre-checks entitlements and submits an access request |
+| `Safeguard_CloseAccessRequest` | State-aware close: dispatches to Cancel / CheckIn / Close / Acknowledge based on the request's current state |
+| `Safeguard_RetrieveCredential` | Returns plaintext credential material (passwords, SSH keys, API secrets, TOTP codes, files) in a two-block response that splits metadata from plaintext by MCP audience — see [Sensitive credential delivery](#sensitive-credential-delivery) |
 
 An agent working through a task follows this pattern:
 
@@ -534,6 +627,14 @@ correction and guidance that fires on every Discover and Execute call:
   `Safeguard_OpenAccessRequest`. It checks the agent's actual entitlements *before*
   submitting, so the agent gets a clear "this account-and-asset combination isn't in
   your scope" message instead of an opaque appliance error after the fact.
+  `Safeguard_CloseAccessRequest` is the matching closer — it reads the request's
+  current state and dispatches to the right verb (Cancel before approval, CheckIn
+  while checked out, Close after check-in, Acknowledge after expiry) so the agent
+  doesn't have to encode the close-state matrix itself. And
+  `Safeguard_RetrieveCredential` owns every endpoint that returns plaintext secret
+  material; see [Sensitive credential delivery](#sensitive-credential-delivery) for
+  the audience-split response shape and the refuse-and-redirect envelope that
+  steers `Safeguard_Execute` callers back to it.
 
 - **"Did you mean" on rejected property names.** When the appliance rejects a filter,
   sort, or field-selection because of a wrong property name, the response includes the
