@@ -14,9 +14,8 @@ the appliance offers no server-side grouping.
 
 Why this exists:
 - Safeguard has NO `groupBy=`, `distinct=`, or `aggregate=` query parameter.
-  See `safeguard://query-syntax` and the IN3 note in our internal facts:
-  audit endpoints push rows straight from the database with no aggregation
-  surface.
+  See `safeguard://query-syntax` -- audit endpoints push rows straight from
+  the database with no aggregation surface in the API.
 - `count=true` (see `count-with-filter`) answers "how many" but not
   "how many of each". The only way to get per-group counts is to pull the
   rows and tally in agent context.

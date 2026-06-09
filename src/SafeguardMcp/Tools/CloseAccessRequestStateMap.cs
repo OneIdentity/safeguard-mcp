@@ -22,11 +22,12 @@ internal enum CloseAction
 /// <summary>
 /// Tags whether a row in <see cref="CloseAccessRequestStateMap"/> has
 /// been observed on a real appliance (<see cref="Verified"/>) or is
-/// carried over from safeguard-ps's mapping pending Tier-2/3
-/// verification (<see cref="Inferred"/>). The planner surfaces
-/// <c>Inferred</c> rows through an <c>inferred-not-verified-on-this-
-/// appliance</c> notice so downstream consumers (agents, issue
-/// reporters) know the difference.
+/// carried over from safeguard-ps's mapping pending live verification
+/// (<see cref="Inferred"/>). Inferred rows are typically those that
+/// require additional setup to reach (SshKey checkout, SPS sessions,
+/// expiry/acknowledgement). The planner surfaces <c>Inferred</c> rows
+/// through an <c>inferred-not-verified-on-this-appliance</c> notice so
+/// downstream consumers (agents, issue reporters) know the difference.
 /// </summary>
 internal enum VerificationStatus
 {
@@ -57,7 +58,7 @@ internal readonly record struct CloseStateRow(
 ///     (<c>src\Service\Core\Controllers\V4\Requests\AccessRequestsController.cs</c>),
 ///   * safeguard-ps's <c>Close-SafeguardAccessRequest</c> mapping
 ///     (<c>OneIdentity/safeguard-ps</c>, <c>src/requests.psm1</c>),
-///   * Tier-1 / Tier-2 verification driven by
+///   * live-appliance verification driven by
 ///     <c>CloseAccessRequestVerificationHarness</c> in the integration
 ///     test project.
 ///
@@ -124,12 +125,12 @@ internal static class CloseAccessRequestStateMap
         // controller requires PolicyAdmin for Close. For non-admin
         // requesters the planner returns a diagnostic naming the state
         // rather than guessing (Cancel/CheckIn return 4xx on at least
-        // the Tier-1-verified PendingReview row). PolicyAdmin acting
+        // the live-verified PendingReview row). PolicyAdmin acting
         // on a request that reaches PendingReview falls into the
         // admin-on-other path and dispatches Close.
-        new("RequestCheckedIn",       CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Reached after CheckIn from PasswordCheckedOut on auto-reset policies; planner refuses for non-PolicyAdmin requester pending Tier-1 verification of which sub-endpoint, if any, the requester can call."),
+        new("RequestCheckedIn",       CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Reached after CheckIn from PasswordCheckedOut on auto-reset policies; planner refuses for non-PolicyAdmin requester pending live verification of which sub-endpoint, if any, the requester can call."),
         new("Terminated",             CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Substate of Reclaimed reached after Cancel/Deny/Revoke. Non-admin requester has no viable endpoint per the controller's PolicyAdmin-only Close attribute."),
-        new("PendingReview",          CloseAction.NeedsAdmin,  VerificationStatus.Verified, "Requires PolicyAdmin to close per the controller's Close attribute; Tier-1 confirms Cancel/CheckIn/Acknowledge return 4xx for the requester here."),
+        new("PendingReview",          CloseAction.NeedsAdmin,  VerificationStatus.Verified, "Requires PolicyAdmin to close per the controller's Close attribute; live verification confirms Cancel/CheckIn/Acknowledge return 4xx for the requester here."),
         new("PendingAccountSuspended",CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Requires account-discovery workflow to reach; non-admin requester has no viable endpoint per the controller's Close attribute."),
 
         // Acknowledge: substates of Reclaimed/Closed awaiting requester

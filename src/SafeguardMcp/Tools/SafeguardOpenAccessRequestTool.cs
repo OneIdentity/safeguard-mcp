@@ -153,11 +153,10 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
     }
 
     // Polls GET /v4/AccessRequests/{id} every 250 ms for a hard 5-second
-    // cap. No back-off, no caller-tunable cadence, no parameter — see C.6
-    // deep dive in the triage plan: the point is "wait briefly for
-    // auto-approve, then stop." Worst case is ~20 GET probes per
-    // submission. Stops on the first terminal-or-actionable state per
-    // OpenAccessRequestPlanner.IsTerminalForAutoApproveWait.
+    // cap. No back-off, no caller-tunable cadence, no parameter: the point
+    // is "wait briefly for auto-approve, then stop." Worst case is ~20 GET
+    // probes per submission. Stops on the first terminal-or-actionable
+    // state per OpenAccessRequestPlanner.IsTerminalForAutoApproveWait.
     private async Task<(string Body, string State, IDictionary<string, string> Headers)> WaitForAutoApproveAsync(
         string accessRequestId,
         string initialBody,

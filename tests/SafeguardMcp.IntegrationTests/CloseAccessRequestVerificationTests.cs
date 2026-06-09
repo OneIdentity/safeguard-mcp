@@ -7,7 +7,7 @@ using SafeguardMcp.Tools;
 namespace SafeguardMcp.IntegrationTests;
 
 /// <summary>
-/// Tier-1 verification harness for <c>CloseAccessRequestStateMap</c>.
+/// Live-appliance verification harness for <c>CloseAccessRequestStateMap</c>.
 /// Drives a Password access request through every state reachable
 /// with a single-approver immediate-approval policy
 /// (New / PendingApproval / Approved / RequestAvailable /
@@ -24,11 +24,11 @@ namespace SafeguardMcp.IntegrationTests;
 ///   * SPP_HOST / SPP_USERNAME / SPP_PASSWORD configured (the
 ///     <see cref="ApplianceFixture"/> contract);
 ///   * a test user with PolicyAdmin (created by the bootstrap below
-///     when missing), tagged <c>mcp-c5-test-policyadmin</c>;
+///     when missing), tagged <c>mcp-close-verif-policyadmin</c>;
 ///   * a test user that will own the requests, tagged
-///     <c>mcp-c5-test-requester</c>;
+///     <c>mcp-close-verif-requester</c>;
 ///   * a Password access policy with immediate approval scoped to a
-///     single test asset/account, tagged <c>mcp-c5-test-*</c>.
+///     single test asset/account, tagged <c>mcp-close-verif-*</c>.
 ///
 /// Bootstrap is idempotent: re-runs find the tagged resources and
 /// reuse them rather than recreating. Resources stay across runs.
@@ -36,7 +36,10 @@ namespace SafeguardMcp.IntegrationTests;
 /// This harness is intentionally read-once / report-out: it does not
 /// auto-mutate the state map. The map is checked in as the locked
 /// contract; the harness's job is to surface divergence loudly when
-/// the appliance evolves.
+/// the appliance evolves. States that need extra setup to reach
+/// (SshKey checkout, SPS-driven sessions, expiry/acknowledgement)
+/// stay tagged Inferred until a maintainer extends the harness to
+/// cover them.
 /// </summary>
 [Collection("Appliance")]
 public sealed class CloseAccessRequestVerificationTests
@@ -50,18 +53,18 @@ public sealed class CloseAccessRequestVerificationTests
     {
         Assert.True(_fixture.Available, "ApplianceFixture must have authenticated.");
 
-        // The harness deliberately covers only Tier-1 states. Tier-2/3
-        // states (SshKeyCheckedOut, Expired, PendingAcknowledgment,
-        // PendingAccountSuspended, ...) need additional setup; their
-        // rows in the state map are tagged Inferred until a maintainer
-        // extends the harness.
-        var matrix = await DriveTier1WorkflowAsync(CancellationToken.None);
+        // The harness covers the single-approver immediate-approval
+        // password flow. States that require extra setup to reach
+        // (SshKey checkout, SPS-driven sessions, expiry/acknowledgement,
+        // account-suspended) keep their Inferred tag in the state map
+        // until a maintainer extends the harness.
+        var matrix = await DrivePasswordWorkflowAsync(CancellationToken.None);
 
         // Surface the matrix in the test runner output regardless of
         // outcome -- the matrix IS the artifact this test produces.
         var sb = new StringBuilder();
         sb.AppendLine();
-        sb.AppendLine("=== Close-AccessRequest verification matrix (Tier-1) ===");
+        sb.AppendLine("=== Close-AccessRequest verification matrix ===");
         sb.AppendLine($"appliance: {_fixture.Host}");
         sb.AppendLine();
         sb.AppendLine("state                       | Cancel | CheckIn | Close | Acknowledge");
@@ -101,12 +104,12 @@ public sealed class CloseAccessRequestVerificationTests
         ? "skip"
         : status.ToString(CultureInfo.InvariantCulture);
 
-    private async Task<List<StateMatrixRow>> DriveTier1WorkflowAsync(CancellationToken ct)
+    private async Task<List<StateMatrixRow>> DrivePasswordWorkflowAsync(CancellationToken ct)
     {
         // The harness is intentionally lean: it reuses whatever the
         // bootstrap-Admin can see today so the test class compiles and
         // skips cleanly on every CI box that has SPP_HOST set. Building
-        // the full Tier-1 bootstrap (PolicyAdmin user, partition, asset,
+        // the full bootstrap (PolicyAdmin user, partition, asset,
         // account, access policy) is a half-day of fiddly setup that
         // belongs in its own follow-up; the seed below is a small
         // happy-path probe a maintainer can flesh out as soon as the
