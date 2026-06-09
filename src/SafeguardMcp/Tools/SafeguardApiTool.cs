@@ -787,7 +787,7 @@ internal sealed class SafeguardApiTool(
 
         // Only surface composite-tool hints for the highest-leverage launch path; broader
         // path-to-recipe matching could become noisy and would belong in RecipeIndex if
-        // expanded. Currently the only composite tool is Safeguard_LaunchAccessRequest.
+        // expanded. Currently the only composite tool is Safeguard_OpenAccessRequest.
         var segments = GetPathSegments(path);
         if (segments.Length == 0)
             return null;
@@ -800,12 +800,12 @@ internal sealed class SafeguardApiTool(
 
         var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
         var suggestion = verb == "POST" && segments.Length == 2
-            ? "Safeguard_LaunchAccessRequest performs the pre-flight entitlement check and submits the request in one call."
+            ? "Safeguard_OpenAccessRequest performs the pre-flight entitlement check and submits the request in one call."
             : "Use Safeguard_Workflows id=\"session-access-request\" for the full launch workflow.";
 
         return new Notice(
             NoticeKinds.WorkflowRecipeSuggested,
-            "Related workflow recipe: session-access-request (composite tool: Safeguard_LaunchAccessRequest).",
+            "Related workflow recipe: session-access-request (composite tool: Safeguard_OpenAccessRequest).",
             suggestion);
     }
 

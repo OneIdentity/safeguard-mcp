@@ -5,11 +5,11 @@ namespace SafeguardMcp.Tests;
 
 /// <summary>
 /// Cross-link checks that the launch / RDP / SSH / access-request searches in
-/// Safeguard_Discover surface the new Safeguard_LaunchAccessRequest composite
+/// Safeguard_Discover surface the new Safeguard_OpenAccessRequest composite
 /// tool (via the session-access-request recipe's <c>tool:</c> front matter),
 /// and that the 90408 wrong-asset error hint also points at it.
 /// </summary>
-public class LaunchAccessRequestCrossLinkTests
+public class OpenAccessRequestCrossLinkTests
 {
     private static ApiEndpoint[] Fixture() =>
     [
@@ -23,7 +23,7 @@ public class LaunchAccessRequestCrossLinkTests
     {
         var result = SafeguardApiTool.FormatDiscovery(Fixture(), null, "launch", null);
         Assert.Contains("session-access-request", result);
-        Assert.Contains("Safeguard_LaunchAccessRequest", result);
+        Assert.Contains("Safeguard_OpenAccessRequest", result);
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public class LaunchAccessRequestCrossLinkTests
     {
         var result = SafeguardApiTool.FormatDiscovery(Fixture(), null, "RDP", null);
         Assert.Contains("session-access-request", result);
-        Assert.Contains("Safeguard_LaunchAccessRequest", result);
+        Assert.Contains("Safeguard_OpenAccessRequest", result);
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public class LaunchAccessRequestCrossLinkTests
     {
         var result = SafeguardApiTool.FormatDiscovery(Fixture(), null, "access request", null);
         Assert.Contains("session-access-request", result);
-        Assert.Contains("Safeguard_LaunchAccessRequest", result);
+        Assert.Contains("Safeguard_OpenAccessRequest", result);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public class LaunchAccessRequestCrossLinkTests
             paths: Array.Empty<ApiSchemaPropertyPath>());
 
         Assert.NotNull(hint);
-        Assert.Contains("Safeguard_LaunchAccessRequest", hint);
+        Assert.Contains("Safeguard_OpenAccessRequest", hint);
         Assert.Contains("RequestEntitlements", hint);
         Assert.Contains("AssetId", hint);
     }
