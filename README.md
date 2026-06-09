@@ -90,44 +90,18 @@ Once your client is wired up (see below), see [`docs/EXAMPLES.md`](docs/EXAMPLES
 example prompts covering discovery, account/asset management, access requests, password
 and SSH key rotation, health checks, audits, and cross-server workflows.
 
-### Claude Desktop
+### Wiring up your MCP client
 
-Add to `claude_desktop_config.json`:
+See [`docs/CLIENT-SETUP.md`](docs/CLIENT-SETUP.md) for copy-pasteable stdio
+configurations for **Claude Desktop**, **Claude Code**, **VS Code (GitHub
+Copilot)**, and **GitHub Copilot CLI**.
 
-```json
-{
-  "mcpServers": {
-    "safeguard": {
-      "command": "npx",
-      "args": ["-y", "@oneidentity/safeguard-mcp"],
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com"
-      }
-    }
-  }
-}
-```
+All four clients launch the same server (`npx -y @oneidentity/safeguard-mcp`)
+and read the same `SAFEGUARD_HOST` environment variable; they differ only in
+config file location and JSON key names.
 
-On first use, the server displays a verification URL and one-time code; complete the
-sign-in from any browser to authorize the connection.
-
-### VS Code (GitHub Copilot)
-
-Add to `.vscode/mcp.json` in your workspace:
-
-```json
-{
-  "servers": {
-    "safeguard": {
-      "command": "npx",
-      "args": ["-y", "@oneidentity/safeguard-mcp"],
-      "env": {
-        "SAFEGUARD_HOST": "safeguard.corp.example.com"
-      }
-    }
-  }
-}
-```
+On first use, the server prints a verification URL and one-time code; complete
+the sign-in from any browser to authorize the connection.
 
 ### HTTP Mode (Shared Server Deployment)
 
@@ -220,10 +194,11 @@ passwords stored in config files:
 }
 ```
 
-You can also omit `SAFEGUARD_HOST` entirely in stdio mode. The server then starts
-with no connection and the agent will prompt you for the appliance address at
-runtime via `Safeguard_Connect`. See [One appliance per process](#one-appliance-per-process)
-for details.
+In stdio mode you can omit `SAFEGUARD_HOST` if your MCP client supports
+elicitation forms; on the first `Safeguard_Connect` call the server will pop
+a form asking for the appliance address. Without elicitation support, the
+server returns an error telling you to set `SAFEGUARD_HOST` and restart.
+HTTP mode always requires `SAFEGUARD_HOST` at startup.
 
 ### SSL Certificate Validation
 
@@ -238,8 +213,11 @@ For appliances using self-signed or internal CA certificates, set `SAFEGUARD_IGN
 }
 ```
 
-The agent can also pass `ignoreSsl` per-connection at runtime via `Safeguard_Connect`, but the
-server will always prompt you for confirmation before disabling SSL validation.
+`SAFEGUARD_IGNORE_SSL` is read once at process start. If the server hits a
+TLS verification failure during connect and `SAFEGUARD_IGNORE_SSL` is not
+set, stdio mode will offer an elicitation prompt asking whether to disable
+TLS verification for the lifetime of the current session; accepting flips
+the policy in-memory only. HTTP mode does not prompt — set the env var.
 
 ## Threat Model
 
@@ -556,47 +534,43 @@ useful targets for an MCP fleet in two ways:
 The deployment shape is identical to the primary fleet. The only operational
 difference is which address you put in `SAFEGUARD_HOST`.
 
-#### Agent-driven connect (stdio only)
+#### Multi-appliance access from one agent
 
-In stdio mode the agent can also call `Safeguard_Connect` at runtime to connect on
-demand — handy if you launch the server with no `SAFEGUARD_HOST` and let the agent
-prompt you for the appliance address. Once a single stdio process is connected to
-multiple appliances this way, pass `host=...` on `Safeguard_Execute` to target a
-specific one:
+To talk to more than one appliance from a single MCP client, declare one
+`safeguard-mcp` server entry per appliance in your client config — each with
+its own `SAFEGUARD_HOST`. Each entry is its own process bound to one
+appliance. There is no per-call `host` parameter on `Safeguard_Connect` or
+`Safeguard_Execute`; a process serves exactly one appliance for its
+lifetime, in both stdio and HTTP mode.
 
-```
-Agent: Safeguard_Connect host="prod.safeguard.corp.com"    → authenticates to prod
-Agent: Safeguard_Connect host="dr.safeguard.corp.com"      → authenticates to DR
-Agent: Safeguard_Execute path="/v4/Users" host="prod.safeguard.corp.com"
-Agent: Safeguard_Execute path="/v4/Users" host="dr.safeguard.corp.com"
-```
+The agent routes by **server name**, not by appliance address: every entry
+exposes the same tool names (`Safeguard_Execute`, `Safeguard_Discover`, …)
+with identical descriptions, and `SAFEGUARD_HOST` is invisible at the tool
+layer. Give each entry a descriptive key (`safeguard-prod`,
+`safeguard-dr`, …) so the model has a clear signal, and tell the agent
+which one to use in your prompt. Discovery and catalog results are also
+per-server, so `Safeguard_Discover` on one entry will not surface endpoints
+from another.
 
-When only one connection is active, the `host` parameter is optional. This pattern
-does not apply to HTTP mode — each HTTP server is bound to one appliance for the
-process lifetime.
+#### Stdio config without a pre-configured host
 
-#### Minimal stdio config (no pre-configured host)
+If your MCP client supports elicitation forms, you can omit `SAFEGUARD_HOST`
+and let the server prompt for the appliance on first connect:
 
-If you prefer to let the agent decide which appliance to connect to, omit
-`SAFEGUARD_HOST` entirely:
-
-**Claude Desktop** (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
     "safeguard": {
       "command": "npx",
-      "args": ["-y", "@oneidentity/safeguard-mcp"],
-      "env": {
-        "SAFEGUARD_IGNORE_SSL": "true"
-      }
+      "args": ["-y", "@oneidentity/safeguard-mcp"]
     }
   }
 }
 ```
 
-The agent will call `Safeguard_Connect` when it needs to interact with an appliance
-and the server will display a verification URL and code for you to authenticate.
+See [`docs/CLIENT-SETUP.md`](docs/CLIENT-SETUP.md) for the equivalent in each
+client. Without elicitation support, set `SAFEGUARD_HOST` in `env`. HTTP mode
+always requires `SAFEGUARD_HOST` at startup.
 
 ### Unified Dispatcher with Service Auto-Routing
 
