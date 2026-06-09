@@ -65,4 +65,17 @@ public class WorkflowRecipeTests
 
         Assert.Contains("No workflows matched", result);
     }
+
+    [Fact]
+    public void Workflows_EveryRecipeHasNonEmptyTags()
+    {
+        // Tags drive recipe ranking in Safeguard_Discover; an untagged recipe
+        // is invisible to verb-intent searches even when its description matches.
+        // This guards against silently dropping tags on new recipes.
+        foreach (var recipe in SafeguardMcp.Catalog.RecipeIndex.Recipes)
+        {
+            Assert.True(recipe.Tags.Count > 0,
+                $"Recipe '{recipe.Id}' has no tags. Tags are required for verb-intent discovery.");
+        }
+    }
 }

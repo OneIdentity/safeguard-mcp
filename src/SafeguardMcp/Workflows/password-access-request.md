@@ -2,7 +2,7 @@
 id: password-access-request
 name: Password Access Request (Checkout)
 description: Request and check out a privileged password through the access request workflow.
-tags: password, access request, checkout, check-in, credential, workflow, entitlement, approve
+tags: password, access request, checkout, check-in, credential, workflow, entitlement, approve, release, secret
 ---
 
 ID: password-access-request
