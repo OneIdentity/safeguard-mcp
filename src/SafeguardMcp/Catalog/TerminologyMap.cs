@@ -131,6 +131,16 @@ public static class TerminologyMap
 
         // Bulk operations vocabulary
         ["bulk", "batch", "many", "import"],
+
+        // Count / summarize / group-by vocabulary. Anchors the three
+        // aggregation recipes (count-with-filter, summarize-audit-log,
+        // time-bucketed-counts) so searches like "how many", "count",
+        // "summarize", "tally", "distinct", or "group by" surface the
+        // right recipe. The appliance has no server-side group-by --
+        // these recipes are the only summarize/distinct surface.
+        ["count", "counts", "how many", "tally", "summarize",
+         "group by", "distinct", "count=true", "trend",
+         "per day", "per hour", "time series"],
     ];
 
     /// <summary>

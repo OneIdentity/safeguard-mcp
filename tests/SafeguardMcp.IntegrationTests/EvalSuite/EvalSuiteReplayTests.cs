@@ -11,8 +11,8 @@ namespace SafeguardMcp.IntegrationTests.EvalSuite;
 /// Regression replay of the collected error traces. Each case is one row in
 /// <see cref="EvalCases.All"/>; the test either runs the reproducer against a
 /// live appliance and asserts the response matches the expected guidance, or
-/// records a pending placeholder (for cases whose owning work item has not
-/// shipped yet).
+/// records a pending placeholder (for cases whose owning capability area
+/// has not shipped yet).
 ///
 /// Like every test in this project, all rows skip when SPP_HOST is unset.
 /// The eval suite is run end-of-phase against a live appliance; per-item
@@ -42,7 +42,7 @@ public class EvalSuiteReplayTests
         var c = EvalCases.All.FirstOrDefault(x => x.Id == caseId)
             ?? throw new InvalidOperationException($"Unknown eval case id: {caseId}");
 
-        _output.WriteLine($"[{c.Id}] owner={c.OwningItem} mode={c.Mode}");
+        _output.WriteLine($"[{c.Id}] owner={c.OwningArea} mode={c.Mode}");
         _output.WriteLine($"        {c.Description}");
 
         switch (c.Mode)
@@ -51,7 +51,7 @@ public class EvalSuiteReplayTests
                 _output.WriteLine($"        PENDING: {c.PlaceholderNote}");
                 // Placeholder passes by design — the case is recorded so the
                 // suite has the full 38 rows, and the assertion gets tightened
-                // when the owning work item ships.
+                // when the owning capability area ships.
                 return;
 
             case ReproMode.ExpectSuccess:
@@ -115,7 +115,7 @@ public class EvalSuiteReplayTests
 /// <summary>
 /// Sanity coverage that runs even without an appliance: the eval suite must
 /// contain the full set of recorded traces (38 cases) and every case must be
-/// well-formed (id, owning item, description, and either a reproducer or a
+/// well-formed (id, owning area, description, and either a reproducer or a
 /// placeholder note). Lives in the integration-tests project so the eval
 /// data has a single home, but does not touch the network.
 /// </summary>
@@ -124,7 +124,7 @@ public class EvalSuiteRegistryTests
     [Fact]
     public void All_cases_are_present()
     {
-        // The triage history records 38 collected error traces.
+        // 38 collected error traces.
         Assert.Equal(38, EvalCases.All.Count);
     }
 
@@ -146,7 +146,7 @@ public class EvalSuiteRegistryTests
         {
             Assert.False(string.IsNullOrWhiteSpace(c.Id), "Case id is required.");
             Assert.False(string.IsNullOrWhiteSpace(c.Description), $"[{c.Id}] description required.");
-            Assert.False(string.IsNullOrWhiteSpace(c.OwningItem), $"[{c.Id}] owning item required.");
+            Assert.False(string.IsNullOrWhiteSpace(c.OwningArea), $"[{c.Id}] owning area required.");
 
             if (c.Mode == ReproMode.Placeholder)
             {

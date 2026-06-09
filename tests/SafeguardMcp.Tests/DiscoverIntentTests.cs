@@ -129,11 +129,44 @@ public class DiscoverIntentTests
     }
 
     [Fact]
-    public void Discover_EmptySearch_DoesNotEmitRecipeBlock()
+    public void Discover_HowManySearch_SurfacesCountWithFilterRecipe()
     {
-        var result = SafeguardApiTool.FormatDiscovery(BuildFixture(), null, null, null);
+        var result = SafeguardApiTool.FormatDiscovery(BuildFixture(), null, "how many", null);
 
-        Assert.DoesNotContain("Recipes that match", result);
-        Assert.Contains("/v4/Users", result);
+        Assert.Contains("Recipes that match", result);
+        Assert.Contains("count-with-filter", result);
+    }
+
+    [Fact]
+    public void Discover_CountSearch_SurfacesCountWithFilterRecipe()
+    {
+        var result = SafeguardApiTool.FormatDiscovery(BuildFixture(), null, "count", null);
+
+        Assert.Contains("count-with-filter", result);
+        Assert.Contains("Strong recipe match: count-with-filter", result);
+    }
+
+    [Fact]
+    public void Discover_SummarizeSearch_SurfacesSummarizeAuditLogRecipe()
+    {
+        var result = SafeguardApiTool.FormatDiscovery(BuildFixture(), null, "summarize", null);
+
+        Assert.Contains("summarize-audit-log", result);
+    }
+
+    [Fact]
+    public void Discover_GroupBySearch_SurfacesSummarizeAuditLogRecipe()
+    {
+        var result = SafeguardApiTool.FormatDiscovery(BuildFixture(), null, "group by", null);
+
+        Assert.Contains("summarize-audit-log", result);
+    }
+
+    [Fact]
+    public void Discover_PerDaySearch_SurfacesTimeBucketedCountsRecipe()
+    {
+        var result = SafeguardApiTool.FormatDiscovery(BuildFixture(), null, "per day", null);
+
+        Assert.Contains("time-bucketed-counts", result);
     }
 }

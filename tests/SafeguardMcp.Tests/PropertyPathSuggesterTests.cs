@@ -4,12 +4,12 @@ using SafeguardMcp.Tools;
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// B.1 coverage: the property-path suggester must pull "did you mean"
-/// candidates only from the catalog's path graph and the operator
-/// vocabulary -- never from a hard-coded table or made-up flattening.
-/// These tests pin the priority ordering (exact -> flat-FK -> substring
-/// -> fuzzy) and the wording emitted by the context-aware error hint
-/// for 70001 / 70002 / 70009.
+/// The property-path suggester must pull "did you mean" candidates only
+/// from the catalog's path graph and the operator vocabulary -- never
+/// from a hard-coded table or made-up flattening. These tests pin the
+/// priority ordering (exact -> flat-FK -> substring -> fuzzy) and the
+/// wording emitted by the context-aware error hint for 70001 / 70002 /
+/// 70009.
 /// </summary>
 public class PropertyPathSuggesterTests
 {
@@ -109,7 +109,7 @@ public class PropertyPathSuggesterTests
 }
 
 /// <summary>
-/// B.1 coverage for the context-aware 70001 / 70002 / 70009 hint
+/// Coverage for the context-aware 70001 / 70002 / 70009 hint
 /// formatter: confirms the rejected token is named, the suggestion is
 /// pulled from the supplied path graph, the filter/orderby vs fields
 /// divergence is mentioned in one line, and the "use Safeguard_Schema"

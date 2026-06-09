@@ -4,9 +4,9 @@ namespace SafeguardMcp.IntegrationTests.EvalSuite;
 
 /// <summary>
 /// One case in the regression-replay eval suite. Built from the collected
-/// error traces; each case names the work item that owns the fix and
-/// (where possible) the substrings the response is expected to contain
-/// once that fix ships.
+/// error traces; each case names the capability area that owns the fix
+/// and (where possible) the substrings the response is expected to
+/// contain once that fix ships.
 /// </summary>
 /// <remarks>
 /// Cases come in three flavors:
@@ -17,14 +17,14 @@ namespace SafeguardMcp.IntegrationTests.EvalSuite;
 ///     <see cref="ExpectedGuidance"/>.
 ///   * <see cref="ReproMode.Placeholder"/> — no live reproducer yet (either
 ///     the underlying behavior is diagnostic-only, or the assertion can't be
-///     tightened until the owning work item ships). The test records the
-///     pending status and passes.
+///     tightened until the owning capability area ships). The test records
+///     the pending status and passes.
 /// </remarks>
 internal sealed class EvalCase
 {
     public string Id { get; init; }
     public string Description { get; init; }
-    public string OwningItem { get; init; }
+    public string OwningArea { get; init; }
     public ReproMode Mode { get; init; }
 
     // Reproducer (populated when Mode != Placeholder).
@@ -38,9 +38,9 @@ internal sealed class EvalCase
     // when Mode == ExpectGuidance. Case-insensitive.
     public IReadOnlyList<string> ExpectedGuidance { get; init; } = System.Array.Empty<string>();
 
-    // Free-form note shown when Mode == Placeholder. Explains what we're
-    // waiting on (typically the owning work item) and what the upgraded
-    // assertion should look like.
+    // Free-form note shown when Mode == Placeholder. Explains what the case
+    // is waiting on (typically the owning capability area) and what the
+    // upgraded assertion should look like.
     public string PlaceholderNote { get; init; }
 
     public override string ToString() => Id;
