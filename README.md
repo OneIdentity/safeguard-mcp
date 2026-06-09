@@ -366,7 +366,7 @@ that give the agent the ability to navigate, understand, and execute against any
 dynamically. Think of it as providing a map and a car rather than building 1,000 individual
 roads.
 
-The complete tool surface is **8 tools**:
+The complete tool surface is **10 tools**:
 
 | Tool | Purpose |
 |------|---------|
@@ -375,9 +375,11 @@ The complete tool surface is **8 tools**:
 | `Safeguard_Disconnect` | Revoke the active Safeguard token and drop the cached connection |
 | `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
+| `Safeguard_Enum` | List the valid values for any enum type referenced in a schema |
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
 | `Safeguard_Workflows` | Get step-by-step recipes for common multi-step operations |
 | `Safeguard_Execute` | Call any endpoint on any service (auto-routes to the correct service) |
+| `Safeguard_OpenAccessRequest` | One-call composite that pre-checks entitlements and submits an access request |
 
 An agent working through a task follows this pattern:
 
@@ -385,6 +387,10 @@ An agent working through a task follows this pattern:
 2. **Schema** — "what fields does a POST to /v4/AssetAccounts require?"
 3. **QueryHelp** — "how do I filter by name and sort by date?"
 4. **Execute** — call the endpoint with the correct parameters and body
+
+For a small number of end-to-end flows where the multi-step path has well-known
+pitfalls — opening an access request is the first example — a single composite tool
+collapses the sequence into one call and catches the common failure modes up front.
 
 ### Dynamic Catalog: Version-Resilient Discovery
 
@@ -434,6 +440,10 @@ required fields, types, descriptions, nested object shapes, and a minimal workin
 An agent can call `Safeguard_Schema` for `POST /v4/AssetAccounts`, learn that `Name` and
 `Asset.Id` are required, and construct a valid request body without trial and error.
 
+For fields whose type is an enumeration, `Safeguard_Enum` returns the valid values by name —
+so the agent never has to guess whether the API expects `"RemoteDesktop"` or `"Rdp"`, or
+whether casing matters.
+
 ### Terminology Mapping: Bridging Product and API Language
 
 Safeguard's REST API uses different names than the product UI in several important places.
@@ -457,8 +467,11 @@ The server addresses this with two layers:
    proactive awareness of the terminology landscape before they even start searching.
 
 Current mappings include Entitlement→Roles, Managed Account→AssetAccounts,
-Partition→AssetPartitions, Platform→Platforms, and others. The map is designed to grow as
-real-world usage reveals additional gaps.
+Partition→AssetPartitions, Platform→Platforms, and others. The map has grown beyond
+simple noun-to-noun aliases to cover **verbs** an agent will reach for
+(`move`/`transfer`/`migrate` → partition reassignment) and **umbrella concepts** that
+have no literal API endpoint (`privileged access`, `pam` → access requests). It's
+designed to grow as real-world usage reveals additional gaps.
 
 ### Workflow Recipes: Domain Expertise for Agents
 
@@ -484,6 +497,59 @@ parameters to use, how to interpret results, and what to do next. Pre-built reci
 - Certificate and SSH key management
 - A2A credential retrieval setup
 - Personal password vault configuration
+
+Recipes are reachable directly via the `Safeguard_Workflows` tool, and also surface
+inline whenever `Safeguard_Discover` or `Safeguard_Execute` touches an endpoint family
+a recipe covers — so an agent that started in the raw API can find the higher-level
+path mid-task without having to think to ask for it.
+
+### Helping the agent call the API correctly
+
+Discovering an endpoint and reading its schema is only half the battle. Agents still
+mistype property names, search for the wrong concept, send the wrong combination of
+fields, or learn from a misleading error message. The server includes a layer of
+correction and guidance that fires on every Discover and Execute call:
+
+- **Search-time term expansion.** Discover quietly expands a search phrase to include
+  the API's own vocabulary. "Entitlement" also searches "roles." "Privileged access"
+  also searches "access requests." "Move" / "transfer" / "migrate" all point to
+  partition reassignment. Agents who phrase a request the way an administrator would
+  still land on the right endpoint.
+
+- **Workflow recipes ranked ahead of raw endpoints.** When a search matches both a
+  multi-step recipe and individual endpoints, the recipe is surfaced first — so the
+  agent reaches for the documented sequence (request → approve → check out → close)
+  before trying to assemble one from scratch.
+
+- **Composite tools where the multi-step flow is error-prone.** For access requests,
+  where the most common failure is a misleading "not authorized" error caused by
+  picking the wrong asset for the right account, the server exposes
+  `Safeguard_OpenAccessRequest`. It checks the agent's actual entitlements *before*
+  submitting, so the agent gets a clear "this account-and-asset combination isn't in
+  your scope" message instead of an opaque appliance error after the fact.
+
+- **"Did you mean" on rejected property names.** When the appliance rejects a filter,
+  sort, or field-selection because of a wrong property name, the response includes the
+  nearest valid name from the schema ("`UserName` → did you mean `Name`?"). Most agent
+  loops repair themselves on the next call.
+
+- **Errors come back with next-step hints.** Common HTTP errors are annotated with the
+  tool to reach for or the field to check, instead of being passed through raw. See
+  [Response intelligence](#response-intelligence) below for the full list.
+
+- **Cross-linking between Discover, Execute, and Workflows.** Any Execute call against
+  a recipe-covered endpoint family includes a one-line pointer back to the matching
+  recipe and any composite tool that covers it.
+
+- **Responses are sized so they fit an agent's context window.** Collection GETs get a
+  default `limit=50` injected, oversized payloads are truncated with a note explaining
+  how to narrow the query (`fields=`, filters, `format=csv`), and the agent is told
+  *why* the result was clipped instead of just receiving a silently-shortened payload.
+  See [Response intelligence](#response-intelligence) for the knobs.
+
+Taken together, these techniques mean the agent rarely fails twice in the same way: a
+wrong term, a wrong field, or a wrong combination produces a response that contains
+both the failure and the fix.
 
 ### MCP Resources: Preloadable Context
 
@@ -608,10 +674,17 @@ The dispatcher adds guardrails to prevent context window overflow and guide the 
 - **Character truncation** — responses exceeding `MaxResponseChars` (default 30,000) are
   cut with a note suggesting `fields` selection or `format=csv` to reduce payload.
 
-- **Error enrichment** — HTTP errors get contextual hints:
+- **Error enrichment** — HTTP and appliance errors get contextual next-step hints
+  rather than being passed through raw:
   - 400 → "Use Safeguard_Schema to see required fields"
   - 401 → "Call Safeguard_Connect to re-authenticate"
   - 404 → "Verify the ID exists using a GET call"
+  - rejected property name on a filter/sort/field selection → "did you mean *X*?"
+    using the nearest valid name from the schema
+  - access-request "not authorized to use this request type" →
+    "Use Safeguard_OpenAccessRequest, which pre-checks entitlements before submitting"
+  - any call against a recipe-covered endpoint family → one-line pointer back to the
+    matching workflow recipe and any composite tool that covers it
 
 #### Configuration
 
