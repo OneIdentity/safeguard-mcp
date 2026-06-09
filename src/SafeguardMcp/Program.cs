@@ -309,7 +309,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
         private static IMcpServerBuilder AddSafeguardMcpComponents(IMcpServerBuilder builder) => builder
             .WithTools<SafeguardApiTool>()
             .WithTools<SafeguardWorkflows>()
-            .WithTools<SafeguardLaunchAccessRequestTool>()
+            .WithTools<SafeguardOpenAccessRequestTool>()
             .WithResources<ApiOverviewResource>()
             .WithResources<CommonPatternsResource>()
             .WithResources<QuerySyntaxResource>()

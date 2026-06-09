@@ -7,18 +7,18 @@ using OneIdentity.SafeguardDotNet;
 namespace SafeguardMcp.Tools;
 
 /// <summary>
-/// Composite tool that launches a Safeguard access request safely:
+/// Composite tool that opens a Safeguard access request safely:
 /// validates the inputs, pre-checks <c>/v4/Me/RequestEntitlements</c>
 /// to catch the wrong-asset case (appliance error 90408) before any
 /// write, and only then posts <c>NewAccessRequest</c>. The intent is
-/// to replace agents' open-coded launch flows (which routinely lose
+/// to replace agents' open-coded request flows (which routinely lose
 /// the asset-vs-account distinction) with one call that fails closed
 /// when the entitlement does not match.
 /// </summary>
 [McpServerToolType]
-internal sealed class SafeguardLaunchAccessRequestTool(ISafeguardSession session)
+internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
 {
-    [McpServerTool(Name = "Safeguard_LaunchAccessRequest", Title = "Launch Safeguard Access Request",
+    [McpServerTool(Name = "Safeguard_OpenAccessRequest", Title = "Open Safeguard Access Request",
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("Submit a Safeguard access request after pre-validating the (account, asset, type) "
         + "combination against /v4/Me/RequestEntitlements. Catches the wrong-asset / wrong-type case "
@@ -30,7 +30,7 @@ internal sealed class SafeguardLaunchAccessRequestTool(ISafeguardSession session
         + "types). Does NOT auto-launch sessions or echo credentials. "
         + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to discover what you can "
         + "request before calling this tool.")]
-    public async Task<string> Safeguard_LaunchAccessRequest(
+    public async Task<string> Safeguard_OpenAccessRequest(
         McpServer server,
         [Description("Database id of the account to request access to. Required. For domain-controller "
             + "/ linked-account policies, pass the linked account's id as returned by RequestEntitlements.")]
@@ -60,7 +60,7 @@ internal sealed class SafeguardLaunchAccessRequestTool(ISafeguardSession session
         bool isEmergency = false,
         CancellationToken ct = default)
     {
-        var inputs = new LaunchAccessRequestInputs
+        var inputs = new OpenAccessRequestInputs
         {
             AccountId = accountId,
             AssetId = assetId,
@@ -74,15 +74,15 @@ internal sealed class SafeguardLaunchAccessRequestTool(ISafeguardSession session
             IsEmergency = isEmergency,
         };
 
-        var argErrors = LaunchAccessRequestPlanner.ValidateArgs(inputs);
+        var argErrors = OpenAccessRequestPlanner.ValidateArgs(inputs);
         if (argErrors.Count > 0)
             throw new McpException(BuildErrorMessage("Validation failed before any appliance call.", argErrors));
 
         await session.EnsureReadyAsync(server, ct);
 
         // Pre-flight: read the user's entitlements scoped to the requested account+type.
-        var canonicalType = LaunchAccessRequestPlanner.CanonicalAccessRequestType(accessRequestType);
-        var query = LaunchAccessRequestPlanner.BuildEntitlementsQuery(accountId, canonicalType);
+        var canonicalType = OpenAccessRequestPlanner.CanonicalAccessRequestType(accessRequestType);
+        var query = OpenAccessRequestPlanner.BuildEntitlementsQuery(accountId, canonicalType);
         var parameters = ApiToolHelpers.ParseQueryParameters(query);
 
         FullResponse entitlementsResponse;
@@ -98,15 +98,15 @@ internal sealed class SafeguardLaunchAccessRequestTool(ISafeguardSession session
                 + "\nNo access request was submitted.");
         }
 
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(entitlementsResponse.Body);
-        var validation = LaunchAccessRequestPlanner.ValidateEntitlements(rows, accountId, canonicalType, assetId);
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(entitlementsResponse.Body);
+        var validation = OpenAccessRequestPlanner.ValidateEntitlements(rows, accountId, canonicalType, assetId);
         if (!validation.Ok)
             throw new McpException(validation.ErrorMessage + "\nNo access request was submitted.");
 
         var resolvedAssetId = validation.ResolvedAssetId;
 
         // Build and POST the NewAccessRequest body.
-        var body = LaunchAccessRequestPlanner.BuildNewAccessRequestJson(
+        var body = OpenAccessRequestPlanner.BuildNewAccessRequestJson(
             accountId,
             resolvedAssetId,
             canonicalType,
@@ -135,8 +135,8 @@ internal sealed class SafeguardLaunchAccessRequestTool(ISafeguardSession session
                 + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to re-check the live state.");
         }
 
-        var (id, state) = LaunchAccessRequestPlanner.ExtractIdAndState(postResponse.Body);
-        var summary = LaunchAccessRequestPlanner.BuildSuccessSummary(
+        var (id, state) = OpenAccessRequestPlanner.ExtractIdAndState(postResponse.Body);
+        var summary = OpenAccessRequestPlanner.BuildSuccessSummary(
             id, state, canonicalType, accountId, resolvedAssetId);
 
         var sb = new StringBuilder();

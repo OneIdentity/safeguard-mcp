@@ -3,7 +3,7 @@ id: session-access-request
 name: Session Access Request (RDP/SSH)
 description: Request and launch a privileged session (RDP or SSH) through Safeguard's proxy.
 tags: session, access request, RDP, SSH, proxy, recording, privileged session, launch, mstsc, rdp launch, request
-tool: Safeguard_LaunchAccessRequest
+tool: Safeguard_OpenAccessRequest
 ---
 
 ID: session-access-request
@@ -12,7 +12,7 @@ Goal: Request a privileged session (RDP or SSH) that is proxied and recorded by 
 
 Context: Session requests are distinct from password checkouts. The user never sees the credential — Safeguard proxies the connection, injects credentials, and records all activity. Sessions auto-close after 10 minutes of inactivity.
 
-Preferred path: Use the composite tool Safeguard_LaunchAccessRequest. It pre-validates the (account, asset, type) combination against /v4/Me/RequestEntitlements before submitting, which catches the most common failure mode — appliance error 90408 "not authorized to use this request type" — that actually means "your entitlement for this type is scoped to a different asset". The raw multi-step flow below is the same operation broken into individual calls for diagnostics.
+Preferred path: Use the composite tool Safeguard_OpenAccessRequest. It pre-validates the (account, asset, type) combination against /v4/Me/RequestEntitlements before submitting, which catches the most common failure mode — appliance error 90408 "not authorized to use this request type" — that actually means "your entitlement for this type is scoped to a different asset". The raw multi-step flow below is the same operation broken into individual calls for diagnostics.
 
 Typical workflow: Discover entitlements → Request → Approve → Available → Launch → Check-in
 
@@ -64,7 +64,7 @@ Common failures:
 - Appliance error 90408 ("not authorized to use this request type") almost always means the
   (account, asset) pair you selected does not have a policy of the requested AccessRequestType.
   Re-query /v4/Me/RequestEntitlements with accountIds=<id>&accessRequestType=<type> to see which
-  asset the entitlement is actually scoped to. Safeguard_LaunchAccessRequest catches this before
+  asset the entitlement is actually scoped to. Safeguard_OpenAccessRequest catches this before
   the POST.
 - Policy may require ReasonCodeId (RequireReasonCode) or TicketNumber (RequireServiceTicket).
   Read RequesterProperties on the entitlement's Policy to see which are required.

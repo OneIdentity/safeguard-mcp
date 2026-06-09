@@ -6,11 +6,11 @@ using System.Text.Json;
 namespace SafeguardMcp.Tools;
 
 /// <summary>
-/// Inputs accepted by <c>Safeguard_LaunchAccessRequest</c>. Carries only
+/// Inputs accepted by <c>Safeguard_OpenAccessRequest</c>. Carries only
 /// values supplied by the caller; defaulting and required-ness are
-/// applied by <see cref="LaunchAccessRequestPlanner"/>.
+/// applied by <see cref="OpenAccessRequestPlanner"/>.
 /// </summary>
-internal sealed class LaunchAccessRequestInputs
+internal sealed class OpenAccessRequestInputs
 {
     public int? AccountId { get; init; }
     public int? AssetId { get; init; }
@@ -54,12 +54,12 @@ internal sealed class EntitlementValidationResult
 }
 
 /// <summary>
-/// Pure-logic planner for <c>Safeguard_LaunchAccessRequest</c>: argument
+/// Pure-logic planner for <c>Safeguard_OpenAccessRequest</c>: argument
 /// validation, entitlement-driven pre-flight, and request-body assembly.
 /// No I/O, no DI — exists so the composite tool's correctness can be
 /// covered by unit tests without standing up a session.
 /// </summary>
-internal static class LaunchAccessRequestPlanner
+internal static class OpenAccessRequestPlanner
 {
     /// <summary>
     /// Closed set of <c>AccessRequestType</c> values the appliance accepts
@@ -86,7 +86,7 @@ internal static class LaunchAccessRequestPlanner
     /// must be present. Returns an empty list when the request is
     /// well-formed.
     /// </summary>
-    public static List<string> ValidateArgs(LaunchAccessRequestInputs inputs)
+    public static List<string> ValidateArgs(OpenAccessRequestInputs inputs)
     {
         var errors = new List<string>();
         if (inputs == null)

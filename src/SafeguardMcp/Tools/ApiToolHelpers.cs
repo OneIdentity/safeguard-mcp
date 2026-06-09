@@ -376,7 +376,7 @@ internal static class ApiToolHelpers
                 + "AccessRequestType — the entitlement exists for that account but on a different asset. "
                 + "Run Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements "
                 + "query=accountIds=<id>&accessRequestType=<type> to see which asset the entitlement is "
-                + "scoped to, then re-POST with that AssetId. Or use Safeguard_LaunchAccessRequest, "
+                + "scoped to, then re-POST with that AssetId. Or use Safeguard_OpenAccessRequest, "
                 + "which performs this pre-flight check automatically.";
         }
 

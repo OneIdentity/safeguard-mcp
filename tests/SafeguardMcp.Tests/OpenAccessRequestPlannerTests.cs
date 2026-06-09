@@ -4,13 +4,13 @@ using SafeguardMcp.Tools;
 namespace SafeguardMcp.Tests;
 
 /// <summary>
-/// Unit tests for the pure-logic planner that backs Safeguard_LaunchAccessRequest.
+/// Unit tests for the pure-logic planner that backs Safeguard_OpenAccessRequest.
 /// The planner is tested directly so the composite tool's correctness can be
 /// verified without standing up a Safeguard session or a real appliance.
 /// </summary>
-public class LaunchAccessRequestPlannerTests
+public class OpenAccessRequestPlannerTests
 {
-    private static LaunchAccessRequestInputs ValidInputs(int? assetId = null) => new()
+    private static OpenAccessRequestInputs ValidInputs(int? assetId = null) => new()
     {
         AccountId = 6,
         AssetId = assetId,
@@ -22,20 +22,20 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateArgs_HappyPath_ReturnsNoErrors()
     {
-        var errors = LaunchAccessRequestPlanner.ValidateArgs(ValidInputs());
+        var errors = OpenAccessRequestPlanner.ValidateArgs(ValidInputs());
         Assert.Empty(errors);
     }
 
     [Fact]
     public void ValidateArgs_MissingAccessRequestType_Errors()
     {
-        var inputs = new LaunchAccessRequestInputs
+        var inputs = new OpenAccessRequestInputs
         {
             AccountId = 6,
             DurationHours = 2,
             ReasonComment = "Maintenance",
         };
-        var errors = LaunchAccessRequestPlanner.ValidateArgs(inputs);
+        var errors = OpenAccessRequestPlanner.ValidateArgs(inputs);
         Assert.Contains(errors, e => e.Contains("accessRequestType is required", StringComparison.Ordinal));
     }
 
@@ -43,53 +43,53 @@ public class LaunchAccessRequestPlannerTests
     public void ValidateArgs_UnknownAccessRequestType_Errors()
     {
         var inputs = ValidInputs();
-        var bad = new LaunchAccessRequestInputs
+        var bad = new OpenAccessRequestInputs
         {
             AccountId = inputs.AccountId,
             AccessRequestType = "RDP",
             DurationHours = 2,
             ReasonComment = "x",
         };
-        var errors = LaunchAccessRequestPlanner.ValidateArgs(bad);
+        var errors = OpenAccessRequestPlanner.ValidateArgs(bad);
         Assert.Contains(errors, e => e.Contains("'RDP' is not a valid AccessRequestType", StringComparison.Ordinal));
     }
 
     [Fact]
     public void ValidateArgs_NoDuration_Errors()
     {
-        var inputs = new LaunchAccessRequestInputs
+        var inputs = new OpenAccessRequestInputs
         {
             AccountId = 6,
             AccessRequestType = "RemoteDesktop",
             ReasonComment = "x",
         };
-        var errors = LaunchAccessRequestPlanner.ValidateArgs(inputs);
+        var errors = OpenAccessRequestPlanner.ValidateArgs(inputs);
         Assert.Contains(errors, e => e.Contains("duration is required", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
     public void ValidateArgs_MissingReason_Errors()
     {
-        var inputs = new LaunchAccessRequestInputs
+        var inputs = new OpenAccessRequestInputs
         {
             AccountId = 6,
             AccessRequestType = "RemoteDesktop",
             DurationHours = 1,
         };
-        var errors = LaunchAccessRequestPlanner.ValidateArgs(inputs);
+        var errors = OpenAccessRequestPlanner.ValidateArgs(inputs);
         Assert.Contains(errors, e => e.Contains("reasonComment is required", StringComparison.Ordinal));
     }
 
     [Fact]
     public void ValidateArgs_MissingAccountId_Errors()
     {
-        var inputs = new LaunchAccessRequestInputs
+        var inputs = new OpenAccessRequestInputs
         {
             AccessRequestType = "RemoteDesktop",
             DurationHours = 1,
             ReasonComment = "x",
         };
-        var errors = LaunchAccessRequestPlanner.ValidateArgs(inputs);
+        var errors = OpenAccessRequestPlanner.ValidateArgs(inputs);
         Assert.Contains(errors, e => e.Contains("accountId is required", StringComparison.Ordinal));
     }
 
@@ -131,7 +131,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ParseEntitlements_RawArray_ReturnsRows()
     {
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(EntitlementsSingleAssetJson);
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(EntitlementsSingleAssetJson);
         Assert.Single(rows);
         Assert.Equal(6, rows[0].AccountId);
         Assert.Equal(262, rows[0].AssetId);
@@ -144,7 +144,7 @@ public class LaunchAccessRequestPlannerTests
     public void ParseEntitlements_EnvelopedArray_ExtractsData()
     {
         var envelope = $"{{ \"data\": {EntitlementsSingleAssetJson}, \"meta\": {{ \"notices\": [] }} }}";
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(envelope);
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(envelope);
         Assert.Single(rows);
         Assert.Equal(262, rows[0].AssetId);
     }
@@ -152,7 +152,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateEntitlements_Empty_FailsWithGuidance()
     {
-        var result = LaunchAccessRequestPlanner.ValidateEntitlements(
+        var result = OpenAccessRequestPlanner.ValidateEntitlements(
             new List<EntitlementRow>(), accountId: 6, accessRequestType: "RemoteDesktop", assetId: null);
         Assert.False(result.Ok);
         Assert.Contains("0 'RemoteDesktop' entitlements", result.ErrorMessage);
@@ -162,8 +162,8 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateEntitlements_SingleMatch_InfersAssetWhenOmitted()
     {
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(EntitlementsSingleAssetJson);
-        var result = LaunchAccessRequestPlanner.ValidateEntitlements(
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(EntitlementsSingleAssetJson);
+        var result = OpenAccessRequestPlanner.ValidateEntitlements(
             rows, accountId: 6, accessRequestType: "RemoteDesktop", assetId: null);
         Assert.True(result.Ok);
         Assert.Equal(262, result.ResolvedAssetId);
@@ -173,8 +173,8 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateEntitlements_WrongAsset_E036_FailsAndNamesAllowedAssets()
     {
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(EntitlementsSingleAssetJson);
-        var result = LaunchAccessRequestPlanner.ValidateEntitlements(
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(EntitlementsSingleAssetJson);
+        var result = OpenAccessRequestPlanner.ValidateEntitlements(
             rows, accountId: 6, accessRequestType: "RemoteDesktop", assetId: 20);
 
         Assert.False(result.Ok);
@@ -188,8 +188,8 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateEntitlements_MatchingAsset_AcceptsExplicitChoice()
     {
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(EntitlementsTwoAssetsJson);
-        var result = LaunchAccessRequestPlanner.ValidateEntitlements(
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(EntitlementsTwoAssetsJson);
+        var result = OpenAccessRequestPlanner.ValidateEntitlements(
             rows, accountId: 6, accessRequestType: "RemoteDesktop", assetId: 400);
         Assert.True(result.Ok);
         Assert.Equal(400, result.ResolvedAssetId);
@@ -199,8 +199,8 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateEntitlements_MultipleAssetsOmittedAssetId_AsksToPick()
     {
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(EntitlementsTwoAssetsJson);
-        var result = LaunchAccessRequestPlanner.ValidateEntitlements(
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(EntitlementsTwoAssetsJson);
+        var result = OpenAccessRequestPlanner.ValidateEntitlements(
             rows, accountId: 6, accessRequestType: "RemoteDesktop", assetId: null);
         Assert.False(result.Ok);
         Assert.Contains("AssetId=262", result.ErrorMessage);
@@ -211,8 +211,8 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void ValidateEntitlements_TypeNotAllowed_FailsAndListsAvailableTypes()
     {
-        var rows = LaunchAccessRequestPlanner.ParseEntitlements(EntitlementsWrongTypeJson);
-        var result = LaunchAccessRequestPlanner.ValidateEntitlements(
+        var rows = OpenAccessRequestPlanner.ParseEntitlements(EntitlementsWrongTypeJson);
+        var result = OpenAccessRequestPlanner.ValidateEntitlements(
             rows, accountId: 6, accessRequestType: "RemoteDesktop", assetId: null);
 
         Assert.False(result.Ok);
@@ -223,7 +223,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void BuildNewAccessRequestJson_EmitsAllRequiredFields()
     {
-        var json = LaunchAccessRequestPlanner.BuildNewAccessRequestJson(
+        var json = OpenAccessRequestPlanner.BuildNewAccessRequestJson(
             accountId: 6,
             assetId: 262,
             accessRequestType: "remotedesktop",
@@ -253,7 +253,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void BuildNewAccessRequestJson_IncludesAllSuppliedDurations()
     {
-        var json = LaunchAccessRequestPlanner.BuildNewAccessRequestJson(
+        var json = OpenAccessRequestPlanner.BuildNewAccessRequestJson(
             accountId: 6,
             assetId: 262,
             accessRequestType: "Ssh",
@@ -277,7 +277,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void BuildEntitlementsQuery_IncludesAccountAndType()
     {
-        var query = LaunchAccessRequestPlanner.BuildEntitlementsQuery(6, "RemoteDesktop");
+        var query = OpenAccessRequestPlanner.BuildEntitlementsQuery(6, "RemoteDesktop");
         Assert.Contains("accountIds=6", query);
         Assert.Contains("accessRequestType=RemoteDesktop", query);
         Assert.Contains("fields=", query);
@@ -287,7 +287,7 @@ public class LaunchAccessRequestPlannerTests
     public void ExtractIdAndState_ParsesNumberAndString()
     {
         var json = """{ "Id": 42, "State": "Approved" }""";
-        var (id, state) = LaunchAccessRequestPlanner.ExtractIdAndState(json);
+        var (id, state) = OpenAccessRequestPlanner.ExtractIdAndState(json);
         Assert.Equal("42", id);
         Assert.Equal("Approved", state);
     }
@@ -295,7 +295,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void BuildSuccessSummary_RemoteDesktop_PointsAtInitializeSession()
     {
-        var summary = LaunchAccessRequestPlanner.BuildSuccessSummary(
+        var summary = OpenAccessRequestPlanner.BuildSuccessSummary(
             accessRequestId: "abc-1", state: "Available",
             accessRequestType: "RemoteDesktop", accountId: 6, assetId: 262);
         Assert.Contains("InitializeSession", summary);
@@ -306,7 +306,7 @@ public class LaunchAccessRequestPlannerTests
     [Fact]
     public void BuildSuccessSummary_Password_PointsAtCheckOutPassword()
     {
-        var summary = LaunchAccessRequestPlanner.BuildSuccessSummary(
+        var summary = OpenAccessRequestPlanner.BuildSuccessSummary(
             accessRequestId: "abc-2", state: "RequestAvailable",
             accessRequestType: "Password", accountId: 6, assetId: 262);
         Assert.Contains("CheckOutPassword", summary);
