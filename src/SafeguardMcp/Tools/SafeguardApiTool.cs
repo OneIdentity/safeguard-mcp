@@ -800,32 +800,55 @@ internal sealed class SafeguardApiTool(
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
     }
 
-    private static Notice BuildRecipeCrossLinkNotice(string method, string path)
+    internal static Notice BuildRecipeCrossLinkNotice(string method, string path)
     {
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
-        // Only surface composite-tool hints for the highest-leverage launch path; broader
-        // path-to-recipe matching could become noisy and would belong in RecipeIndex if
-        // expanded. Currently the only composite tool is Safeguard_OpenAccessRequest.
+        // Only surface composite-tool hints for the highest-leverage launch / close paths;
+        // broader path-to-recipe matching could become noisy and would belong in RecipeIndex
+        // if expanded. Currently the composite tools are Safeguard_OpenAccessRequest and
+        // Safeguard_CloseAccessRequest.
         var segments = GetPathSegments(path);
         if (segments.Length == 0)
             return null;
 
         // /v4/AccessRequests (POST creates) and /v4/AccessRequests/{id}/InitializeSession,
         // /CheckOutPassword, /CheckOutSshKey, /CheckOutApiKeys, /CheckOutFile are all part
-        // of the launch workflow.
+        // of the launch workflow. /Cancel, /CheckIn, /Close, /Acknowledge map to the close
+        // composite tool.
         if (!segments.Any(s => s.Equals("AccessRequests", StringComparison.OrdinalIgnoreCase)))
             return null;
 
         var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+
+        if (verb == "POST" && segments.Length >= 4)
+        {
+            var leaf = segments[^1];
+            if (leaf.Equals("Cancel", StringComparison.OrdinalIgnoreCase)
+                || leaf.Equals("CheckIn", StringComparison.OrdinalIgnoreCase)
+                || leaf.Equals("Close", StringComparison.OrdinalIgnoreCase)
+                || leaf.Equals("Acknowledge", StringComparison.OrdinalIgnoreCase))
+            {
+                return new Notice(
+                    NoticeKinds.WorkflowRecipeSuggested,
+                    "Related composite tool: Safeguard_CloseAccessRequest picks the correct sub-endpoint "
+                    + "(Cancel / CheckIn / Close / Acknowledge) for you based on the request's current State "
+                    + "and your role, so you don't have to guess which of the four to POST.",
+                    "Call Safeguard_CloseAccessRequest requestId=<id> [comment=...] [allFields=...]; "
+                    + "the tool returns a refusal envelope with a diagnostic naming the state when no "
+                    + "sub-endpoint is appropriate.");
+            }
+        }
+
         var suggestion = verb == "POST" && segments.Length == 2
             ? "Safeguard_OpenAccessRequest performs the pre-flight entitlement check and submits the request in one call."
             : "Use Safeguard_Workflows id=\"session-access-request\" for the full launch workflow.";
 
         return new Notice(
             NoticeKinds.WorkflowRecipeSuggested,
-            "Related workflow recipe: session-access-request (composite tool: Safeguard_OpenAccessRequest).",
+            "Related workflow recipe: session-access-request (composite tools: "
+            + "Safeguard_OpenAccessRequest, Safeguard_CloseAccessRequest).",
             suggestion);
     }
 

@@ -310,6 +310,7 @@ Documentation: https://github.com/OneIdentity/safeguard-mcp";
             .WithTools<SafeguardApiTool>()
             .WithTools<SafeguardWorkflows>()
             .WithTools<SafeguardOpenAccessRequestTool>()
+            .WithTools<SafeguardCloseAccessRequestTool>()
             .WithResources<ApiOverviewResource>()
             .WithResources<CommonPatternsResource>()
             .WithResources<QuerySyntaxResource>()
