@@ -8,6 +8,8 @@ public class TerminologyMapTests
     [InlineData("entitlement", new[] { "entitlement", "role", "roles" })]
     [InlineData("Entitlement", new[] { "entitlement", "role", "roles" })]
     [InlineData("password profile", new[] { "password profile", "change profile", "passwordprofiles" })]
+    [InlineData("privileged access", new[] { "privileged access", "access request", "accessrequests" })]
+    [InlineData("pam", new[] { "pam", "access request", "accessrequests" })]
     public void ExpandSearchTerms_ExpandsKnownAliases(string input, string[] expectedContains)
     {
         var expanded = TerminologyMap.ExpandSearchTerms(input);
