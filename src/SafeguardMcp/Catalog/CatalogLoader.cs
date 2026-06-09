@@ -133,11 +133,16 @@ public class CatalogLoader
 
     private void ParseSwaggerSchemas(JsonDocument doc, string service, Dictionary<string, ApiSchema> schemas)
     {
-        if (!doc.RootElement.TryGetProperty("paths", out var paths))
+        ParseSwaggerSchemas(doc.RootElement, service, schemas);
+    }
+
+    internal void ParseSwaggerSchemas(JsonElement root, string service, Dictionary<string, ApiSchema> schemas)
+    {
+        if (!root.TryGetProperty("paths", out var paths))
             return;
 
         JsonElement components = default;
-        var hasComponents = doc.RootElement.TryGetProperty("components", out var componentsRoot)
+        var hasComponents = root.TryGetProperty("components", out var componentsRoot)
             && componentsRoot.TryGetProperty("schemas", out components);
 
         foreach (var pathEntry in paths.EnumerateObject())
@@ -253,7 +258,7 @@ public class CatalogLoader
             return null;
         }
 
-        return ResolveSchema(schema, components, hasComponents);
+        return ResolveSchema(schema, components, hasComponents, omitReadOnly: true);
     }
 
     private ApiSchema? ExtractSchemaFromResponse(JsonElement responses, JsonElement components, bool hasComponents)
@@ -271,7 +276,7 @@ public class CatalogLoader
             return null;
         }
 
-        return ResolveSchema(schema, components, hasComponents);
+        return ResolveSchema(schema, components, hasComponents, omitReadOnly: false);
     }
 
     private static bool TryGetSchemaFromContent(JsonElement content, out JsonElement schema)
@@ -295,7 +300,7 @@ public class CatalogLoader
         return false;
     }
 
-    private ApiSchema? ResolveSchema(JsonElement schema, JsonElement components, bool hasComponents)
+    private ApiSchema? ResolveSchema(JsonElement schema, JsonElement components, bool hasComponents, bool omitReadOnly)
     {
         if (schema.TryGetProperty("$ref", out var refProp))
         {
@@ -304,7 +309,7 @@ public class CatalogLoader
             {
                 var schemaName = refPath["#/components/schemas/".Length..];
                 if (components.TryGetProperty(schemaName, out var resolved))
-                    return ParseSchemaObject(resolved, components, hasComponents, schemaName);
+                    return ParseSchemaObject(resolved, components, hasComponents, schemaName, omitReadOnly);
             }
 
             return null;
@@ -314,17 +319,22 @@ public class CatalogLoader
             && string.Equals(typeProp.GetString(), "array", StringComparison.OrdinalIgnoreCase))
         {
             if (schema.TryGetProperty("items", out var items))
-                return ResolveSchema(items, components, hasComponents);
+                return ResolveSchema(items, components, hasComponents, omitReadOnly);
 
             return null;
         }
 
-        return ParseSchemaObject(schema, components, hasComponents, null);
+        return ParseSchemaObject(schema, components, hasComponents, null, omitReadOnly);
     }
 
     private const int MaxNestedFields = 25;
 
-    private ApiSchema? ParseSchemaObject(JsonElement schema, JsonElement components, bool hasComponents, string schemaName)
+    // Maximum nesting depth for parsed-time recursive child SchemaProperty[] expansion.
+    // The renderer's `depth` knob caps at this value; the agent can still chase deeper paths
+    // via the flat property-path closure on ApiSchema (added by the property-paths feature).
+    private const int MaxParsedNestedDepth = 3;
+
+    private ApiSchema? ParseSchemaObject(JsonElement schema, JsonElement components, bool hasComponents, string schemaName, bool omitReadOnly)
     {
         if (!schema.TryGetProperty("properties", out var properties))
             return null;
@@ -346,7 +356,8 @@ public class CatalogLoader
             var propName = prop.Name;
             var propSchema = prop.Value;
 
-            var (propType, nestedFields) = DescribePropertyType(propSchema, components, hasComponents);
+            var (propType, nestedFields) = DescribePropertyType(propSchema, components, hasComponents, omitReadOnly);
+            var nestedProps = BuildNestedProperties(propSchema, components, hasComponents, omitReadOnly, depth: 1, parentChain: schemaName);
 
             var description = propSchema.TryGetProperty("description", out var desc)
                 ? desc.GetString() ?? string.Empty
@@ -357,7 +368,7 @@ public class CatalogLoader
             // Keep readOnly properties if they are in the required array — the swagger may mark
             // navigation properties as readOnly for GET responses while they are still needed in
             // POST/PUT request bodies (common in Safeguard API swagger documentation).
-            if (isReadOnly && !requiredSet.Contains(propName))
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(propName))
                 continue;
 
             props.Add(new SchemaProperty(
@@ -365,13 +376,16 @@ public class CatalogLoader
                 propType,
                 description,
                 requiredSet.Contains(propName),
-                nestedFields));
+                nestedFields,
+                nestedProps,
+                EnumName: null));
         }
 
         return new ApiSchema(
             schemaName ?? "inline",
             props.ToArray(),
-            requiredSet.ToArray());
+            requiredSet.ToArray(),
+            omitReadOnly);
     }
 
     /// <summary>
@@ -385,12 +399,19 @@ public class CatalogLoader
         JsonElement propSchema,
         JsonElement components,
         bool hasComponents)
+        => DescribePropertyType(propSchema, components, hasComponents, omitReadOnly: true);
+
+    internal static (string Type, string[] NestedFields) DescribePropertyType(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly)
     {
         // Direct $ref to a complex type.
         if (propSchema.TryGetProperty("$ref", out var refProp))
         {
             var refName = ResolveRefName(refProp);
-            var nested = TryEnumerateRefProperties(refProp, components, hasComponents);
+            var nested = TryEnumerateRefProperties(refProp, components, hasComponents, omitReadOnly);
             return (refName != null ? $"object<{refName}>" : "object", nested);
         }
 
@@ -403,12 +424,12 @@ public class CatalogLoader
                 if (items.TryGetProperty("$ref", out var itemsRef))
                 {
                     var refName = ResolveRefName(itemsRef);
-                    var nested = TryEnumerateRefProperties(itemsRef, components, hasComponents);
+                    var nested = TryEnumerateRefProperties(itemsRef, components, hasComponents, omitReadOnly);
                     return (refName != null ? $"array<{refName}>" : "array", nested);
                 }
 
                 if (items.TryGetProperty("properties", out _))
-                    return ("array<object>", EnumerateImmediateProperties(items));
+                    return ("array<object>", EnumerateImmediateProperties(items, omitReadOnly));
             }
 
             return ("array", Array.Empty<string>());
@@ -419,7 +440,7 @@ public class CatalogLoader
             && string.Equals(typeProp.GetString(), "object", StringComparison.OrdinalIgnoreCase)
             && propSchema.TryGetProperty("properties", out _))
         {
-            return ("object", EnumerateImmediateProperties(propSchema));
+            return ("object", EnumerateImmediateProperties(propSchema, omitReadOnly));
         }
 
         // allOf containing a $ref or inline object — pick the first resolvable part.
@@ -430,13 +451,13 @@ public class CatalogLoader
                 if (part.TryGetProperty("$ref", out var partRef))
                 {
                     var refName = ResolveRefName(partRef);
-                    var nested = TryEnumerateRefProperties(partRef, components, hasComponents);
+                    var nested = TryEnumerateRefProperties(partRef, components, hasComponents, omitReadOnly);
                     if (nested.Length > 0)
                         return (refName != null ? $"object<{refName}>" : "object", nested);
                 }
                 else if (part.TryGetProperty("properties", out _))
                 {
-                    return ("object", EnumerateImmediateProperties(part));
+                    return ("object", EnumerateImmediateProperties(part, omitReadOnly));
                 }
             }
         }
@@ -451,6 +472,157 @@ public class CatalogLoader
         return (propType, Array.Empty<string>());
     }
 
+    // Recursive child SchemaProperty[] expansion done at parse time. Returns an array of
+    // SchemaProperty matching the children of this property's resolved object schema, walked up
+    // to MaxParsedNestedDepth levels deep. Cycle-guarded by parent-type chain.
+    private static SchemaProperty[] BuildNestedProperties(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly,
+        int depth,
+        string parentChain)
+    {
+        if (depth >= MaxParsedNestedDepth)
+            return Array.Empty<SchemaProperty>();
+
+        // Resolve to an object schema (direct $ref, allOf-of-$ref, array-of-$ref, or inline).
+        if (!TryResolveToObjectSchema(propSchema, components, hasComponents, parentChain, out var resolved, out var nextChain))
+            return Array.Empty<SchemaProperty>();
+
+        if (!resolved.TryGetProperty("properties", out var properties))
+            return Array.Empty<SchemaProperty>();
+
+        var requiredSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (resolved.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var req in required.EnumerateArray())
+            {
+                var requiredName = req.GetString();
+                if (!string.IsNullOrWhiteSpace(requiredName))
+                    requiredSet.Add(requiredName);
+            }
+        }
+
+        var list = new List<SchemaProperty>();
+        foreach (var prop in properties.EnumerateObject())
+        {
+            var isReadOnly = prop.Value.TryGetProperty("readOnly", out var readOnly)
+                && readOnly.ValueKind == JsonValueKind.True;
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(prop.Name))
+                continue;
+
+            var (childType, childNestedFields) = DescribePropertyType(prop.Value, components, hasComponents, omitReadOnly);
+            var description = prop.Value.TryGetProperty("description", out var desc)
+                ? desc.GetString() ?? string.Empty
+                : string.Empty;
+            var children = BuildNestedProperties(prop.Value, components, hasComponents, omitReadOnly, depth + 1, nextChain);
+            list.Add(new SchemaProperty(
+                prop.Name,
+                childType,
+                description,
+                requiredSet.Contains(prop.Name),
+                childNestedFields,
+                children,
+                EnumName: null));
+        }
+
+        return list.ToArray();
+    }
+
+    // Walks single-step indirections (direct $ref, allOf-of-$ref, array-items-$ref/object) to
+    // find an object schema with a `properties` block. Returns the resolved element and the
+    // updated parent-chain used for cycle-guarding (5-deep matches the appliance's serializer).
+    private static bool TryResolveToObjectSchema(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        string parentChain,
+        out JsonElement resolved,
+        out string nextChain)
+    {
+        nextChain = parentChain ?? string.Empty;
+
+        if (propSchema.TryGetProperty("$ref", out var refProp))
+        {
+            var name = ResolveRefName(refProp);
+            if (!CycleGuardOk(parentChain, name) || !hasComponents || name == null
+                || !components.TryGetProperty(name, out var refTarget))
+            {
+                resolved = default;
+                return false;
+            }
+            nextChain = AppendChain(parentChain, name);
+            resolved = refTarget;
+
+            // Single allOf-of-$ref hop for inheritance shapes.
+            if (!resolved.TryGetProperty("properties", out _)
+                && resolved.TryGetProperty("allOf", out var allOfInner)
+                && allOfInner.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var part in allOfInner.EnumerateArray())
+                {
+                    if (part.TryGetProperty("properties", out _))
+                    {
+                        resolved = part;
+                        break;
+                    }
+                }
+            }
+            return true;
+        }
+
+        if (propSchema.TryGetProperty("type", out var typeProp)
+            && string.Equals(typeProp.GetString(), "array", StringComparison.OrdinalIgnoreCase)
+            && propSchema.TryGetProperty("items", out var items))
+        {
+            return TryResolveToObjectSchema(items, components, hasComponents, parentChain, out resolved, out nextChain);
+        }
+
+        if (propSchema.TryGetProperty("allOf", out var allOf) && allOf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var part in allOf.EnumerateArray())
+            {
+                if (TryResolveToObjectSchema(part, components, hasComponents, parentChain, out resolved, out nextChain))
+                    return true;
+            }
+        }
+
+        if (propSchema.TryGetProperty("properties", out _))
+        {
+            resolved = propSchema;
+            return true;
+        }
+
+        resolved = default;
+        return false;
+    }
+
+    private static bool CycleGuardOk(string parentChain, string nextName)
+    {
+        if (string.IsNullOrEmpty(parentChain) || string.IsNullOrEmpty(nextName))
+            return true;
+        // Same type may appear at most 5 levels deep (matches the appliance serializer).
+        var count = 0;
+        var idx = 0;
+        while (true)
+        {
+            var match = parentChain.IndexOf("/" + nextName + "/", idx, StringComparison.OrdinalIgnoreCase);
+            if (match < 0)
+                break;
+            count++;
+            idx = match + 1;
+        }
+        return count < 5;
+    }
+
+    private static string AppendChain(string parentChain, string name)
+    {
+        if (string.IsNullOrEmpty(parentChain))
+            return "/" + name + "/";
+        return parentChain + name + "/";
+    }
+
     private static string ResolveRefName(JsonElement refProp)
     {
         var refPath = refProp.GetString();
@@ -461,6 +633,9 @@ public class CatalogLoader
     }
 
     private static string[] TryEnumerateRefProperties(JsonElement refProp, JsonElement components, bool hasComponents)
+        => TryEnumerateRefProperties(refProp, components, hasComponents, omitReadOnly: true);
+
+    private static string[] TryEnumerateRefProperties(JsonElement refProp, JsonElement components, bool hasComponents, bool omitReadOnly)
     {
         if (!hasComponents)
             return Array.Empty<string>();
@@ -484,10 +659,13 @@ public class CatalogLoader
             }
         }
 
-        return EnumerateImmediateProperties(resolved);
+        return EnumerateImmediateProperties(resolved, omitReadOnly);
     }
 
     internal static string[] EnumerateImmediateProperties(JsonElement schema)
+        => EnumerateImmediateProperties(schema, omitReadOnly: true);
+
+    internal static string[] EnumerateImmediateProperties(JsonElement schema, bool omitReadOnly)
     {
         if (!schema.TryGetProperty("properties", out var properties))
             return Array.Empty<string>();
@@ -509,7 +687,7 @@ public class CatalogLoader
         {
             var isReadOnly = prop.Value.TryGetProperty("readOnly", out var readOnly)
                 && readOnly.ValueKind == JsonValueKind.True;
-            if (isReadOnly && !requiredSet.Contains(prop.Name))
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(prop.Name))
                 continue;
 
             totalKept++;

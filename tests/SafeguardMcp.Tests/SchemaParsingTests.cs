@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using SafeguardMcp.Catalog;
 
 namespace SafeguardMcp.Tests;
@@ -174,6 +175,23 @@ public class SchemaParsingTests
     }
 
     [Fact]
+    public void EnumerateImmediateProperties_OmitReadOnlyFalseKeepsReadOnly()
+    {
+        const string json = """
+        {
+          "type": "object",
+          "properties": {
+            "Visible": {"type":"string"},
+            "DroppedReadOnly": {"type":"string","readOnly":true}
+          }
+        }
+        """;
+        using var doc = JsonDocument.Parse(json);
+        var names = CatalogLoader.EnumerateImmediateProperties(doc.RootElement, omitReadOnly: false);
+        Assert.Equal(new[] { "Visible", "DroppedReadOnly" }, names);
+    }
+
+    [Fact]
     public void EnumerateImmediateProperties_CapsAt25WithOverflowMarker()
     {
         // Build an object schema with 30 string properties.
@@ -198,5 +216,108 @@ public class SchemaParsingTests
     {
         using var doc = JsonDocument.Parse("""{"type":"object"}""");
         Assert.Empty(CatalogLoader.EnumerateImmediateProperties(doc.RootElement));
+    }
+
+    private static Dictionary<string, ApiSchema> ParseSwaggerForTests(string swaggerJson, string service = "Core")
+    {
+        var loader = new CatalogLoader(NullLogger<CatalogLoader>.Instance);
+        var schemas = new Dictionary<string, ApiSchema>(StringComparer.OrdinalIgnoreCase);
+        using var doc = JsonDocument.Parse(swaggerJson);
+        loader.ParseSwaggerSchemas(doc.RootElement, service, schemas);
+        return schemas;
+    }
+
+    [Fact]
+    public void ParseSwagger_PostWriteEndpoint_RequestSchemaOmitsReadOnly_ResponseSchemaIncludesIt()
+    {
+        // POST /v4/AccessRequests-style write endpoint:
+        // - request body has a couple of writable fields plus a readOnly Id (must be filtered)
+        // - response body returns the same DTO with the readOnly Id present (must be visible)
+        const string swagger = """
+        {
+          "components": {
+            "schemas": {
+              "NewAccessRequest": {
+                "type": "object",
+                "required": ["AccountId", "AccessRequestType"],
+                "properties": {
+                  "Id": {"type":"integer","readOnly":true},
+                  "AccountId": {"type":"integer"},
+                  "AccessRequestType": {"type":"string"},
+                  "RequestedDurationDays": {"type":"integer"}
+                }
+              }
+            }
+          },
+          "paths": {
+            "/v4/AccessRequests": {
+              "post": {
+                "requestBody": {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NewAccessRequest"}}}},
+                "responses": {"201": {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NewAccessRequest"}}}}}
+              }
+            }
+          }
+        }
+        """;
+        var schemas = ParseSwaggerForTests(swagger);
+
+        Assert.True(schemas.ContainsKey("POST Core /v4/AccessRequests"), "request body schema missing");
+        Assert.True(schemas.ContainsKey("RESPONSE POST Core /v4/AccessRequests"), "POST response schema missing");
+
+        var request = schemas["POST Core /v4/AccessRequests"];
+        Assert.True(request.OmitReadOnly);
+        Assert.DoesNotContain(request.Properties, p => p.Name == "Id");
+        Assert.Contains(request.Properties, p => p.Name == "AccountId" && p.Required);
+        Assert.Contains(request.Properties, p => p.Name == "AccessRequestType" && p.Required);
+
+        var response = schemas["RESPONSE POST Core /v4/AccessRequests"];
+        Assert.False(response.OmitReadOnly);
+        Assert.Contains(response.Properties, p => p.Name == "Id");
+        Assert.Contains(response.Properties, p => p.Name == "AccountId");
+    }
+
+    [Fact]
+    public void ParseSwagger_NestedRefProducesRecursiveNestedProperties()
+    {
+        // Verifies depth-aware parsing: a $ref child carries full SchemaProperty[] children,
+        // not just immediate names. This is what the depth knob on Safeguard_Schema renders.
+        const string swagger = """
+        {
+          "components": {
+            "schemas": {
+              "Outer": {
+                "type": "object",
+                "properties": {
+                  "Inner": {"$ref": "#/components/schemas/Inner"}
+                }
+              },
+              "Inner": {
+                "type": "object",
+                "properties": {
+                  "Leaf": {"type": "string"},
+                  "Count": {"type": "integer"}
+                }
+              }
+            }
+          },
+          "paths": {
+            "/v4/Outer": {
+              "get": {
+                "responses": {"200":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Outer"}}}}}
+              }
+            }
+          }
+        }
+        """;
+        var schemas = ParseSwaggerForTests(swagger);
+        var outer = schemas["RESPONSE GET Core /v4/Outer"];
+        var inner = Assert.Single(outer.Properties, p => p.Name == "Inner");
+        Assert.Equal("object<Inner>", inner.Type);
+        Assert.Equal(new[] { "Leaf", "Count" }, inner.NestedFields);
+        Assert.Equal(2, inner.NestedProperties.Length);
+        Assert.Equal("Leaf", inner.NestedProperties[0].Name);
+        Assert.Equal("string", inner.NestedProperties[0].Type);
+        Assert.Equal("Count", inner.NestedProperties[1].Name);
+        Assert.Equal("integer", inner.NestedProperties[1].Type);
     }
 }
