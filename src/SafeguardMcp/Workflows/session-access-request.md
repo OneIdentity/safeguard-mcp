@@ -20,14 +20,16 @@ Steps:
    - POST /v4/AccessRequests with body:
      {
        "AccountId": <accountId>,
-       "AccessRequestType": "RDP",
+       "AccessRequestType": "RemoteDesktop",
        "ReasonCode": null,
        "ReasonComment": "Routine maintenance",
        "RequestedDurationDays": 0,
        "RequestedDurationHours": 2,
        "IsEmergency": false
      }
-   - AccessRequestType options: "RDP", "SSH", "Telnet", "RemoteDesktopApplication"
+   - AccessRequestType options: "RemoteDesktop" (RDP), "Ssh", "Telnet", "RemoteDesktopApplication"
+   - Values verified by Safeguard_Enum name="AccessRequestType". Use the enum spelling exactly;
+     the API rejects case-folded variants and shorthand like "RDP"/"SSH".
 3. Check request status:
    - GET /v4/AccessRequests/{requestId} -> watch State field
    - States: Pending → Approved → Available → Expired/CheckedIn
@@ -45,7 +47,7 @@ Steps:
    - Or the session expires automatically based on policy duration
 
 Session Policies (for administrators setting up):
-- AccessRequestType must be "RDP" or "SSH" in the access policy
+- AccessRequestType must be "RemoteDesktop" or "Ssh" in the access policy
 - SessionProperties in the policy controls recording, command restrictions
 - POST /v4/AccessPolicies with SessionProperties block
 
