@@ -22,6 +22,9 @@ public class WorkflowRecipeTests
     [InlineData("a2a-credential-retrieval")]
     [InlineData("cluster-operations")]
     [InlineData("personal-password-vault")]
+    [InlineData("recent-activity-decision-tree")]
+    [InlineData("partition-schedule-update")]
+    [InlineData("account-discovery-status")]
     public void Workflows_GetById_ReturnsContent(string id)
     {
         var tool = new SafeguardWorkflows();
@@ -48,6 +51,10 @@ public class WorkflowRecipeTests
     [InlineData("cluster", "cluster")]
     [InlineData("backup", "backup")]
     [InlineData("SSH", "ssh")]
+    [InlineData("login history", "recent-activity-decision-tree")]
+    [InlineData("who logged in", "recent-activity-decision-tree")]
+    [InlineData("discover accounts", "account-discovery-status")]
+    [InlineData("password schedule", "partition-schedule-update")]
     public void Workflows_Search_FindsMatchingRecipes(string search, string expectedInResult)
     {
         var tool = new SafeguardWorkflows();
