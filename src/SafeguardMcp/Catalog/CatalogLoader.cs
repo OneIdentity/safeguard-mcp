@@ -449,7 +449,148 @@ public class CatalogLoader
             schemaName ?? "inline",
             props.ToArray(),
             requiredSet.ToArray(),
-            omitReadOnly);
+            omitReadOnly,
+            BuildPropertyPaths(schema, components, hasComponents, omitReadOnly, schemaName));
+    }
+
+    // Total path entries returned per schema. The live appliance has a handful of types whose
+    // full reachable graph (RequestableAccount with full Asset+Platform expansion, AuditLog,
+    // SearchSearchResult) exceeds a few hundred; capping keeps Safeguard_Schema output usable.
+    private const int MaxPathEntries = 500;
+
+    // Cycle-guard depth, matching the appliance's serializer (JsonSerializerUtil.cs:245):
+    // a given type may appear at most 5 levels deep in the parent chain.
+    private const int MaxPathTypeDepth = 5;
+
+    private static ApiSchemaPropertyPath[] BuildPropertyPaths(
+        JsonElement objectSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly,
+        string rootTypeName)
+    {
+        var paths = new List<ApiSchemaPropertyPath>();
+        var typeStack = new List<string>();
+        if (!string.IsNullOrEmpty(rootTypeName))
+            typeStack.Add(rootTypeName);
+
+        WalkPaths(objectSchema, components, hasComponents, omitReadOnly, prefix: string.Empty, typeStack, paths);
+        return paths.ToArray();
+    }
+
+    private static void WalkPaths(
+        JsonElement objectSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly,
+        string prefix,
+        List<string> typeStack,
+        List<ApiSchemaPropertyPath> paths)
+    {
+        if (paths.Count >= MaxPathEntries)
+            return;
+        if (!objectSchema.TryGetProperty("properties", out var properties))
+            return;
+
+        var requiredSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (objectSchema.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var req in required.EnumerateArray())
+            {
+                var n = req.GetString();
+                if (!string.IsNullOrWhiteSpace(n))
+                    requiredSet.Add(n);
+            }
+        }
+
+        foreach (var prop in properties.EnumerateObject())
+        {
+            if (paths.Count >= MaxPathEntries)
+                return;
+
+            var propName = prop.Name;
+            var propSchema = prop.Value;
+
+            var isReadOnly = propSchema.TryGetProperty("readOnly", out var ro)
+                && ro.ValueKind == JsonValueKind.True;
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(propName))
+                continue;
+
+            var (typeLabel, _, enumName) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly);
+            var dotted = string.IsNullOrEmpty(prefix) ? propName : prefix + "." + propName;
+            var isCollection = typeLabel.StartsWith("array", StringComparison.Ordinal);
+
+            paths.Add(new ApiSchemaPropertyPath(
+                dotted,
+                typeLabel,
+                enumName,
+                isCollection,
+                IsSynthetic: false));
+
+            // Synthetic <Collection>.Count for orderby/filter usage. Only emitted for
+            // collection-typed properties; not valid in fields=.
+            if (isCollection)
+            {
+                paths.Add(new ApiSchemaPropertyPath(
+                    dotted + ".Count",
+                    "integer",
+                    null,
+                    IsCollection: false,
+                    IsSynthetic: true));
+            }
+
+            // Recurse into the property's underlying object schema if there is one.
+            if (TryResolveToObjectSchema(propSchema, components, hasComponents, parentChain: null, out var childSchema, out _))
+            {
+                var childTypeName = ExtractRefTypeName(propSchema);
+                if (!string.IsNullOrEmpty(childTypeName))
+                {
+                    var occurrences = 0;
+                    foreach (var t in typeStack)
+                    {
+                        if (string.Equals(t, childTypeName, StringComparison.OrdinalIgnoreCase))
+                            occurrences++;
+                    }
+                    if (occurrences >= MaxPathTypeDepth)
+                        continue;
+                    typeStack.Add(childTypeName);
+                    WalkPaths(childSchema, components, hasComponents, omitReadOnly, dotted, typeStack, paths);
+                    typeStack.RemoveAt(typeStack.Count - 1);
+                }
+                else
+                {
+                    // Inline anonymous object — no type to track for cycle guard. Cap raw
+                    // structural depth via the path entry budget.
+                    WalkPaths(childSchema, components, hasComponents, omitReadOnly, dotted, typeStack, paths);
+                }
+            }
+        }
+    }
+
+    // Returns the $ref'd schema name when propSchema is a $ref, allOf-of-$ref, or
+    // array-of-$ref; otherwise null.
+    private static string ExtractRefTypeName(JsonElement propSchema)
+    {
+        if (propSchema.TryGetProperty("$ref", out var refProp))
+            return ResolveRefName(refProp);
+
+        if (propSchema.TryGetProperty("type", out var typeProp)
+            && string.Equals(typeProp.GetString(), "array", StringComparison.OrdinalIgnoreCase)
+            && propSchema.TryGetProperty("items", out var items))
+        {
+            return ExtractRefTypeName(items);
+        }
+
+        if (propSchema.TryGetProperty("allOf", out var allOf) && allOf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var part in allOf.EnumerateArray())
+            {
+                var n = ExtractRefTypeName(part);
+                if (n != null)
+                    return n;
+            }
+        }
+        return null;
     }
 
     /// <summary>

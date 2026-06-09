@@ -67,18 +67,50 @@ public class DynamicCatalog
 /// filtered out at parse time. Request-body schemas set this to <c>true</c> (the agent cannot
 /// send <c>Id</c>, <c>CreatedDate</c>, etc.); response-body schemas set this to <c>false</c>
 /// so the agent can see what the appliance returns.</para>
+/// <para><see cref="Paths"/> is the flat dotted-path closure of this schema's response/request
+/// graph: every reachable path through nested objects/arrays, plus synthetic
+/// <c>&lt;Collection&gt;.Count</c> entries for <c>filter=</c>/<c>orderby=</c> use. The agent
+/// uses these directly for <c>fields=</c>; <c>filter=</c>/<c>orderby=</c> match this graph
+/// ~90% of the time, with the residual divergence (flattened forms like
+/// <c>Account.AssetName</c> vs. <c>Account.Asset.Name</c>) caught reactively by 70001/70009
+/// "did you mean" handling.</para>
 /// </remarks>
 public readonly record struct ApiSchema(
     string TypeName,
     SchemaProperty[] Properties,
     string[] RequiredFields,
-    bool OmitReadOnly)
+    bool OmitReadOnly,
+    ApiSchemaPropertyPath[] Paths)
 {
     public ApiSchema(string typeName, SchemaProperty[] properties, string[] requiredFields)
-        : this(typeName, properties, requiredFields, true)
+        : this(typeName, properties, requiredFields, true, Array.Empty<ApiSchemaPropertyPath>())
+    {
+    }
+
+    public ApiSchema(string typeName, SchemaProperty[] properties, string[] requiredFields, bool omitReadOnly)
+        : this(typeName, properties, requiredFields, omitReadOnly, Array.Empty<ApiSchemaPropertyPath>())
     {
     }
 }
+
+/// <summary>
+/// One entry in the dotted-path closure of an <see cref="ApiSchema"/>.
+/// </summary>
+/// <remarks>
+/// <para><see cref="Path"/> is the dotted path from the root (e.g. <c>Account.Asset.Name</c>).
+/// <see cref="Type"/> is the leaf type label (<c>string</c>, <c>integer</c>,
+/// <c>enum&lt;ScheduleType&gt;</c>, <c>object&lt;Foo&gt;</c>, ...).
+/// <see cref="IsCollection"/> is true for array-typed nodes; for those, a sibling
+/// <c>&lt;Path&gt;.Count</c> entry with <see cref="IsSynthetic"/> set to true is also emitted
+/// (valid in <c>filter</c>/<c>orderby</c> but not in <c>fields</c>).
+/// <see cref="EnumName"/> is non-null only for enum-typed leaves.</para>
+/// </remarks>
+public readonly record struct ApiSchemaPropertyPath(
+    string Path,
+    string Type,
+    string EnumName,
+    bool IsCollection,
+    bool IsSynthetic);
 
 /// <summary>
 /// Represents a single property in a schema.
