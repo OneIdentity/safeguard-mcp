@@ -1,5 +1,7 @@
 using System.Net;
 using System.Security;
+using System.Security.Authentication;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
@@ -125,43 +127,64 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
         var envUser = Environment.GetEnvironmentVariable("SAFEGUARD_USER");
         var envPassword = Environment.GetEnvironmentVariable("SAFEGUARD_PASSWORD");
 
-        try
+        var tlsRetryConsumed = false;
+        while (true)
         {
-            if (!string.IsNullOrEmpty(envProvider) && !string.IsNullOrEmpty(envUser) && !string.IsNullOrEmpty(envPassword))
+            try
             {
-                _logger.LogInformation("Using non-interactive PKCE authentication for '{Host}'.", _host);
-                _connection = await Task.Run(() =>
+                if (!string.IsNullOrEmpty(envProvider) && !string.IsNullOrEmpty(envUser) && !string.IsNullOrEmpty(envPassword))
                 {
-                    using var securePassword = SessionHelpers.ToSecureString(envPassword);
-                    return _factory.ConnectPkce(_host, envProvider, envUser, securePassword, _ignoreSsl);
-                }, ct);
+                    _logger.LogInformation("Using non-interactive PKCE authentication for '{Host}'.", _host);
+                    _connection = await Task.Run(() =>
+                    {
+                        using var securePassword = SessionHelpers.ToSecureString(envPassword);
+                        return _factory.ConnectPkce(_host, envProvider, envUser, securePassword, _ignoreSsl);
+                    }, ct);
+                }
+                else
+                {
+                    _logger.LogInformation("Using device-code authentication for '{Host}'.", _host);
+                    var parameters = new DeviceCodeLoginParameters
+                    {
+                        DisplayCallback = info => DisplayDeviceCode(server, _host, info, ct),
+                    };
+                    _connection = await _factory.ConnectDeviceCodeAsync(_host, parameters, _ignoreSsl, ct);
+                }
+                break;
             }
-            else
+            catch (McpException)
             {
-                _logger.LogInformation("Using device-code authentication for '{Host}'.", _host);
-                var parameters = new DeviceCodeLoginParameters
-                {
-                    DisplayCallback = info => DisplayDeviceCode(server, _host, info, ct),
-                };
-                _connection = await _factory.ConnectDeviceCodeAsync(_host, parameters, _ignoreSsl, ct);
+                throw;
             }
-        }
-        catch (McpException)
-        {
-            throw;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException)
-        {
-            throw new McpException(
-                $"Cannot connect to '{_host}': {ex.Message}. "
-                + "Verify the hostname/IP is correct and the appliance is reachable. Call Safeguard_Connect with the correct host.");
-        }
-        catch (SafeguardDotNetException ex)
-        {
-            throw new McpException(
-                $"Authentication failed for '{_host}': {ex.Message}. "
-                + "If your Safeguard administrator has not enabled the Device Authorization Grant, "
-                + "set SAFEGUARD_PROVIDER, SAFEGUARD_USER, and SAFEGUARD_PASSWORD to use the PKCE fallback.");
+            catch (Exception ex) when (IsTlsError(ex) && !_ignoreSsl && !tlsRetryConsumed)
+            {
+                tlsRetryConsumed = true;
+                if (!await ElicitTlsTrustAsync(server, ex, ct))
+                {
+                    throw new McpException(
+                        $"TLS certificate verification failed for '{_host}': {InnermostMessage(ex)}. "
+                        + "If the appliance uses a self-signed or internal-CA certificate, set "
+                        + "SAFEGUARD_IGNORE_SSL=true and restart the server, or accept the in-session "
+                        + "trust prompt when one is offered.");
+                }
+                _ignoreSsl = true;
+                _logger.LogWarning(
+                    "TLS verification disabled for '{Host}' for the lifetime of this session per user consent.",
+                    _host);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException)
+            {
+                throw new McpException(
+                    $"Cannot connect to '{_host}': {ex.Message}. "
+                    + "Verify the hostname/IP is correct and the appliance is reachable. Call Safeguard_Connect with the correct host.");
+            }
+            catch (SafeguardDotNetException ex)
+            {
+                throw new McpException(
+                    $"Authentication failed for '{_host}': {ex.Message}. "
+                    + "If your Safeguard administrator has not enabled the Device Authorization Grant, "
+                    + "set SAFEGUARD_PROVIDER, SAFEGUARD_USER, and SAFEGUARD_PASSWORD to use the PKCE fallback.");
+            }
         }
 
         _logger.LogInformation(
@@ -169,6 +192,24 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
             _host, _connection.GetAccessTokenLifetimeRemaining());
 
         _ = Task.Run(() => _catalogProvider.LoadCatalogAsync(_host, _ignoreSsl), CancellationToken.None);
+    }
+
+    private static bool IsTlsError(Exception ex)
+    {
+        for (var current = ex; current != null; current = current.InnerException)
+        {
+            if (current is AuthenticationException)
+                return true;
+        }
+        return false;
+    }
+
+    private static string InnermostMessage(Exception ex)
+    {
+        var current = ex;
+        while (current.InnerException != null)
+            current = current.InnerException;
+        return current.Message;
     }
 
     private bool TryEnsureTokenFresh()
@@ -198,6 +239,47 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
         if (bool.TryParse(envVal, out var ignore))
             return ignore;
         return bool.TryParse(_configuration["Safeguard:IgnoreSsl"], out var ignoreCfg) && ignoreCfg;
+    }
+
+    private async Task<bool> ElicitTlsTrustAsync(McpServer server, Exception tlsError, CancellationToken ct)
+    {
+        if (server?.ClientCapabilities?.Elicitation?.Form == null)
+            return false;
+
+        _logger.LogInformation("Eliciting TLS trust decision for '{Host}'...", _host);
+
+        var result = await server.ElicitAsync(new ElicitRequestParams
+        {
+            Mode = "form",
+            Message =
+                $"TLS certificate verification failed for '{_host}': {InnermostMessage(tlsError)}.\n\n"
+                + "This is expected when the appliance uses a self-signed or internal-CA "
+                + "certificate. Disable TLS verification for the lifetime of this MCP session?",
+            RequestedSchema = new ElicitRequestParams.RequestSchema
+            {
+                Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
+                {
+                    ["trust"] = new ElicitRequestParams.BooleanSchema
+                    {
+                        Title = "Disable TLS verification (this session only)",
+                        Description = "Connect without verifying the appliance certificate.",
+                        Default = false,
+                    }
+                },
+                Required = ["trust"],
+            }
+        }, ct);
+
+        var isAccepted = result.Action != null
+            && result.Action.StartsWith("accept", StringComparison.OrdinalIgnoreCase);
+
+        if (!isAccepted || result.Content == null
+            || !result.Content.TryGetValue("trust", out var trustElement))
+        {
+            return false;
+        }
+
+        return trustElement.ValueKind == JsonValueKind.True;
     }
 
     private async Task<string> ElicitHostAsync(McpServer server, CancellationToken ct)

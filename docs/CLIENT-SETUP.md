@@ -12,12 +12,13 @@ lives and what the top-level JSON keys are called.
 > deployment shapes, and [README → HTTP Mode](../README.md#http-mode-shared-server-deployment)
 > for how clients point at one.
 
-The `SAFEGUARD_HOST` value below should be the hostname of your appliance.
-Omit it if you'd rather have the agent call `Safeguard_Connect` at runtime to
-choose the appliance (see [README → Stdio mode](../README.md#stdio-mode)).
+Set `SAFEGUARD_HOST` to the hostname of your appliance. In stdio mode you can
+omit it only if your MCP client supports elicitation forms — the server will
+then prompt for the hostname on first use. HTTP-mode deployments require
+`SAFEGUARD_HOST` at startup.
 
-On first use, the server prints a verification URL and a one-time code; complete
-the sign-in from any browser to authorize the connection.
+On first use, the server prints a verification URL and a one-time code;
+complete the sign-in from any browser to authorize the connection.
 
 ## At a glance
 

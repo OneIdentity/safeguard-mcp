@@ -117,6 +117,50 @@ public class DeviceCodeAuthTests
         Assert.Contains("PKCE fallback", ex.Message);
     }
 
+    [Fact]
+    public async Task EnsureAuthenticated_TlsFailure_NoElicitation_ThrowsWithIgnoreSslHint()
+    {
+        using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
+        var factory = new FakeConnectionFactory
+        {
+            DeviceCodeException = new HttpRequestException(
+                "The SSL connection could not be established",
+                new System.Security.Authentication.AuthenticationException(
+                    "The remote certificate is invalid according to the validation procedure.")),
+        };
+        using var manager = CreateManager(factory);
+
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None));
+
+        Assert.Contains("TLS certificate verification failed", ex.Message);
+        Assert.Contains("SAFEGUARD_IGNORE_SSL", ex.Message);
+        Assert.Equal(1, factory.DeviceCodeCallCount);
+    }
+
+    [Fact]
+    public async Task EnsureAuthenticated_TlsFailure_AlreadyIgnoringSsl_DoesNotEnterTlsRetry()
+    {
+        using var _scope = EnvVarScope.ClearSafeguardAuthVars();
+        Environment.SetEnvironmentVariable("SAFEGUARD_HOST", TestHost);
+        Environment.SetEnvironmentVariable("SAFEGUARD_IGNORE_SSL", "true");
+        var factory = new FakeConnectionFactory
+        {
+            DeviceCodeException = new HttpRequestException(
+                "tls handshake failed",
+                new System.Security.Authentication.AuthenticationException("bad cert")),
+        };
+        using var manager = CreateManager(factory);
+
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => manager.EnsureReadyAsync(server: null, cancellationToken: CancellationToken.None));
+
+        Assert.Contains("Cannot connect", ex.Message);
+        Assert.DoesNotContain("TLS certificate verification failed", ex.Message);
+        Assert.Equal(1, factory.DeviceCodeCallCount);
+    }
+
     private static StdioSafeguardSession CreateManager(
         FakeConnectionFactory factory,
         ILogger<StdioSafeguardSession> sessionLogger = null)
