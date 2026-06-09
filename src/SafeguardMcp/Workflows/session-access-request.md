@@ -4,6 +4,7 @@ name: Session Access Request (RDP/SSH)
 description: Request and launch a privileged session (RDP or SSH) through Safeguard's proxy.
 tags: session, access request, RDP, SSH, proxy, recording, privileged session, launch, mstsc, rdp launch, request
 tool: Safeguard_OpenAccessRequest
+tool: Safeguard_CloseAccessRequest
 ---
 
 ID: session-access-request

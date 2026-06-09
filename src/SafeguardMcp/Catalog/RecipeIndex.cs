@@ -164,7 +164,20 @@ internal static class RecipeIndex
 
             var key = line[..separatorIndex].Trim();
             var value = line[(separatorIndex + 1)..].Trim();
-            metadata[key] = value;
+            // `tool:` is permitted to appear multiple times to declare a
+            // recipe backed by more than one composite tool; accumulate
+            // into a single comma-joined value so downstream rendering
+            // can split as needed.
+            if (string.Equals(key, "tool", StringComparison.OrdinalIgnoreCase)
+                && metadata.TryGetValue(key, out var existing)
+                && !string.IsNullOrWhiteSpace(existing))
+            {
+                metadata[key] = existing + ", " + value;
+            }
+            else
+            {
+                metadata[key] = value;
+            }
         }
 
         if (contentStartIndex < 0
