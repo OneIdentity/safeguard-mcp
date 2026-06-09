@@ -304,12 +304,13 @@ public class OpenAccessRequestPlannerTests
     }
 
     [Fact]
-    public void BuildSuccessSummary_Password_PointsAtCheckOutPassword()
+    public void BuildSuccessSummary_Password_PointsAtRetrieveCredential()
     {
         var summary = OpenAccessRequestPlanner.BuildSuccessSummary(
             accessRequestId: "abc-2", state: "RequestAvailable",
             accessRequestType: "Password", accountId: 6, assetId: 262);
-        Assert.Contains("CheckOutPassword", summary);
-        Assert.Contains("sensitive", summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Safeguard_RetrieveCredential", summary);
+        Assert.Contains("access-request-password", summary);
+        Assert.Contains("refuse-and-redirected", summary);
     }
 }

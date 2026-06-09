@@ -481,18 +481,21 @@ internal static class OpenAccessRequestPlanner
                 sb.AppendLine("  3. Do NOT hand-build the .rdp file; let the appliance generate it so policy-driven RDP settings stay in sync.");
                 break;
             case "Password":
-                sb.AppendLine("  2. POST /v4/AccessRequests/" + (accessRequestId ?? "{id}") + "/CheckOutPassword to retrieve the password.");
-                sb.AppendLine("     Treat the returned password as sensitive: do not echo it in summaries, logs, or follow-up tool arguments.");
+                sb.AppendLine("  2. Retrieve the password via Safeguard_RetrieveCredential kind=\"access-request-password\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
+                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutPassword via Safeguard_Execute — that path is refuse-and-redirected.");
+                sb.AppendLine("     The plaintext is delivered in the user-audience block of the two-block response so audience-honoring hosts can keep it out of the LLM transcript.");
                 break;
             case "SshKey":
-                sb.AppendLine("  2. POST /v4/AccessRequests/" + (accessRequestId ?? "{id}") + "/CheckOutSshKey to retrieve the SSH private key.");
-                sb.AppendLine("     Treat the returned key as sensitive.");
+                sb.AppendLine("  2. Retrieve the SSH private key via Safeguard_RetrieveCredential kind=\"access-request-ssh-key\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
+                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutSshKey via Safeguard_Execute — that path is refuse-and-redirected.");
                 break;
             case "ApiKey":
-                sb.AppendLine("  2. POST /v4/AccessRequests/" + (accessRequestId ?? "{id}") + "/CheckOutApiKeys to retrieve the API key(s).");
+                sb.AppendLine("  2. Retrieve the API key(s) via Safeguard_RetrieveCredential kind=\"access-request-api-key\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
+                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutApiKeys via Safeguard_Execute — that path is refuse-and-redirected.");
                 break;
             case "File":
-                sb.AppendLine("  2. POST /v4/AccessRequests/" + (accessRequestId ?? "{id}") + "/CheckOutFile to retrieve the file content.");
+                sb.AppendLine("  2. Retrieve the file content via Safeguard_RetrieveCredential kind=\"access-request-file\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
+                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutFile via Safeguard_Execute — that path is refuse-and-redirected.");
                 break;
         }
         sb.Append("  ").Append(canonical == "Password" || canonical == "SshKey" || canonical == "ApiKey" || canonical == "File" ? "3" : "4")

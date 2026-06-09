@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
@@ -11,11 +13,25 @@ using SafeguardMcp.Catalog;
 namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
-internal sealed class SafeguardApiTool(
-    ISafeguardSession session,
-    CatalogProvider catalogProvider,
-    IConfiguration configuration)
+internal sealed class SafeguardApiTool
 {
+    private readonly ISafeguardSession session;
+    private readonly CatalogProvider catalogProvider;
+    private readonly IConfiguration configuration;
+    private readonly ILogger<SafeguardApiTool> logger;
+
+    public SafeguardApiTool(
+        ISafeguardSession session,
+        CatalogProvider catalogProvider,
+        IConfiguration configuration,
+        ILogger<SafeguardApiTool> logger = null)
+    {
+        this.session = session;
+        this.catalogProvider = catalogProvider;
+        this.configuration = configuration;
+        this.logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardApiTool>.Instance;
+    }
+
     private int MaxResultsBeforeTruncation => ParseInt(configuration["Safeguard:MaxResultsBeforeTruncation"], 100);
     private int MaxResponseChars => ParseInt(configuration["Safeguard:MaxResponseChars"], 30000);
     private int DefaultLimit => ParseInt(configuration["Safeguard:DefaultLimit"], 50);
@@ -476,8 +492,18 @@ internal sealed class SafeguardApiTool(
             .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.")
             .AppendLine()
             .AppendLine("Sensitive credential material:")
-            .AppendLine("  Passwords, SSH private keys, A2A secrets, API keys, and cert private keys are sensitive.")
-            .AppendLine("  Do NOT echo these in summaries, tables, logs, or follow-up tool calls. Reference accounts by id.")
+            .AppendLine("  Passwords, SSH private keys, A2A secrets, API client secrets, API key history, TOTP codes,")
+            .AppendLine("  generated passwords, personal-account password history, and secure-file content are all sensitive.")
+            .AppendLine("  These endpoints are NOT callable via Safeguard_Execute. Use Safeguard_RetrieveCredential")
+            .AppendLine("  (kinds: access-request-password, access-request-ssh-key, access-request-api-key,")
+            .AppendLine("  access-request-totp, access-request-file, personal-account-password,")
+            .AppendLine("  personal-account-password-history, personal-account-totp, generated-password,")
+            .AppendLine("  asset-account-api-secret-history). Calling those paths via Safeguard_Execute returns a")
+            .AppendLine("  structured sensitive_endpoint_redirected envelope naming the matching Safeguard_RetrieveCredential")
+            .AppendLine("  kind and arguments — lift data.next_call into a follow-up tool invocation.")
+            .AppendLine("  Safeguard_RetrieveCredential emits a two-block MCP response: block 1 (audience=assistant) is")
+            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. Hosts that honor audience")
+            .AppendLine("  annotations route the user block to a secure pane without exposing it to the LLM.")
             .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
             .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
             .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
@@ -592,6 +618,24 @@ internal sealed class SafeguardApiTool(
 
         var normalizedMethod = ParseMethod(method);
         var normalizedPath = NormalizePath(path);
+
+        // Refuse-and-redirect for sensitive credential endpoints BEFORE any I/O.
+        // The single source of truth lives in
+        // Catalog/Resources/sensitive-credential-endpoints.json. Anything in that
+        // catalog is owned by Safeguard_RetrieveCredential; Safeguard_Execute
+        // never touches the wire for those paths. The agent receives a
+        // structured next_call envelope so it can lift the suggested tool +
+        // arguments without re-deriving them.
+        var sensitiveMatch = SensitiveCredentialEndpoints.TryMatch(normalizedMethod, normalizedPath);
+        if (sensitiveMatch != null)
+        {
+            logger.LogInformation(
+                "Safeguard_Execute refused sensitive endpoint: refused_path={Path} redirected_to=Safeguard_RetrieveCredential kind={Kind}",
+                normalizedPath,
+                sensitiveMatch.Entry.Kind);
+            return BuildSensitiveEndpointRedirectEnvelope(normalizedMethod, normalizedPath, sensitiveMatch);
+        }
+
         var requestedFormat = string.IsNullOrWhiteSpace(format) ? "json" : format.Trim().ToLowerInvariant();
         if (requestedFormat != "json" && requestedFormat != "csv")
             throw new McpException("Unsupported response format. Use 'json' or 'csv'.");
@@ -669,6 +713,19 @@ internal sealed class SafeguardApiTool(
         var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
         if (recipeNotice != null)
             notices.Add(recipeNotice);
+
+        // Heuristic backstop: a path NOT in the sensitive-credential catalog
+        // that returns a top-level (or first-array-element) field literally
+        // named Password / PrivateKey / ClientSecret / Secret / ApiKey /
+        // Passphrase / Code with a non-empty string value gets flagged for
+        // maintainers. Does not redact (the catalog is the contract); the
+        // notice surfaces the inventory gap so the next reader closes it.
+        if (format != "csv")
+        {
+            var heuristicNotice = BuildUncatalogedSensitiveShapeNotice(safeBody, method, path);
+            if (heuristicNotice != null)
+                notices.Add(heuristicNotice);
+        }
 
         // Determine effective limit/page for the paging block.
         int? effectiveLimit = null;
@@ -850,6 +907,125 @@ internal sealed class SafeguardApiTool(
             "Related workflow recipe: session-access-request (composite tools: "
             + "Safeguard_OpenAccessRequest, Safeguard_CloseAccessRequest).",
             suggestion);
+    }
+
+    // Field names whose presence in a top-level response body or first-array-element
+    // commonly indicates credential material. Match is literal and case-insensitive
+    // on the JSON property name; value must be a non-empty string. Numeric / null /
+    // boolean / object values do NOT trigger the notice (audit-log "Password event"
+    // records, schema descriptions that mention these names, etc. all skip naturally).
+    private static readonly string[] SensitiveFieldNames =
+    {
+        "Password", "PrivateKey", "ClientSecret", "Secret", "ApiKey", "Passphrase", "Code"
+    };
+
+    internal static Notice BuildUncatalogedSensitiveShapeNotice(string body, string method, string path)
+    {
+        if (string.IsNullOrWhiteSpace(body) || string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(path))
+            return null;
+        // Catalog wins: any cataloged sensitive endpoint is unreachable via Execute,
+        // so we never expect to see one here — but the guard above keeps the heuristic
+        // honest when paths drift.
+        if (SensitiveCredentialEndpoints.TryMatch(method, path) != null)
+            return null;
+
+        string firedField = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            JsonElement scope = root;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                var first = default(JsonElement);
+                var any = false;
+                foreach (var el in root.EnumerateArray()) { first = el; any = true; break; }
+                if (!any) return null;
+                scope = first;
+            }
+            if (scope.ValueKind != JsonValueKind.Object)
+                return null;
+
+            foreach (var name in SensitiveFieldNames)
+            {
+                if (!scope.TryGetProperty(name, out var prop)) continue;
+                if (prop.ValueKind != JsonValueKind.String) continue;
+                var v = prop.GetString();
+                if (string.IsNullOrEmpty(v)) continue;
+                firedField = name;
+                break;
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (firedField == null)
+            return null;
+
+        return new Notice(
+            NoticeKinds.UncatalogedSensitiveShape,
+            $"Response contains a field commonly used for credential material ('{firedField}') at an endpoint not "
+            + "in the sensitive-credential catalog. The catalog (Catalog/Resources/sensitive-credential-endpoints.json) "
+            + "is the authoritative boundary for Safeguard_RetrieveCredential; this notice flags a possible inventory gap. "
+            + "No redaction was applied.",
+            "If this endpoint does return live credential material, add it to the catalog so Safeguard_Execute "
+            + "refuses-and-redirects through Safeguard_RetrieveCredential instead of returning plaintext.");
+    }
+
+    internal static string BuildSensitiveEndpointRedirectEnvelope(
+        string method, string path, SensitiveCredentialEndpoints.Match match)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = false }))
+        {
+            writer.WriteStartObject();
+            writer.WritePropertyName("data");
+            writer.WriteStartObject();
+            writer.WriteString("error", "sensitive_endpoint_redirected");
+            writer.WriteString("message",
+                "This endpoint returns plaintext credential material and is not callable via Safeguard_Execute. "
+                + "Use Safeguard_RetrieveCredential, which returns a two-block MCP response that splits "
+                + "the assistant-audience metadata from the user-audience plaintext.");
+            writer.WriteString("refusedMethod", method);
+            writer.WriteString("refusedPath", path);
+
+            writer.WritePropertyName("next_call");
+            writer.WriteStartObject();
+            writer.WriteString("tool", "Safeguard_RetrieveCredential");
+            writer.WritePropertyName("arguments");
+            writer.WriteStartObject();
+            writer.WriteString("kind", match.Entry.Kind);
+            foreach (var kv in match.ExtractedArguments)
+            {
+                if (int.TryParse(kv.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+                    writer.WriteNumber(kv.Key, n);
+                else
+                    writer.WriteString(kv.Key, kv.Value);
+            }
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+
+            writer.WriteEndObject(); // data
+
+            writer.WritePropertyName("meta");
+            writer.WriteStartObject();
+            writer.WritePropertyName("notices");
+            writer.WriteStartArray();
+            writer.WriteStartObject();
+            writer.WriteString("kind", NoticeKinds.SensitiveEndpointRedirected);
+            writer.WriteString("message",
+                "Safeguard_Execute refused this endpoint because it returns plaintext credential material. "
+                + "Lift data.next_call into the suggested tool invocation.");
+            writer.WriteString("suggestion",
+                $"Call {match.Entry.Kind} via Safeguard_RetrieveCredential with the arguments in data.next_call.arguments.");
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+            writer.WriteEndObject(); // meta
+            writer.WriteEndObject(); // root
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     private string FormatErrorResponse(McpException ex, string method, string serviceName, string requestPath)
