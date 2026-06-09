@@ -224,24 +224,9 @@ public class Suite6_EdgeCasesTests
     }
 
     /// <summary>
-    /// Extracts the JSON body from an Execute response that may include prefixed notes
-    /// (e.g., "Note: Auto-applied limit=100..."). Finds the first '[' or '{' and returns from there.
+    /// Peels the <c>data</c> field off the Safeguard_Execute envelope so tests can assert
+    /// against the raw API body (array, scalar, or object) returned by the appliance.
     /// </summary>
     private static string ExtractJsonBody(string response)
-    {
-        var arrayStart = response.IndexOf('[');
-        var objectStart = response.IndexOf('{');
-
-        int start;
-        if (arrayStart >= 0 && objectStart >= 0)
-            start = Math.Min(arrayStart, objectStart);
-        else if (arrayStart >= 0)
-            start = arrayStart;
-        else if (objectStart >= 0)
-            start = objectStart;
-        else
-            return response; // No JSON found, let the caller fail with a clear error
-
-        return response[start..];
-    }
+        => EnvelopeTestHelpers.UnwrapData(response);
 }
