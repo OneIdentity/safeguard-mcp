@@ -444,63 +444,278 @@ internal static class OpenAccessRequestPlanner
     }
 
     /// <summary>
-    /// Formats the final response after a successful POST. Strips no
-    /// information — the raw <c>AccessRequest</c> payload is returned
-    /// verbatim — but prepends a single line of guidance pointing at the
-    /// correct follow-up endpoint for the request type so the agent can
-    /// complete the launch use-case without guessing.
+    /// AccessRequestState values that end the auto-approve wait early
+    /// because no further useful transition will happen within the 5-second
+    /// window. Mirrors
+    /// <c>Pangaea.Data.Transfer.V2.AccessRequestWorkflow.AccessRequestState</c>
+    /// — only the names that drive the outcome classification are listed;
+    /// all other states keep the loop spinning until the deadline.
     /// </summary>
-    public static string BuildSuccessSummary(
-        string accessRequestId,
-        string state,
-        string accessRequestType,
-        int accountId,
-        int assetId)
+    public static bool IsTerminalForAutoApproveWait(string state)
     {
-        var sb = new StringBuilder();
-        sb.Append("Access request created. Id=").Append(accessRequestId ?? "<unknown>")
-            .Append(", State=").Append(state ?? "<unknown>")
-            .Append(", AccountId=").Append(accountId.ToString(CultureInfo.InvariantCulture))
-            .Append(", AssetId=").Append(assetId.ToString(CultureInfo.InvariantCulture))
-            .Append(", Type=").Append(CanonicalAccessRequestType(accessRequestType))
-            .AppendLine(".");
+        if (string.IsNullOrEmpty(state))
+            return false;
+        switch (state)
+        {
+            case "RequestAvailable":
+            case "PendingTimeRequested":
+            case "Terminated":
+            case "Expired":
+            case "Closed":
+            case "Complete":
+                return true;
+            default:
+                return false;
+        }
+    }
 
-        sb.AppendLine("Next steps:");
-        sb.AppendLine("  1. Poll GET /v4/AccessRequests/" + (accessRequestId ?? "{id}") + " until State is Available/Approved (auto-approve policies skip Pending).");
+    /// <summary>
+    /// Pulls the appliance's clock from the <c>Date</c> response header so
+    /// <c>PendingTimeRequested</c> classification compares
+    /// <c>RequestedFor</c> against the same clock the appliance used. Falls
+    /// back to local UTC when the header is missing or unparseable; in that
+    /// fallback we accept the small clock-skew risk because the alternative
+    /// (refusing to classify) is worse.
+    /// </summary>
+    public static DateTimeOffset ParseApplianceNowOrLocal(IDictionary<string, string> headers)
+    {
+        if (headers != null && headers.TryGetValue("Date", out var dateHeader)
+            && DateTimeOffset.TryParse(dateHeader, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+        {
+            return parsed;
+        }
+        return DateTimeOffset.UtcNow;
+    }
 
+    /// <summary>
+    /// Reads <c>RequestedFor</c> (the V2 access-request payload's scheduled
+    /// time) from the raw appliance JSON. Returns <c>null</c> when the
+    /// property is absent or unparseable.
+    /// </summary>
+    public static DateTimeOffset? ExtractRequestedFor(string accessRequestJson)
+    {
+        if (string.IsNullOrWhiteSpace(accessRequestJson))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(accessRequestJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!doc.RootElement.TryGetProperty("RequestedFor", out var elem))
+                return null;
+            if (elem.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(elem.GetString(), CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+            {
+                return parsed;
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Builds the structured notice attached to the response envelope after
+    /// the brief auto-approve wait. Exactly one notice is produced; the
+    /// kind drives all next-step prose so the agent can branch without
+    /// parsing the access-request payload directly.
+    /// </summary>
+    public static Notice ClassifyAutoApproveOutcome(
+        string state,
+        string accessRequestId,
+        string accessRequestType,
+        string accessRequestJson,
+        DateTimeOffset applianceNow)
+    {
+        var id = string.IsNullOrEmpty(accessRequestId) ? "{id}" : accessRequestId;
         var canonical = CanonicalAccessRequestType(accessRequestType);
+
+        switch (state)
+        {
+            case "RequestAvailable":
+                return BuildReadyNotice(id, canonical);
+
+            case "PendingApproval":
+                return new Notice(
+                    NoticeKinds.PendingApprovalCheckBack,
+                    "Request " + id + " was submitted but requires human approval, "
+                        + "which can take hours. The tool did not keep waiting; the request "
+                        + "stays open on the appliance.",
+                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id
+                        + ". You can also call Safeguard_RetrieveCredential directly when you "
+                        + "believe the request is ready — it returns a clear error if not.");
+
+            case "PendingTimeRequested":
+            {
+                var scheduled = ExtractRequestedFor(accessRequestJson);
+                // We compare against the appliance clock (Date header). If the
+                // header was missing, ParseApplianceNowOrLocal fell back to
+                // local UTC, which can mis-classify near-future schedules by
+                // up to a few seconds — acceptable here because the message
+                // text names the scheduled time so the operator sees the truth.
+                var scheduledLabel = scheduled.HasValue
+                    ? scheduled.Value.ToString("yyyy-MM-ddTHH:mm:ssK", CultureInfo.InvariantCulture)
+                    : "a future time";
+                var inFuture = scheduled.HasValue && scheduled.Value > applianceNow;
+                var message = inFuture
+                    ? "Request " + id + " is approved but scheduled for " + scheduledLabel
+                        + ". It will become available then."
+                    : "Request " + id + " is approved with a scheduled start time of "
+                        + scheduledLabel + ".";
+                return new Notice(
+                    NoticeKinds.PendingScheduled,
+                    message,
+                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id
+                        + " once the scheduled time has passed.");
+            }
+
+            case "PendingAccountElevated":
+            case "PendingAccountRestored":
+            {
+                var verb = state == "PendingAccountElevated" ? "elevate" : "restore";
+                return new Notice(
+                    NoticeKinds.PendingAccountAction,
+                    "Request " + id + " is waiting for the appliance to " + verb
+                        + " the account. This usually completes in well under a minute.",
+                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id + ".");
+            }
+
+            case "Terminated":
+            case "Expired":
+            case "Closed":
+            case "Complete":
+                return new Notice(
+                    NoticeKinds.TerminatedBeforeReady,
+                    "Request " + id + " ended in state " + state
+                        + " before becoming available (denied, expired, or closed mid-flow).",
+                    "Submit a fresh request if access is still needed; this request id "
+                        + "cannot be reopened.");
+
+            default:
+                // Anything we don't recognise (including New, Approved without a
+                // sub-state, etc.) is conservatively treated as approval-pending
+                // so the agent gets a check-back call rather than silence.
+                return new Notice(
+                    NoticeKinds.PendingApprovalCheckBack,
+                    "Request " + id + " is in state " + (state ?? "<unknown>")
+                        + " and did not reach RequestAvailable within the auto-approve wait.",
+                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id + ".");
+        }
+    }
+
+    private static Notice BuildReadyNotice(string id, string canonical)
+    {
         switch (canonical)
         {
+            case "Password":
+                return new Notice(
+                    NoticeKinds.AutoApprovedReady,
+                    "Request " + id + " is available. The password is ready to retrieve.",
+                    "Call Safeguard_RetrieveCredential kind=\"access-request-password\" "
+                        + "accessRequestId=" + id + ". Do NOT call "
+                        + "/v4/AccessRequests/" + id + "/CheckOutPassword via Safeguard_Execute — "
+                        + "that path is refuse-and-redirected. POST /v4/AccessRequests/" + id
+                        + "/CheckIn via Safeguard_Execute when done.");
+            case "SshKey":
+                return new Notice(
+                    NoticeKinds.AutoApprovedReady,
+                    "Request " + id + " is available. The SSH private key is ready to retrieve.",
+                    "Call Safeguard_RetrieveCredential kind=\"access-request-ssh-key\" "
+                        + "accessRequestId=" + id + ". POST /v4/AccessRequests/" + id
+                        + "/CheckIn via Safeguard_Execute when done.");
+            case "ApiKey":
+                return new Notice(
+                    NoticeKinds.AutoApprovedReady,
+                    "Request " + id + " is available. The API key(s) are ready to retrieve.",
+                    "Call Safeguard_RetrieveCredential kind=\"access-request-api-key\" "
+                        + "accessRequestId=" + id + ". POST /v4/AccessRequests/" + id
+                        + "/CheckIn via Safeguard_Execute when done.");
+            case "File":
+                return new Notice(
+                    NoticeKinds.AutoApprovedReady,
+                    "Request " + id + " is available. The file content is ready to retrieve.",
+                    "Call Safeguard_RetrieveCredential kind=\"access-request-file\" "
+                        + "accessRequestId=" + id + ". POST /v4/AccessRequests/" + id
+                        + "/CheckIn via Safeguard_Execute when done.");
             case "RemoteDesktop":
             case "RemoteDesktopApplication":
             case "Ssh":
             case "Telnet":
-                sb.AppendLine("  2. POST /v4/AccessRequests/" + (accessRequestId ?? "{id}") + "/InitializeSession with body {} to get the connection artifact.");
-                sb.AppendLine("     RDP: response.RdpConnectionFile is the literal .rdp file content — save and run mstsc against it.");
-                sb.AppendLine("     SSH/Telnet: response.SshConnectionString / TelnetConnectionString carries the proxied connection.");
-                sb.AppendLine("  3. Do NOT hand-build the .rdp file; let the appliance generate it so policy-driven RDP settings stay in sync.");
-                break;
-            case "Password":
-                sb.AppendLine("  2. Retrieve the password via Safeguard_RetrieveCredential kind=\"access-request-password\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
-                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutPassword via Safeguard_Execute — that path is refuse-and-redirected.");
-                sb.AppendLine("     The plaintext is delivered in the user-audience block of the two-block response so audience-honoring hosts can keep it out of the LLM transcript.");
-                break;
-            case "SshKey":
-                sb.AppendLine("  2. Retrieve the SSH private key via Safeguard_RetrieveCredential kind=\"access-request-ssh-key\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
-                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutSshKey via Safeguard_Execute — that path is refuse-and-redirected.");
-                break;
-            case "ApiKey":
-                sb.AppendLine("  2. Retrieve the API key(s) via Safeguard_RetrieveCredential kind=\"access-request-api-key\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
-                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutApiKeys via Safeguard_Execute — that path is refuse-and-redirected.");
-                break;
-            case "File":
-                sb.AppendLine("  2. Retrieve the file content via Safeguard_RetrieveCredential kind=\"access-request-file\" accessRequestId=" + (accessRequestId ?? "{id}") + ".");
-                sb.AppendLine("     Do NOT call /v4/AccessRequests/{id}/CheckOutFile via Safeguard_Execute — that path is refuse-and-redirected.");
-                break;
+                return new Notice(
+                    NoticeKinds.AutoApprovedReady,
+                    "Request " + id + " is available. The session can be initialized now.",
+                    "POST /v4/AccessRequests/" + id + "/InitializeSession via Safeguard_Execute "
+                        + "(body {}) to get the connection artifact (RDP file / SSH or Telnet "
+                        + "connection string). Do NOT hand-build the .rdp file. POST "
+                        + "/v4/AccessRequests/" + id + "/CheckIn via Safeguard_Execute when done.");
+            default:
+                return new Notice(
+                    NoticeKinds.AutoApprovedReady,
+                    "Request " + id + " is available.",
+                    "Continue per the access-request-type follow-up: credential types use "
+                        + "Safeguard_RetrieveCredential, session types use "
+                        + "POST /v4/AccessRequests/" + id + "/InitializeSession via Safeguard_Execute.");
         }
-        sb.Append("  ").Append(canonical == "Password" || canonical == "SshKey" || canonical == "ApiKey" || canonical == "File" ? "3" : "4")
-            .Append(". POST /v4/AccessRequests/").Append(accessRequestId ?? "{id}").Append("/CheckIn when done.");
-        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Renders the structured envelope returned by
+    /// <c>Safeguard_OpenAccessRequest</c>:
+    /// <c>{ "data": &lt;access-request JSON&gt;, "meta": { "notices": [&lt;one notice&gt;] } }</c>.
+    /// The <c>data</c> field carries the appliance's raw payload so the
+    /// agent reads State / Id / RequestedFor without parsing the notice.
+    /// </summary>
+    public static string BuildOpenAccessRequestEnvelope(string accessRequestJson, Notice notice)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = false }))
+        {
+            writer.WriteStartObject();
+
+            writer.WritePropertyName("data");
+            WriteRawDataValue(writer, accessRequestJson);
+
+            writer.WritePropertyName("meta");
+            writer.WriteStartObject();
+            writer.WritePropertyName("notices");
+            writer.WriteStartArray();
+            if (notice != null)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("kind", notice.Kind);
+                writer.WriteString("message", notice.Message ?? string.Empty);
+                if (!string.IsNullOrWhiteSpace(notice.Suggestion))
+                    writer.WriteString("suggestion", notice.Suggestion);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static void WriteRawDataValue(Utf8JsonWriter writer, string body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            writer.WriteNullValue();
+            return;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            document.RootElement.WriteTo(writer);
+        }
+        catch (JsonException)
+        {
+            writer.WriteStringValue(body);
+        }
     }
 
     /// <summary>

@@ -509,7 +509,18 @@ internal sealed class SafeguardApiTool
             .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
             .AppendLine("  Setting a known value: PUT /v4/AssetAccounts/{id}/Password (body = value)")
             .AppendLine("  Do NOT mint passwords client-side (Get-Random, pwgen, LLM) - bypasses the password rule and leaks plaintext.")
-            .AppendLine("  See workflow recipe: set-initial-account-password.");
+            .AppendLine("  See workflow recipe: set-initial-account-password.")
+            .AppendLine()
+            .AppendLine("Access requests:")
+            .AppendLine("  Safeguard_OpenAccessRequest submits the request and briefly waits up to 5 seconds for auto-approval,")
+            .AppendLine("  then returns a structured envelope: data = the access-request JSON, meta.notices = exactly one notice")
+            .AppendLine("  describing the outcome. Notice kinds: auto_approved_ready (call Safeguard_RetrieveCredential or POST")
+            .AppendLine("  .../InitializeSession now), pending_approval_check_back (human approval needed; can take hours, check")
+            .AppendLine("  back via Safeguard_Execute GET /v4/AccessRequests/{id}), pending_scheduled (approved but waiting for")
+            .AppendLine("  RequestedFor), pending_account_action (appliance is elevating/restoring; usually under a minute),")
+            .AppendLine("  terminated_before_ready (Terminated/Expired/Closed/Complete — submit a fresh request if applicable).")
+            .AppendLine("  Read data.State directly; do not parse the notice text. The tool never waits longer than 5 seconds;")
+            .AppendLine("  for longer waits, the agent polls Safeguard_Execute GET /v4/AccessRequests/{id} itself.");
 
         if (string.IsNullOrWhiteSpace(path))
             return sb.ToString().TrimEnd();
