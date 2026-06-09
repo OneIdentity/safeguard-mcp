@@ -183,8 +183,8 @@ internal sealed class SafeguardApiTool(
             sb.Append(ep.Service.PadRight(13));
             sb.Append(ep.Path);
             if (ep.HasBody) sb.Append("  [body]");
-            if (!string.IsNullOrEmpty(ep.Params)) sb.Append("  params: ").Append(ep.Params);
             sb.Append("  -- ").AppendLine(ep.Summary);
+            AppendParameterDetails(sb, ep);
             shown++;
         }
 
@@ -200,13 +200,14 @@ internal sealed class SafeguardApiTool(
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("Execute any Safeguard API endpoint. The service (Core, Appliance, Notification) "
         + "is automatically determined from the endpoint path. "
-        + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format.")]
+        + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format. "
+        + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). The correct service is auto-detected from the path.")] string path,
         [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
-        [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets).")]
+        [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets). GET-only — non-GET methods must use 'json'.")]
         string format = "json",
         CancellationToken ct = default)
         => await DispatchAsync(server, method, path, query, body, format, ct);
@@ -713,6 +714,105 @@ internal sealed class SafeguardApiTool(
             + "Per-id actions (e.g. ChangePassword, CheckPassword, Disable, Enable) have NO batch counterpart — "
             + "call them in parallel by id from the client.";
     }
+
+    // Renders the parameter contract for one endpoint underneath its header line. Preferred
+    // parameters (the audit-endpoint scoping params marked "(Preferred over 'filter')" in the
+    // controller XML docs) are listed first with a "[preferred]" tag and short description.
+    // Path parameters appear separately so the agent doesn't try to send them as query strings.
+    // The Defaults: line is built straight from the preferred parameter descriptions (e.g. the
+    // "Default 1 day before endDate" sentence on startDate) — no hand-maintained hint table.
+    internal static void AppendParameterDetails(StringBuilder sb, ApiEndpoint endpoint)
+    {
+        var infos = endpoint.ParamInfos;
+        if (infos == null || infos.Length == 0)
+            return;
+
+        var preferred = new List<ParamInfo>();
+        var otherQuery = new List<ParamInfo>();
+        var pathParams = new List<ParamInfo>();
+
+        foreach (var p in infos)
+        {
+            if (string.Equals(p.In, "path", StringComparison.OrdinalIgnoreCase))
+                pathParams.Add(p);
+            else if (p.PreferredOverFilter)
+                preferred.Add(p);
+            else
+                otherQuery.Add(p);
+        }
+
+        if (preferred.Count > 0)
+        {
+            sb.Append("  Preferred params: ");
+            for (int i = 0; i < preferred.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(preferred[i].Name);
+                if (!string.IsNullOrEmpty(preferred[i].Type))
+                    sb.Append(" (").Append(preferred[i].Type).Append(')');
+                sb.Append(" [preferred]");
+            }
+            sb.AppendLine();
+        }
+
+        if (otherQuery.Count > 0)
+        {
+            sb.Append("  Other params:     ");
+            for (int i = 0; i < otherQuery.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(otherQuery[i].Name);
+                if (otherQuery[i].Required)
+                    sb.Append('*');
+            }
+            sb.AppendLine();
+        }
+
+        if (pathParams.Count > 0)
+        {
+            sb.Append("  Path params:      ");
+            for (int i = 0; i < pathParams.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append('{').Append(pathParams[i].Name).Append('}');
+            }
+            sb.AppendLine();
+        }
+
+        var defaults = BuildDefaultsLine(preferred);
+        if (defaults != null)
+            sb.Append("  Defaults:         ").AppendLine(defaults);
+
+        foreach (var p in preferred)
+        {
+            if (!string.IsNullOrWhiteSpace(p.Description))
+                sb.Append("    - ").Append(p.Name).Append(": ").AppendLine(p.Description);
+        }
+    }
+
+    private static string BuildDefaultsLine(List<ParamInfo> preferred)
+    {
+        var parts = new List<string>();
+        foreach (var p in preferred)
+        {
+            if (string.IsNullOrWhiteSpace(p.Description))
+                continue;
+            // Extract any "Default ..." sentence from the controller XML doc, e.g.
+            // "Log time range start. Default 1 day before endDate. (Preferred over 'filter')."
+            var match = DefaultSentenceRegex.Match(p.Description);
+            if (match.Success)
+            {
+                var text = match.Groups[1].Value.Trim().TrimEnd('.');
+                parts.Add($"{p.Name} = {text}");
+            }
+        }
+        return parts.Count == 0 ? null : string.Join("; ", parts);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex DefaultSentenceRegex =
+        new(@"Default\s+([^.]+)\.",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static int ScoreMatch(IReadOnlyList<string> terms, string path, string summary)
     {

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SafeguardMcp.Tools;
 
@@ -106,17 +107,26 @@ public class CatalogLoader
                     : string.Empty;
                 var hasBody = operation.TryGetProperty("requestBody", out _);
 
-                var paramNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                AddQueryParameterNames(pathItem, paramNames);
-                AddQueryParameterNames(operation, paramNames);
+                var paramInfos = new List<ParamInfo>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                // Operation-level parameters take precedence over path-level when names collide.
+                CollectParameters(operation, paramInfos, seen);
+                CollectParameters(pathItem, paramInfos, seen);
+
+                var queryParamNames = paramInfos
+                    .Where(p => string.Equals(p.In, "query", StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p.Name)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase);
 
                 endpoints.Add(new ApiEndpoint(
                     service,
                     method,
                     path,
                     summary,
-                    string.Join(", ", paramNames.OrderBy(name => name, StringComparer.OrdinalIgnoreCase)),
-                    hasBody));
+                    string.Join(", ", queryParamNames),
+                    hasBody,
+                    paramInfos.ToArray()));
             }
         }
     }
@@ -160,21 +170,78 @@ public class CatalogLoader
 
     private static bool IsOperationMethod(string method) => method is "GET" or "POST" or "PUT" or "PATCH" or "DELETE";
 
-    private static void AddQueryParameterNames(JsonElement container, HashSet<string> paramNames)
+    // Matches the controller-XML-doc preference marker as it appears in swagger descriptions.
+    // Both quoted forms — `(Preferred over 'filter')` (single-quoted, observed on startDate/endDate)
+    // and `(Preferred over filter)` (unquoted, observed on userId) — are accepted. Verified on
+    // /service/core/swagger/v4/swagger.json from a live appliance.
+    private static readonly Regex PreferredOverFilterRegex = new(
+        @"\(\s*Preferred\s+over\s+['""]?filter['""]?\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    internal static bool IsPreferredOverFilter(string description)
+        => !string.IsNullOrEmpty(description) && PreferredOverFilterRegex.IsMatch(description);
+
+    internal static void CollectParameters(JsonElement container, List<ParamInfo> paramInfos, HashSet<string> seen)
     {
         if (!container.TryGetProperty("parameters", out var parameters) || parameters.ValueKind != JsonValueKind.Array)
             return;
 
         foreach (var param in parameters.EnumerateArray())
         {
-            if (param.TryGetProperty("name", out var name)
-                && param.TryGetProperty("in", out var location)
-                && string.Equals(location.GetString(), "query", StringComparison.OrdinalIgnoreCase))
+            if (!param.TryGetProperty("name", out var nameProp))
+                continue;
+            var name = nameProp.GetString();
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var location = param.TryGetProperty("in", out var inProp) ? inProp.GetString() ?? string.Empty : string.Empty;
+            if (!string.Equals(location, "query", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(location, "path", StringComparison.OrdinalIgnoreCase))
             {
-                var paramName = name.GetString();
-                if (!string.IsNullOrWhiteSpace(paramName))
-                    paramNames.Add(paramName);
+                continue;
             }
+
+            // Operation-level params are added first; skip the same name on the path-level pass.
+            if (!seen.Add(name))
+                continue;
+
+            var description = param.TryGetProperty("description", out var descProp)
+                ? descProp.GetString() ?? string.Empty
+                : string.Empty;
+
+            var required = param.TryGetProperty("required", out var reqProp)
+                && reqProp.ValueKind == JsonValueKind.True;
+
+            var type = string.Empty;
+            if (param.TryGetProperty("schema", out var schemaProp))
+            {
+                if (schemaProp.TryGetProperty("type", out var typeProp) && typeProp.ValueKind == JsonValueKind.String)
+                {
+                    type = typeProp.GetString() ?? string.Empty;
+                    if (string.Equals(type, "array", StringComparison.OrdinalIgnoreCase)
+                        && schemaProp.TryGetProperty("items", out var itemsProp)
+                        && itemsProp.TryGetProperty("type", out var itemsTypeProp)
+                        && itemsTypeProp.ValueKind == JsonValueKind.String)
+                    {
+                        type = $"array<{itemsTypeProp.GetString()}>";
+                    }
+                }
+                else if (schemaProp.TryGetProperty("$ref", out var refProp))
+                {
+                    var refPath = refProp.GetString();
+                    const string prefix = "#/components/schemas/";
+                    if (refPath != null && refPath.StartsWith(prefix, StringComparison.Ordinal))
+                        type = refPath[prefix.Length..];
+                }
+            }
+
+            paramInfos.Add(new ParamInfo(
+                name,
+                location.ToLowerInvariant(),
+                type,
+                description,
+                required,
+                IsPreferredOverFilter(description)));
         }
     }
 

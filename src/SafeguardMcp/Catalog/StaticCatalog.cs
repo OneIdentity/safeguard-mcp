@@ -35,7 +35,8 @@ public static class SafeguardCatalog
                     Path: parts[2],
                     Summary: parts[3],
                     Params: "",
-                    HasBody: false));
+                    HasBody: false,
+                    ParamInfos: Array.Empty<ParamInfo>()));
             }
         }
 
