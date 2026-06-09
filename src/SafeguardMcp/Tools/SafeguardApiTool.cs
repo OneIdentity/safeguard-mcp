@@ -278,7 +278,60 @@ internal sealed class SafeguardApiTool(
         else
             sb.AppendLine().Append(responseHeading).AppendLine(":").AppendLine("  No response schema available.");
 
+        AppendPropertyPaths(sb, responseSchema, requestSchema);
+
         return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendPropertyPaths(StringBuilder sb, ApiSchema? responseSchema, ApiSchema? requestSchema)
+    {
+        // Prefer the response graph (matches `fields=` and the appliance's serializer ~95%);
+        // fall back to the request body graph for write-only endpoints.
+        var primary = responseSchema?.Paths;
+        var primaryHeading = "Field paths (for fields=; ~90%+ also valid for filter/orderby)";
+        if (primary == null || primary.Length == 0)
+        {
+            primary = requestSchema?.Paths;
+            primaryHeading = "Body field paths (for request-body construction)";
+        }
+        if (primary == null || primary.Length == 0)
+            return;
+
+        var fieldPaths = primary.Where(p => !p.IsSynthetic).ToArray();
+        var syntheticPaths = primary.Where(p => p.IsSynthetic).ToArray();
+
+        sb.AppendLine().Append("Property paths:").AppendLine();
+        sb.Append("  ").Append(primaryHeading).AppendLine(":");
+        if (fieldPaths.Length == 0)
+        {
+            sb.AppendLine("    (none)");
+        }
+        else
+        {
+            foreach (var p in fieldPaths)
+                sb.Append("    ").Append(p.Path).Append("  ").AppendLine(p.Type);
+        }
+
+        if (syntheticPaths.Length > 0)
+        {
+            sb.AppendLine("  Synthetic count paths (orderby/filter only):");
+            foreach (var p in syntheticPaths)
+                sb.Append("    ").Append(p.Path).Append("  ").AppendLine(p.Type);
+        }
+
+        sb.AppendLine("  Notes:")
+            .AppendLine("    - Paths are case-insensitive.")
+            .AppendLine("    - filter/orderby may use flattened forms (e.g. Account.AssetName) where")
+            .AppendLine("      fields walks the full graph (Account.Asset.Name). When the appliance")
+            .AppendLine("      returns 70001 / 70009, try the flattened sibling at the parent level.")
+            .AppendLine("    - Enum properties cannot be sorted in the pre-filter (HTTP 70019); they")
+            .AppendLine("      sort post-fetch only.");
+
+        if (primary.Length >= 500)
+        {
+            sb.AppendLine("    - Path closure was capped at 500 entries; deeply nested branches may")
+                .AppendLine("      not appear above. Use Safeguard_Execute and inspect a sample row.");
+        }
     }
 
     private bool HasRequestBody(string method, string service, string path)

@@ -392,4 +392,124 @@ public class SchemaParsingTests
         Assert.Equal("AccessRequestType", prop.EnumName);
         Assert.Empty(prop.NestedFields);
     }
+
+    [Fact]
+    public void ParseSwagger_PathsIncludeNestedAndSyntheticCount()
+    {
+        // Verifies the property-path closure on the response schema:
+        // - top-level Id, AccountId, AccessRequestType (enum)
+        // - nested Account.Id, Account.Name, Account.Asset.Id, Account.Asset.Name
+        // - collection ScopeItems (array<object<ScopeItem>>) emits a synthetic ScopeItems.Count
+        const string swagger = """
+        {
+          "components": {
+            "schemas": {
+              "AccessRequestType": {"type":"string","enum":["Password","Ssh"]},
+              "Asset": {
+                "type": "object",
+                "properties": {
+                  "Id": {"type":"integer"},
+                  "Name": {"type":"string"}
+                }
+              },
+              "Account": {
+                "type": "object",
+                "properties": {
+                  "Id": {"type":"integer"},
+                  "Name": {"type":"string"},
+                  "Asset": {"$ref": "#/components/schemas/Asset"}
+                }
+              },
+              "ScopeItem": {
+                "type": "object",
+                "properties": {"Id":{"type":"integer"}}
+              },
+              "AccessRequest": {
+                "type": "object",
+                "properties": {
+                  "Id": {"type":"integer"},
+                  "AccountId": {"type":"integer"},
+                  "AccessRequestType": {"$ref":"#/components/schemas/AccessRequestType"},
+                  "Account": {"$ref":"#/components/schemas/Account"},
+                  "ScopeItems": {"type":"array","items":{"$ref":"#/components/schemas/ScopeItem"}}
+                }
+              }
+            }
+          },
+          "paths": {
+            "/v4/AccessRequests": {
+              "get": {
+                "responses": {"200":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/AccessRequest"}}}}}
+              }
+            }
+          }
+        }
+        """;
+        var schemas = ParseSwaggerForTests(swagger);
+        var resp = schemas["RESPONSE GET Core /v4/AccessRequests"];
+
+        var pathLookup = resp.Paths.ToDictionary(p => p.Path, p => p, StringComparer.Ordinal);
+
+        Assert.Contains("Id", pathLookup.Keys);
+        Assert.Contains("AccountId", pathLookup.Keys);
+
+        // Nested path through a $ref child (full-graph form, what `fields=` walks).
+        Assert.Contains("Account.Id", pathLookup.Keys);
+        Assert.Contains("Account.Name", pathLookup.Keys);
+        Assert.Contains("Account.Asset.Id", pathLookup.Keys);
+        Assert.Contains("Account.Asset.Name", pathLookup.Keys);
+
+        // Enum leaf carries EnumName.
+        var typePath = pathLookup["AccessRequestType"];
+        Assert.Equal("enum<AccessRequestType>", typePath.Type);
+        Assert.Equal("AccessRequestType", typePath.EnumName);
+
+        // Collection emits IsCollection + a synthetic .Count entry.
+        var collection = pathLookup["ScopeItems"];
+        Assert.True(collection.IsCollection);
+        Assert.False(collection.IsSynthetic);
+        var count = pathLookup["ScopeItems.Count"];
+        Assert.True(count.IsSynthetic);
+        Assert.Equal("integer", count.Type);
+
+        // Nested members of the collection are also reachable via the swagger graph.
+        Assert.Contains("ScopeItems.Id", pathLookup.Keys);
+    }
+
+    [Fact]
+    public void ParseSwagger_PathsCycleGuardStopsRunawayRecursion()
+    {
+        // Self-referencing schema; cycle guard caps recursion at 5 levels of the same type.
+        const string swagger = """
+        {
+          "components": {
+            "schemas": {
+              "Node": {
+                "type": "object",
+                "properties": {
+                  "Name": {"type":"string"},
+                  "Child": {"$ref":"#/components/schemas/Node"}
+                }
+              }
+            }
+          },
+          "paths": {
+            "/v4/Tree": {
+              "get": {
+                "responses": {"200":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Node"}}}}}
+              }
+            }
+          }
+        }
+        """;
+        var schemas = ParseSwaggerForTests(swagger);
+        var paths = schemas["RESPONSE GET Core /v4/Tree"].Paths
+            .Where(p => p.Path.EndsWith(".Name", StringComparison.Ordinal) || p.Path == "Name")
+            .Select(p => p.Path)
+            .ToArray();
+        // Expect Name plus Child(.Child)*.Name capped at the 5-deep type-stack rule.
+        Assert.True(paths.Length <= 6, $"Cycle guard failed: {paths.Length} Name paths emitted");
+        Assert.Contains("Name", paths);
+        Assert.Contains("Child.Name", paths);
+    }
 }
