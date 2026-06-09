@@ -151,6 +151,110 @@ internal static class ApiToolHelpers
         }
     }
 
+    internal enum TruncationOutcome
+    {
+        /// <summary>Body was not a JSON array; caller should leave it intact.</summary>
+        NotArray,
+        /// <summary>Array fit under both budgets unchanged.</summary>
+        WithinBudget,
+        /// <summary>Records were dropped (either by maxItems or by maxBytes); JSON remains valid.</summary>
+        RecordsDropped,
+        /// <summary>A single record alone exceeds maxBytes; returned intact (no mid-record cut).</summary>
+        RecordTooLarge
+    }
+
+    /// <summary>
+    /// Whole-record-boundary truncation for JSON-array responses, enforcing both an
+    /// item-count budget (<paramref name="maxItems"/>) and a byte budget (<paramref name="maxBytes"/>)
+    /// while never producing a mid-object cut. The JSON output is always a valid array.
+    /// </summary>
+    /// <param name="body">Raw JSON response body.</param>
+    /// <param name="maxItems">Hard cap on the number of items kept.</param>
+    /// <param name="maxBytes">Soft cap on the serialized byte length; records are dropped from the tail until the budget is met (with a one-record floor).</param>
+    /// <param name="resultBody">When the outcome is anything other than <see cref="TruncationOutcome.NotArray"/>, the (possibly trimmed) JSON array body. Otherwise null.</param>
+    /// <param name="totalItems">Total number of items the upstream response contained.</param>
+    /// <param name="keptItems">Number of items present in <paramref name="resultBody"/> after truncation.</param>
+    internal static TruncationOutcome TryTruncateJsonArrayWithBudget(
+        string body,
+        int maxItems,
+        int maxBytes,
+        out string resultBody,
+        out int totalItems,
+        out int keptItems)
+    {
+        resultBody = null;
+        totalItems = 0;
+        keptItems = 0;
+
+        if (string.IsNullOrWhiteSpace(body))
+            return TruncationOutcome.NotArray;
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            return TruncationOutcome.NotArray;
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return TruncationOutcome.NotArray;
+
+            var items = new List<JsonElement>();
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                totalItems++;
+                items.Add(item.Clone());
+            }
+
+            var droppedByItemCap = false;
+            if (items.Count > maxItems)
+            {
+                items.RemoveRange(maxItems, items.Count - maxItems);
+                droppedByItemCap = true;
+            }
+
+            // Drop from the tail until the serialized array fits the byte budget.
+            // Always keep at least one record so we never emit "[]" when the upstream had data.
+            var droppedByByteCap = false;
+            string serialized = SerializeArray(items);
+            while (items.Count > 1 && serialized.Length > maxBytes)
+            {
+                items.RemoveAt(items.Count - 1);
+                droppedByByteCap = true;
+                serialized = SerializeArray(items);
+            }
+
+            keptItems = items.Count;
+            resultBody = serialized;
+
+            if (items.Count == 1 && serialized.Length > maxBytes)
+                return TruncationOutcome.RecordTooLarge;
+
+            if (droppedByItemCap || droppedByByteCap)
+                return TruncationOutcome.RecordsDropped;
+
+            return TruncationOutcome.WithinBudget;
+        }
+    }
+
+    private static string SerializeArray(List<JsonElement> items)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var item in items)
+                item.WriteTo(writer);
+            writer.WriteEndArray();
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
     // --- Error parsing ---
 
     internal static int ExtractStatusCode(string message)
