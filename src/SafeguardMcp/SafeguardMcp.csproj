@@ -45,6 +45,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Workflows\*.md" />
     <EmbeddedResource Include="Catalog\Resources\*.md" />
+    <EmbeddedResource Include="Catalog\Resources\*.json" />
     <EmbeddedResource Include="Catalog\StaticCatalog.txt" />
   </ItemGroup>
 

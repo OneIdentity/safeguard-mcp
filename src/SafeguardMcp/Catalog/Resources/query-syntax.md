@@ -20,14 +20,41 @@ All GET collection endpoints support these query parameters passed via the `quer
 | ew | Ends with (case-sensitive) | `filter=Name ew '-prod'` |
 | iew | Ends with (case-insensitive) | `filter=Name iew '-PROD'` |
 | in | In list | `filter=Id in [1,2,3]` |
-| not_in | Not in list | `filter=Id not_in [4,5,6]` |
+
+> **Operators are case-insensitive** (`EQ`, `Eq`, `eq` all work) but **string literals are case-sensitive** —
+> `filter=AccessRequestType eq 'RemoteDesktop'` matches; `'remotedesktop'` does not. For case-insensitive
+> string matching use `ieq` / `icontains` / `isw` / `iew`.
+>
+> See `Safeguard_Enum` for the exact spelling of enum-typed values used with `eq` / `ne` / `in`.
 
 ## Logical Operators
 
 - `and` — both conditions must match: `filter=Disabled eq false and Name contains 'admin'`
 - `or` — either condition: `filter=State eq 'Available' or State eq 'Pending'`
-- `not` — negate: `filter=not (Disabled eq true)`
+- `not` — negate (unary): `filter=not (Disabled eq true)`
 - Parentheses for grouping: `filter=(Name sw 'DC') and (Platform.DisplayName eq 'Windows')`
+
+### Negating a list membership
+
+There is **no `not_in` operator**. Combine the unary `not` with `in`:
+
+- `filter=not (Id in [4,5,6])` ✅
+- `filter=Id not_in [4,5,6]` ❌ — parses as an unknown identifier (HTTP 400, code 70009).
+- `filter=Id not in [4,5,6]` ❌ — space-separated form is not recognized.
+
+### Null comparisons
+
+`null` is a literal. Use it with `eq` / `ne` to test for missing values:
+
+- `filter=Description eq null`
+- `filter=Description ne null`
+
+### Synthetic `.Count` on collections
+
+To-many relationships expose a synthetic `<Collection>.Count` for `filter` and `orderby` (not `fields`):
+
+- `filter=ScopeItems.Count gt 0`
+- `orderby=-Members.Count`
 
 ## Nested Properties (Relationships)
 
