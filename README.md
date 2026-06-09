@@ -118,6 +118,19 @@ HTTP mode, holds no long-lived secrets, and never retains a Safeguard
 token. Set `BRIDGE_DISABLED=true` if you front the deployment with a
 separate OAuth gateway.
 
+```jsonc
+{
+  "mcpServers": {
+    "safeguard": {
+      "url": "https://mcp.corp.example.com/mcp"
+    }
+  }
+}
+```
+
+No `Authorization` header — the client discovers the bridge from
+`/.well-known/oauth-protected-resource` and runs the PKCE flow itself.
+
 **Paste-bearer setup (manual fallback)** — only for older MCP clients
 that don't yet implement OAuth discovery, or for scripts/CI. Each user
 acquires a Safeguard user token locally and drops it into their MCP
