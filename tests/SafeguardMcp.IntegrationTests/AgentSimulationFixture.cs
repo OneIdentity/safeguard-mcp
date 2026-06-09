@@ -175,8 +175,16 @@ public class AgentSimulationFixture : IAsyncLifetime
         => ApiTool.Safeguard_Schema(path: path, method: method);
 
     /// <summary>Calls Safeguard_Execute — executes an API call.</summary>
+    /// <summary>
+    /// Calls <c>Safeguard_Execute</c> and returns the raw API body (peeled out of the
+    /// response envelope when one is present). Tests that need to assert against the
+    /// envelope itself should call <c>ApiTool.Safeguard_Execute</c> directly.
+    /// </summary>
     public async Task<string> ExecuteAsync(string method, string path, string query = null, string body = null, string format = "json")
-        => await ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
+    {
+        var raw = await ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
+        return EnvelopeTestHelpers.UnwrapData(raw);
+    }
 
     /// <summary>Calls Safeguard_QueryHelp — gets query syntax help.</summary>
     public string QueryHelp(string path = null)
