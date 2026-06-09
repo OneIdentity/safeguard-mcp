@@ -24,6 +24,16 @@ internal static class NoticeKinds
     internal const string WorkflowRecipeSuggested = "workflow_recipe_suggested";
     internal const string SensitiveEndpointRedirected = "sensitive_endpoint_redirected";
     internal const string UncatalogedSensitiveShape = "uncataloged_sensitive_shape";
+
+    // Auto-approve-wait outcomes attached by Safeguard_OpenAccessRequest after
+    // the brief post-submission wait. Exactly one of these accompanies every
+    // successful submission so the agent can branch without parsing the
+    // access-request payload's State field directly.
+    internal const string AutoApprovedReady = "auto_approved_ready";
+    internal const string PendingApprovalCheckBack = "pending_approval_check_back";
+    internal const string PendingScheduled = "pending_scheduled";
+    internal const string PendingAccountAction = "pending_account_action";
+    internal const string TerminatedBeforeReady = "terminated_before_ready";
 }
 
 internal sealed class Notice

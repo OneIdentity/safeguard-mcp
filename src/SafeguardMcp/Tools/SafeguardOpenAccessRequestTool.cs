@@ -25,9 +25,14 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
         + "(appliance error 90408 'not authorized to use this request type') before any write hits the "
         + "appliance, so the agent never sees the misleading 'not authorized' message when the real "
         + "fault is that the policy is scoped to a different asset. "
-        + "On success returns the new AccessRequest Id and State, plus a typed next-step pointer "
-        + "(InitializeSession for session types, CheckOutPassword/CheckOutSshKey/etc. for credential "
-        + "types). Does NOT auto-launch sessions or echo credentials. "
+        + "After submission, this tool briefly waits up to 5 seconds for auto-approval so the common "
+        + "case (single-approver-self, no-approval, emergency) returns a usable request in one call; "
+        + "for policies requiring human approval it returns immediately with guidance to check back "
+        + "later (human approval can take hours). "
+        + "Returns a structured envelope { data: <access-request JSON>, meta: { notices: [<one notice>] } }; "
+        + "the notice kind names the next call (auto_approved_ready, pending_approval_check_back, "
+        + "pending_scheduled, pending_account_action, or terminated_before_ready). "
+        + "Does NOT auto-launch sessions or echo credentials. "
         + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to discover what you can "
         + "request before calling this tool.")]
     public async Task<string> Safeguard_OpenAccessRequest(
@@ -135,16 +140,75 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
                 + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to re-check the live state.");
         }
 
-        var (id, state) = OpenAccessRequestPlanner.ExtractIdAndState(postResponse.Body);
-        var summary = OpenAccessRequestPlanner.BuildSuccessSummary(
-            id, state, canonicalType, accountId, resolvedAssetId);
+        var (initialId, initialState) = OpenAccessRequestPlanner.ExtractIdAndState(postResponse.Body);
 
-        var sb = new StringBuilder();
-        sb.AppendLine(summary);
-        sb.AppendLine();
-        sb.AppendLine("AccessRequest body:");
-        sb.Append(postResponse.Body ?? string.Empty);
-        return sb.ToString();
+        var (finalBody, finalState, finalHeaders) = await WaitForAutoApproveAsync(
+            initialId, postResponse.Body, initialState, postResponse.Headers, ct);
+
+        var applianceNow = OpenAccessRequestPlanner.ParseApplianceNowOrLocal(finalHeaders);
+        var notice = OpenAccessRequestPlanner.ClassifyAutoApproveOutcome(
+            finalState, initialId, canonicalType, finalBody, applianceNow);
+
+        return OpenAccessRequestPlanner.BuildOpenAccessRequestEnvelope(finalBody, notice);
+    }
+
+    // Polls GET /v4/AccessRequests/{id} every 250 ms for a hard 5-second
+    // cap. No back-off, no caller-tunable cadence, no parameter — see C.6
+    // deep dive in the triage plan: the point is "wait briefly for
+    // auto-approve, then stop." Worst case is ~20 GET probes per
+    // submission. Stops on the first terminal-or-actionable state per
+    // OpenAccessRequestPlanner.IsTerminalForAutoApproveWait.
+    private async Task<(string Body, string State, IDictionary<string, string> Headers)> WaitForAutoApproveAsync(
+        string accessRequestId,
+        string initialBody,
+        string initialState,
+        IDictionary<string, string> initialHeaders,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(accessRequestId)
+            || OpenAccessRequestPlanner.IsTerminalForAutoApproveWait(initialState ?? string.Empty))
+        {
+            return (initialBody, initialState, initialHeaders);
+        }
+
+        var body = initialBody;
+        var state = initialState;
+        var headers = initialHeaders;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        var relativeUrl = "AccessRequests/" + accessRequestId;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            FullResponse poll;
+            try
+            {
+                poll = await SafeguardInvoker.InvokeAsync(
+                    session, Service.Core, "GET", relativeUrl,
+                    body: null, parameters: null, ct);
+            }
+            catch (McpException)
+            {
+                // GET probe failed mid-wait — stop and surface what we have.
+                break;
+            }
+
+            body = poll.Body;
+            headers = poll.Headers;
+            var (_, polled) = OpenAccessRequestPlanner.ExtractIdAndState(body);
+            if (!string.IsNullOrEmpty(polled))
+                state = polled;
+            if (OpenAccessRequestPlanner.IsTerminalForAutoApproveWait(state ?? string.Empty))
+                break;
+        }
+        return (body, state, headers);
     }
 
     private static string BuildErrorMessage(string header, List<string> errors)
