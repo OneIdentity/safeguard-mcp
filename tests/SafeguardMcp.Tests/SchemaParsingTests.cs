@@ -320,4 +320,76 @@ public class SchemaParsingTests
         Assert.Equal("Count", inner.NestedProperties[1].Name);
         Assert.Equal("integer", inner.NestedProperties[1].Type);
     }
+
+    [Fact]
+    public void ExtractEnums_PullsAllEnumComponentsInDeclarationOrder()
+    {
+        const string swagger = """
+        {
+          "components": {
+            "schemas": {
+              "AccessRequestType": {
+                "type": "string",
+                "enum": ["Password","RemoteDesktop","Ssh","Telnet","SshKey","RemoteDesktopApplication","ApiKey","File"]
+              },
+              "ScheduleType": {
+                "type": "string",
+                "enum": ["Never","Hourly","Daily","Weekly","Monthly"]
+              },
+              "PlainObject": {
+                "type": "object",
+                "properties": {"Foo":{"type":"string"}}
+              }
+            }
+          }
+        }
+        """;
+        using var doc = JsonDocument.Parse(swagger);
+        var enums = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        CatalogLoader.ExtractEnums(doc.RootElement, enums);
+
+        Assert.True(enums.ContainsKey("accessrequesttype"), "case-insensitive lookup must work");
+        Assert.Equal(
+            new[] { "Password", "RemoteDesktop", "Ssh", "Telnet", "SshKey", "RemoteDesktopApplication", "ApiKey", "File" },
+            enums["AccessRequestType"]);
+        Assert.Equal(new[] { "Never", "Hourly", "Daily", "Weekly", "Monthly" }, enums["ScheduleType"]);
+        Assert.False(enums.ContainsKey("PlainObject"));
+    }
+
+    [Fact]
+    public void DescribePropertyType_EnumRefRendersAsEnumLabel()
+    {
+        // E035: a property typed `$ref:AccessRequestType` should be rendered as enum<...>,
+        // not object<...>; nested fields must be empty.
+        const string swagger = """
+        {
+          "components": {
+            "schemas": {
+              "AccessRequestType": {"type":"string","enum":["Password","Ssh","RemoteDesktop"]},
+              "NewAccessRequest": {
+                "type": "object",
+                "required": ["AccessRequestType"],
+                "properties": {
+                  "AccessRequestType": {"$ref":"#/components/schemas/AccessRequestType"}
+                }
+              }
+            }
+          },
+          "paths": {
+            "/v4/AccessRequests": {
+              "post": {
+                "requestBody": {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NewAccessRequest"}}}},
+                "responses": {"201":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/NewAccessRequest"}}}}}
+              }
+            }
+          }
+        }
+        """;
+        var schemas = ParseSwaggerForTests(swagger);
+        var req = schemas["POST Core /v4/AccessRequests"];
+        var prop = Assert.Single(req.Properties, p => p.Name == "AccessRequestType");
+        Assert.Equal("enum<AccessRequestType>", prop.Type);
+        Assert.Equal("AccessRequestType", prop.EnumName);
+        Assert.Empty(prop.NestedFields);
+    }
 }

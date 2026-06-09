@@ -50,6 +50,13 @@ public class DynamicCatalog
 {
     public ApiEndpoint[] Endpoints { get; init; } = Array.Empty<ApiEndpoint>();
     public Dictionary<string, ApiSchema> Schemas { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Enum vocabularies extracted from the swagger components. Keyed by enum schema name
+    /// (case-insensitive). Values are kept in swagger declaration order so the agent sees
+    /// them in the same order as the appliance's source.
+    /// </summary>
+    public Dictionary<string, string[]> Enums { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>

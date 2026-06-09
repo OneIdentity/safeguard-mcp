@@ -43,6 +43,7 @@ public class CatalogLoader
     {
         var endpoints = new List<ApiEndpoint>();
         var schemas = new Dictionary<string, ApiSchema>(StringComparer.OrdinalIgnoreCase);
+        var enums = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         var client = ignoreSsl ? IgnoreSslClient : StrictSslClient;
 
         foreach (var service in new[] { "Core", "Appliance", "Notification" })
@@ -56,6 +57,7 @@ public class CatalogLoader
                 using var doc = JsonDocument.Parse(json);
 
                 ParseSwaggerPaths(doc, service, endpoints);
+                ExtractEnums(doc.RootElement, enums);
                 ParseSwaggerSchemas(doc, service, schemas);
 
                 _logger.LogInformation(
@@ -81,8 +83,70 @@ public class CatalogLoader
         return new DynamicCatalog
         {
             Endpoints = endpoints.ToArray(),
-            Schemas = schemas
+            Schemas = schemas,
+            Enums = enums
         };
+    }
+
+    // Pulls every components.schemas.X with a non-empty `.enum` array into the dictionary,
+    // preserving swagger declaration order. Last wins on cross-service collisions (the same
+    // enum name typically appears in every service's swagger with identical values).
+    internal static void ExtractEnums(JsonElement root, Dictionary<string, string[]> enums)
+    {
+        if (!root.TryGetProperty("components", out var components)
+            || !components.TryGetProperty("schemas", out var schemas))
+            return;
+
+        foreach (var entry in schemas.EnumerateObject())
+        {
+            if (!entry.Value.TryGetProperty("enum", out var enumValues)
+                || enumValues.ValueKind != JsonValueKind.Array)
+                continue;
+
+            var values = new List<string>();
+            foreach (var v in enumValues.EnumerateArray())
+            {
+                if (v.ValueKind == JsonValueKind.String)
+                {
+                    var s = v.GetString();
+                    if (!string.IsNullOrEmpty(s))
+                        values.Add(s);
+                }
+                else if (v.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+                {
+                    values.Add(v.GetRawText());
+                }
+            }
+
+            if (values.Count > 0)
+                enums[entry.Name] = values.ToArray();
+        }
+    }
+
+    // Inspects a $ref target and returns its declared `.enum` values if present, else null.
+    private static string[] TryGetEnumValues(JsonElement components, bool hasComponents, string refName)
+    {
+        if (!hasComponents || string.IsNullOrEmpty(refName))
+            return null;
+        if (!components.TryGetProperty(refName, out var resolved))
+            return null;
+        if (!resolved.TryGetProperty("enum", out var enumValues) || enumValues.ValueKind != JsonValueKind.Array)
+            return null;
+        var values = new List<string>();
+        foreach (var v in enumValues.EnumerateArray())
+        {
+            if (v.ValueKind == JsonValueKind.String)
+            {
+                var s = v.GetString();
+                if (!string.IsNullOrEmpty(s))
+                    values.Add(s);
+            }
+            else if (v.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+            {
+                values.Add(v.GetRawText());
+            }
+        }
+        return values.Count == 0 ? null : values.ToArray();
     }
 
     private void ParseSwaggerPaths(JsonDocument doc, string service, List<ApiEndpoint> endpoints)
@@ -356,7 +420,7 @@ public class CatalogLoader
             var propName = prop.Name;
             var propSchema = prop.Value;
 
-            var (propType, nestedFields) = DescribePropertyType(propSchema, components, hasComponents, omitReadOnly);
+            var (propType, nestedFields, enumName) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly);
             var nestedProps = BuildNestedProperties(propSchema, components, hasComponents, omitReadOnly, depth: 1, parentChain: schemaName);
 
             var description = propSchema.TryGetProperty("description", out var desc)
@@ -378,7 +442,7 @@ public class CatalogLoader
                 requiredSet.Contains(propName),
                 nestedFields,
                 nestedProps,
-                EnumName: null));
+                enumName));
         }
 
         return new ApiSchema(
@@ -392,14 +456,18 @@ public class CatalogLoader
     /// Computes the human-readable type label and the immediate child property names for a
     /// property's schema. For complex types referenced via <c>$ref</c> the type is decorated with
     /// the referenced schema name (e.g. <c>object&lt;TaskProperties&gt;</c>) and the child names
-    /// are returned. Falls back conservatively for unresolvable refs, free-form objects, and
-    /// <c>oneOf</c>/<c>anyOf</c>.
+    /// are returned. For enum-typed <c>$ref</c>s the label is <c>enum&lt;Name&gt;</c> and no
+    /// nested fields are emitted (callers can resolve allowed values via the catalog's
+    /// <c>Enums</c> dictionary or the <c>EnumName</c> field on <see cref="SchemaProperty"/>).
     /// </summary>
     internal static (string Type, string[] NestedFields) DescribePropertyType(
         JsonElement propSchema,
         JsonElement components,
         bool hasComponents)
-        => DescribePropertyType(propSchema, components, hasComponents, omitReadOnly: true);
+    {
+        var (type, nested, _) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly: true);
+        return (type, nested);
+    }
 
     internal static (string Type, string[] NestedFields) DescribePropertyType(
         JsonElement propSchema,
@@ -407,12 +475,25 @@ public class CatalogLoader
         bool hasComponents,
         bool omitReadOnly)
     {
-        // Direct $ref to a complex type.
+        var (type, nested, _) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly);
+        return (type, nested);
+    }
+
+    internal static (string Type, string[] NestedFields, string EnumName) DescribePropertyTypeWithEnum(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly)
+    {
+        // Direct $ref to a complex type — enum or object.
         if (propSchema.TryGetProperty("$ref", out var refProp))
         {
             var refName = ResolveRefName(refProp);
+            if (refName != null && TryGetEnumValues(components, hasComponents, refName) != null)
+                return ($"enum<{refName}>", Array.Empty<string>(), refName);
+
             var nested = TryEnumerateRefProperties(refProp, components, hasComponents, omitReadOnly);
-            return (refName != null ? $"object<{refName}>" : "object", nested);
+            return (refName != null ? $"object<{refName}>" : "object", nested, null);
         }
 
         // type: array of complex items.
@@ -424,15 +505,18 @@ public class CatalogLoader
                 if (items.TryGetProperty("$ref", out var itemsRef))
                 {
                     var refName = ResolveRefName(itemsRef);
+                    if (refName != null && TryGetEnumValues(components, hasComponents, refName) != null)
+                        return ($"array<enum<{refName}>>", Array.Empty<string>(), refName);
+
                     var nested = TryEnumerateRefProperties(itemsRef, components, hasComponents, omitReadOnly);
-                    return (refName != null ? $"array<{refName}>" : "array", nested);
+                    return (refName != null ? $"array<{refName}>" : "array", nested, null);
                 }
 
                 if (items.TryGetProperty("properties", out _))
-                    return ("array<object>", EnumerateImmediateProperties(items, omitReadOnly));
+                    return ("array<object>", EnumerateImmediateProperties(items, omitReadOnly), null);
             }
 
-            return ("array", Array.Empty<string>());
+            return ("array", Array.Empty<string>(), null);
         }
 
         // Inline object with properties.
@@ -440,7 +524,7 @@ public class CatalogLoader
             && string.Equals(typeProp.GetString(), "object", StringComparison.OrdinalIgnoreCase)
             && propSchema.TryGetProperty("properties", out _))
         {
-            return ("object", EnumerateImmediateProperties(propSchema, omitReadOnly));
+            return ("object", EnumerateImmediateProperties(propSchema, omitReadOnly), null);
         }
 
         // allOf containing a $ref or inline object — pick the first resolvable part.
@@ -451,13 +535,16 @@ public class CatalogLoader
                 if (part.TryGetProperty("$ref", out var partRef))
                 {
                     var refName = ResolveRefName(partRef);
+                    if (refName != null && TryGetEnumValues(components, hasComponents, refName) != null)
+                        return ($"enum<{refName}>", Array.Empty<string>(), refName);
+
                     var nested = TryEnumerateRefProperties(partRef, components, hasComponents, omitReadOnly);
                     if (nested.Length > 0)
-                        return (refName != null ? $"object<{refName}>" : "object", nested);
+                        return (refName != null ? $"object<{refName}>" : "object", nested, null);
                 }
                 else if (part.TryGetProperty("properties", out _))
                 {
-                    return ("object", EnumerateImmediateProperties(part, omitReadOnly));
+                    return ("object", EnumerateImmediateProperties(part, omitReadOnly), null);
                 }
             }
         }
@@ -469,7 +556,7 @@ public class CatalogLoader
         else if (propSchema.TryGetProperty("$ref", out _))
             propType = "object";
 
-        return (propType, Array.Empty<string>());
+        return (propType, Array.Empty<string>(), null);
     }
 
     // Recursive child SchemaProperty[] expansion done at parse time. Returns an array of
@@ -512,7 +599,7 @@ public class CatalogLoader
             if (omitReadOnly && isReadOnly && !requiredSet.Contains(prop.Name))
                 continue;
 
-            var (childType, childNestedFields) = DescribePropertyType(prop.Value, components, hasComponents, omitReadOnly);
+            var (childType, childNestedFields, childEnumName) = DescribePropertyTypeWithEnum(prop.Value, components, hasComponents, omitReadOnly);
             var description = prop.Value.TryGetProperty("description", out var desc)
                 ? desc.GetString() ?? string.Empty
                 : string.Empty;
@@ -524,7 +611,7 @@ public class CatalogLoader
                 requiredSet.Contains(prop.Name),
                 childNestedFields,
                 children,
-                EnumName: null));
+                childEnumName));
         }
 
         return list.ToArray();

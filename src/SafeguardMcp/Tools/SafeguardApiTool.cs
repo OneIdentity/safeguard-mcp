@@ -262,7 +262,7 @@ internal sealed class SafeguardApiTool(
 
         if (requestSchema != null)
         {
-            AppendSchemaSection(sb, "REQUEST BODY", requestSchema.Value, clampedDepth);
+            AppendSchemaSection(sb, "REQUEST BODY", requestSchema.Value, clampedDepth, catalogProvider);
         }
         else if (HasRequestBody(normalizedMethod, serviceName, normalizedPath))
         {
@@ -274,7 +274,7 @@ internal sealed class SafeguardApiTool(
         }
 
         if (responseSchema != null)
-            AppendSchemaSection(sb, responseHeading, responseSchema.Value, clampedDepth);
+            AppendSchemaSection(sb, responseHeading, responseSchema.Value, clampedDepth, catalogProvider);
         else
             sb.AppendLine().Append(responseHeading).AppendLine(":").AppendLine("  No response schema available.");
 
@@ -368,6 +368,72 @@ internal sealed class SafeguardApiTool(
                 .Append("No schema field list is available for ").Append(normalizedPath).Append('.');
         }
 
+        return sb.ToString().TrimEnd();
+    }
+
+    [McpServerTool(Name = "Safeguard_Enum", Title = "Get Enum Values",
+        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("List the allowed values for a Safeguard enum schema (e.g. 'AccessRequestType', "
+        + "'EventName', 'ScheduleType'). Call without arguments to list all known enum names. "
+        + "Use this to resolve enum<...>-typed properties surfaced by Safeguard_Schema, especially "
+        + "for the high-cardinality ones (EventName has 600+ values) that are not inlined.")]
+    public string Safeguard_Enum(
+        [Description("Enum schema name (case-insensitive). Omit to list all known enum names.")]
+        string name = null,
+        [Description("Optional case-insensitive substring filter to narrow long lists.")]
+        string pattern = null,
+        [Description("Maximum values to return. Default 50.")] int limit = 50)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            var names = catalogProvider.GetEnumNames();
+            if (names.Count == 0)
+            {
+                return "No enums are available. Connect first with Safeguard_Connect to load "
+                    + "the dynamic catalog from the appliance swagger.";
+            }
+            var sb0 = new StringBuilder();
+            sb0.Append(names.Count).AppendLine(" enum(s) available:");
+            foreach (var n in names)
+                sb0.Append("  ").AppendLine(n);
+            sb0.AppendLine().AppendLine("Call Safeguard_Enum name=\"<Name>\" to see allowed values.");
+            return sb0.ToString().TrimEnd();
+        }
+
+        var values = catalogProvider.GetEnum(name);
+        if (values == null)
+        {
+            return $"No enum named '{name}' is available. "
+                + "Call Safeguard_Enum (no args) to list known enum names. "
+                + "Names are case-insensitive but must match a swagger schema name exactly.";
+        }
+
+        IEnumerable<string> filtered = values;
+        if (!string.IsNullOrWhiteSpace(pattern))
+        {
+            filtered = values.Where(v => v.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+        }
+        var clampedLimit = Math.Max(1, limit);
+        var matched = filtered.ToArray();
+        var shown = matched.Take(clampedLimit).ToArray();
+
+        var sb = new StringBuilder();
+        sb.Append("Enum: ").AppendLine(name);
+        sb.Append("Total values: ").Append(values.Length);
+        if (!string.IsNullOrWhiteSpace(pattern))
+            sb.Append("  (filter: '").Append(pattern).Append("' matched ").Append(matched.Length).Append(')');
+        sb.AppendLine();
+        if (shown.Length == 0)
+        {
+            sb.AppendLine("  (no matches)");
+        }
+        else
+        {
+            foreach (var v in shown)
+                sb.Append("  ").AppendLine(v);
+        }
+        if (matched.Length > shown.Length)
+            sb.Append("  ... showing ").Append(shown.Length).Append(" of ").Append(matched.Length).AppendLine(".");
         return sb.ToString().TrimEnd();
     }
 
@@ -897,7 +963,7 @@ internal sealed class SafeguardApiTool(
         return normalized;
     }
 
-    private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema, int depth = 1)
+    private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema, int depth, CatalogProvider catalog)
     {
         sb.AppendLine().Append(heading).AppendLine(":");
         if (!string.IsNullOrWhiteSpace(schema.TypeName))
@@ -917,14 +983,14 @@ internal sealed class SafeguardApiTool(
             sb.AppendLine("    None");
         else
             foreach (var property in required)
-                AppendSchemaProperty(sb, property, indent: 4, depth: depth);
+                AppendSchemaProperty(sb, property, indent: 4, depth: depth, catalog);
 
         sb.AppendLine("  Optional:");
         if (optional.Length == 0)
             sb.AppendLine("    None");
         else
             foreach (var property in optional)
-                AppendSchemaProperty(sb, property, indent: 4, depth: depth);
+                AppendSchemaProperty(sb, property, indent: 4, depth: depth, catalog);
 
         var hints = SchemaHints.GetHints(schema);
         if (hints != null)
@@ -935,19 +1001,43 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property, int indent, int depth)
+    // Inlines enum vocabularies up to this many values; beyond that, prints a pointer to
+    // Safeguard_Enum so the agent can fetch the full list explicitly. Matches the threshold
+    // recommended by the live-swagger inventory (134 enums; 8 exceed 30 values).
+    private const int InlineEnumValueThreshold = 30;
+
+    private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property, int indent, int depth, CatalogProvider catalog)
     {
         sb.Append(' ', indent).Append(property.Name).Append(" (").Append(property.Type).Append(')');
         if (!string.IsNullOrWhiteSpace(property.Description))
             sb.Append(" - ").Append(property.Description.Trim());
         sb.AppendLine();
 
+        // Enum vocabularies: inline up to N values, otherwise point at Safeguard_Enum.
+        if (!string.IsNullOrEmpty(property.EnumName) && catalog != null)
+        {
+            var values = catalog.GetEnum(property.EnumName);
+            if (values != null && values.Length > 0)
+            {
+                if (values.Length <= InlineEnumValueThreshold)
+                {
+                    sb.Append(' ', indent + 2).Append("Allowed: ").AppendLine(string.Join(", ", values));
+                }
+                else
+                {
+                    sb.Append(' ', indent + 2)
+                        .Append("Allowed: ").Append(values.Length)
+                        .Append(" values — call Safeguard_Enum name=\"").Append(property.EnumName).AppendLine("\".");
+                }
+            }
+        }
+
         // depth>1: walk parsed-time NestedProperties recursively. Fall back to the legacy
         // immediate-name list when no full child schemas were captured (e.g. unresolvable refs).
         if (depth > 1 && property.NestedProperties != null && property.NestedProperties.Length > 0)
         {
             foreach (var child in property.NestedProperties)
-                AppendSchemaProperty(sb, child, indent + 2, depth - 1);
+                AppendSchemaProperty(sb, child, indent + 2, depth - 1, catalog);
         }
         else if (property.NestedFields != null && property.NestedFields.Length > 0)
         {
