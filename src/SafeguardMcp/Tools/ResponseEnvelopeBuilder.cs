@@ -13,6 +13,7 @@ namespace SafeguardMcp.Tools;
 internal static class NoticeKinds
 {
     internal const string AutoLimitApplied = "auto_limit_applied";
+    internal const string DefaultFieldsApplied = "default_fields_applied";
     internal const string AutoWindowApplied = "auto_window_applied";
     internal const string CountOnlyResponse = "count_only_response";
     internal const string PagingMoreAvailable = "paging_more_available";

@@ -449,6 +449,11 @@ internal sealed class SafeguardApiTool(
             .AppendLine("    Schema labels: object<Type> = to-one (dottable); array<Type> = to-many (use child path).")
             .AppendLine("  Field selection: fields=Id,Name,Description")
             .AppendLine("  Exclude fields: fields=-TaskProperties,-Platform")
+            .AppendLine("  ObjectChanges default: on /v4/AuditLog/ObjectChanges list-style routes "
+                + "(collection, by-type, by-type+by-id) fields= defaults to '-OldValue,-NewValue' so the "
+                + "full-entity JSON-string snapshots are dropped and the structured Changes[] diff is "
+                + "retained; add OldValue or NewValue to your own fields= list to include the snapshots, "
+                + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view.")
             .AppendLine("  Ordering: orderby=Name or orderby=-CreatedDate")
             .AppendLine("  Multiple order fields: orderby=Name,-CreatedDate")
             .AppendLine("  NOTE: Not OData. Use -Field for descending; 'Name desc' or 'Name asc' returns HTTP 400.")
@@ -597,6 +602,7 @@ internal sealed class SafeguardApiTool(
         var relativeUrl = ToSdkRelativeUrl(normalizedPath);
         var parameters = ParseQueryParameters(query);
         parameters = MaybeInjectLimit(normalizedMethod, normalizedPath, service, parameters, out var injectedLimit);
+        parameters = MaybeInjectDefaultFields(normalizedMethod, normalizedPath, parameters, out var injectedDefaultFields);
 
         try
         {
@@ -614,7 +620,7 @@ internal sealed class SafeguardApiTool(
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
             }
 
             FullResponse response;
@@ -629,7 +635,7 @@ internal sealed class SafeguardApiTool(
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
         }
         catch (McpException ex)
         {
@@ -637,7 +643,7 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit, IDictionary<string, string> parameters, string method = null, string path = null)
+    private string FormatResponse(string body, string format, int injectedLimit, bool injectedDefaultFields, IDictionary<string, string> parameters, string method = null, string path = null)
     {
         var safeBody = body ?? string.Empty;
         var notices = new List<Notice>();
@@ -648,6 +654,16 @@ internal sealed class SafeguardApiTool(
                 NoticeKinds.AutoLimitApplied,
                 $"Auto-applied limit={injectedLimit}.",
                 "Specify 'limit' in the query to override; pass page=N for further pages."));
+        }
+
+        if (injectedDefaultFields)
+        {
+            notices.Add(new Notice(
+                NoticeKinds.DefaultFieldsApplied,
+                "Default fields= projection applied to drop OldValue/NewValue (full-entity JSON-string snapshots). "
+                + "The structured per-property diff in Changes[] is retained.",
+                "Add 'OldValue' or 'NewValue' to your own fields= list to include the snapshots; "
+                + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view."));
         }
 
         var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
@@ -735,7 +751,11 @@ internal sealed class SafeguardApiTool(
                 notices.Add(new Notice(
                     NoticeKinds.RecordTooLargeForCap,
                     $"A single record exceeds the response cap (~{MaxResponseChars} chars). Returned intact to preserve JSON validity.",
-                    "Use fields= to project (e.g. fields=Id,ObjectName,Action,LogTime to drop OldValue/NewValue), or query the per-record path if available."));
+                    injectedDefaultFields
+                        ? "OldValue/NewValue snapshots were already excluded by the default projection; narrow with filter= "
+                            + "(e.g. by EventName, ObjectType, or LogTime range) or fetch the singleton "
+                            + "/v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for one record at a time."
+                        : "Use fields= to project (e.g. fields=Id,ObjectName,Action,LogTime to drop OldValue/NewValue), or query the per-record path if available."));
                 break;
         }
 
@@ -991,6 +1011,27 @@ internal sealed class SafeguardApiTool(
         }
 
         return null;
+    }
+
+    private static IDictionary<string, string> MaybeInjectDefaultFields(
+        string method,
+        string normalizedPath,
+        IDictionary<string, string> parameters,
+        out bool injected)
+    {
+        injected = false;
+
+        var callerSuppliedFields = parameters != null && parameters.ContainsKey("fields");
+        if (!DefaultProjections.TryGetDefaultFields(method, normalizedPath, callerSuppliedFields, out var defaultFields))
+            return parameters;
+
+        var updated = parameters == null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(parameters, StringComparer.OrdinalIgnoreCase);
+
+        updated["fields"] = defaultFields;
+        injected = true;
+        return updated;
     }
 
     private IDictionary<string, string> MaybeInjectLimit(
