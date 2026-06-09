@@ -201,7 +201,11 @@ internal sealed class SafeguardApiTool(
     [Description("Execute any Safeguard API endpoint. The service (Core, Appliance, Notification) "
         + "is automatically determined from the endpoint path. "
         + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format. "
-        + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json.")]
+        + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json. "
+        + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
+        + "always read the data field for the actual API payload, and meta.notices for applied auto-limit / paging hints / truncation events. "
+        + "Responses are capped at ~30 KB; for fat endpoints (audit logs, Assets, AssetAccounts) "
+        + "use fields= to project, or follow meta.paging.next to fetch the next page.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). The correct service is auto-detected from the path.")] string path,
@@ -537,7 +541,7 @@ internal sealed class SafeguardApiTool(
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, parameters);
             }
 
             FullResponse response;
@@ -552,7 +556,7 @@ internal sealed class SafeguardApiTool(
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, parameters);
         }
         catch (McpException ex)
         {
@@ -560,32 +564,143 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit)
+    private string FormatResponse(string body, string format, int injectedLimit, IDictionary<string, string> parameters)
     {
-        var notes = new List<string>();
-        var formattedBody = body ?? string.Empty;
+        var safeBody = body ?? string.Empty;
+        var notices = new List<Notice>();
 
         if (injectedLimit > 0)
         {
-            notes.Add($"Note: Auto-applied limit={injectedLimit}. Specify 'limit' in the query to override it.");
+            notices.Add(new Notice(
+                NoticeKinds.AutoLimitApplied,
+                $"Auto-applied limit={injectedLimit}.",
+                "Specify 'limit' in the query to override; pass page=N for further pages."));
         }
 
-        if (format == "json" && ApiToolHelpers.TryTruncateJsonArray(formattedBody, MaxResultsBeforeTruncation, out var truncatedBody, out var totalItems))
+        // Determine effective limit/page for the paging block.
+        int? effectiveLimit = null;
+        var limitSource = "none";
+        if (parameters != null && parameters.TryGetValue("limit", out var limitText)
+            && int.TryParse(limitText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLimit)
+            && parsedLimit > 0)
         {
-            formattedBody = truncatedBody;
-            notes.Add($"Returned {totalItems} items. Showing the first {MaxResultsBeforeTruncation}. Use filter, fields, page, or limit to narrow the result.");
+            effectiveLimit = parsedLimit;
+            limitSource = injectedLimit > 0 ? "auto" : "explicit";
         }
 
-        if (formattedBody.Length > MaxResponseChars)
+        var currentPage = 0;
+        if (parameters != null && parameters.TryGetValue("page", out var pageText)
+            && int.TryParse(pageText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPage)
+            && parsedPage >= 0)
         {
-            formattedBody = formattedBody[..MaxResponseChars];
-            notes.Add($"Response truncated to {MaxResponseChars} characters. Use fields, filter, page/limit, or format='csv' to reduce payload size.");
+            currentPage = parsedPage;
         }
 
-        if (notes.Count == 0)
-            return formattedBody;
+        if (format == "csv")
+        {
+            // CSV: never prepend or interleave prose into the data. Append meta as a
+            // single trailing comment line only when there is something to surface.
+            // Paging info for CSV is best-effort: we don't parse the CSV to count rows here,
+            // so we surface only what we already know from the request.
+            PagingInfo csvPaging = null;
+            if (effectiveLimit.HasValue)
+            {
+                csvPaging = new PagingInfo
+                {
+                    Page = currentPage,
+                    Limit = effectiveLimit,
+                    Returned = -1,
+                    LimitSource = limitSource,
+                    More = false,
+                    Next = ResponseEnvelopeBuilder.BuildNextQueryString(parameters, currentPage, effectiveLimit)
+                };
+            }
 
-        return string.Join("\n", notes) + "\n\n" + formattedBody;
+            return ResponseEnvelopeBuilder.BuildCsvWithMeta(safeBody, notices, csvPaging, truncation: null);
+        }
+
+        // JSON path.
+        var truncationOutcome = ApiToolHelpers.TryTruncateJsonArrayWithBudget(
+            safeBody,
+            MaxResultsBeforeTruncation,
+            MaxResponseChars,
+            out var truncatedBody,
+            out var totalItems,
+            out var keptItems);
+
+        var isArray = truncationOutcome != ApiToolHelpers.TruncationOutcome.NotArray;
+        var dataBody = isArray ? truncatedBody : safeBody;
+        TruncationInfo truncationInfo = null;
+
+        switch (truncationOutcome)
+        {
+            case ApiToolHelpers.TruncationOutcome.RecordsDropped:
+                truncationInfo = new TruncationInfo
+                {
+                    Applied = true,
+                    Kind = "records_dropped",
+                    ReturnedRecords = keptItems,
+                    TotalRecords = totalItems
+                };
+                notices.Add(new Notice(
+                    NoticeKinds.BodyTruncatedRecords,
+                    $"Returned {totalItems} items; trimmed to the first {keptItems} to fit the response cap.",
+                    "Use filter=, fields=, or page=/limit= to narrow the result."));
+                break;
+            case ApiToolHelpers.TruncationOutcome.RecordTooLarge:
+                truncationInfo = new TruncationInfo
+                {
+                    Applied = true,
+                    Kind = "record_too_large",
+                    ReturnedRecords = keptItems,
+                    TotalRecords = totalItems
+                };
+                notices.Add(new Notice(
+                    NoticeKinds.RecordTooLargeForCap,
+                    $"A single record exceeds the response cap (~{MaxResponseChars} chars). Returned intact to preserve JSON validity.",
+                    "Use fields= to project (e.g. fields=Id,ObjectName,Action,LogTime to drop OldValue/NewValue), or query the per-record path if available."));
+                break;
+        }
+
+        // Non-array: never mid-character truncate. Surface a notice if oversize.
+        if (!isArray && dataBody.Length > MaxResponseChars)
+        {
+            notices.Add(new Notice(
+                NoticeKinds.BodyTruncatedChars,
+                $"Response exceeds the {MaxResponseChars}-character cap. Body returned intact to preserve JSON validity.",
+                "Use fields= to project, or call a more specific endpoint to reduce payload size."));
+        }
+
+        PagingInfo paging = null;
+        if (isArray)
+        {
+            var truncationApplied = truncationInfo != null && truncationInfo.Applied;
+            var more = truncationApplied
+                || (effectiveLimit.HasValue && keptItems >= effectiveLimit.Value);
+            string next = null;
+            if (effectiveLimit.HasValue && more)
+                next = ResponseEnvelopeBuilder.BuildNextQueryString(parameters, currentPage, effectiveLimit);
+
+            paging = new PagingInfo
+            {
+                Page = currentPage,
+                Limit = effectiveLimit,
+                Returned = keptItems,
+                LimitSource = limitSource,
+                More = more,
+                Next = next
+            };
+
+            if (more && next != null && truncationInfo == null)
+            {
+                notices.Add(new Notice(
+                    NoticeKinds.PagingMoreAvailable,
+                    "More records may be available.",
+                    $"Fetch the next page with query='{next}'."));
+            }
+        }
+
+        return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
     }
 
     private string FormatErrorResponse(McpException ex)
