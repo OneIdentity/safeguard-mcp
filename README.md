@@ -409,8 +409,7 @@ collapses the sequence into one call and catches the common failure modes up fro
 
 The API catalog is loaded from the appliance's own Swagger/OpenAPI spec at connect time,
 so the tool surface always matches the actual API of the connected appliance — whether it's
-running Safeguard 7.5, 8.2, or a future release. A compiled static catalog is included as a
-fallback for airgapped environments where Swagger isn't reachable.
+running Safeguard 7.5, 8.2, or a future release.
 
 #### How it works
 
@@ -436,11 +435,6 @@ list and schemas for its version.
 
 The SSL policy used for swagger fetch matches the connection's SSL policy — if you set
 `SAFEGUARD_IGNORE_SSL=true` for self-signed lab certs, the catalog loader respects that too.
-
-**Fallback**: If swagger fetch fails (airgapped network, firewall rules, older appliance
-version), the server falls back to a compiled static catalog (~1,070 endpoints from a
-reference installation). The static catalog has no schemas — `Safeguard_Schema` will report
-"no schema available" but discovery and execution still work.
 
 ### Schema Tool: Enabling Write Operations
 
@@ -662,12 +656,12 @@ automatically by looking up the path in the API catalog. One tool handles everyt
 
 When you call `Safeguard_Execute` with a path like `/v4/AssetAccounts`, the dispatcher:
 
-1. **Catalog lookup** — scans the dynamic catalog (or static fallback) for an endpoint
-   whose path template matches the request path, accounting for `{id}` placeholders.
-   If found, uses that endpoint's service.
+1. **Catalog lookup** — scans the dynamic catalog for an endpoint whose path template
+   matches the request path, accounting for `{id}` placeholders. If found, uses that
+   endpoint's service.
 
-2. **Heuristic fallback** — if no catalog match (e.g., a new endpoint on a newer appliance
-   not yet in the static catalog), applies keyword-based routing:
+2. **Heuristic fallback** — for the handful of undocumented endpoints that aren't in
+   swagger, applies keyword-based routing:
    - `ApplianceStatus`, `Backup`, `Network`, `DiagnosticPackage` → Appliance service
    - `/v4/Status` → Notification service
    - Everything else → Core service (handles ~90% of endpoints)

@@ -13,8 +13,8 @@ public class DiscoverIntentTests
 {
     private static ApiEndpoint[] BuildFixture()
     {
-        // Representative endpoints from the static catalog. Keep this small —
-        // the goal is to exercise ranking, not duplicate the catalog.
+        // Representative endpoints for ranking tests. Keep this small —
+        // the goal is to exercise ranking, not duplicate the live catalog.
         return
         [
             new ApiEndpoint("Core", "GET",    "/v4/Users",                              "Gets a list of users", "", false),

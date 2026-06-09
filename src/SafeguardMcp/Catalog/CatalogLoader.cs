@@ -9,7 +9,6 @@ namespace SafeguardMcp.Catalog;
 
 /// <summary>
 /// Loads the API catalog dynamically from a Safeguard appliance's swagger endpoints.
-/// Falls back to the compiled static catalog if swagger is unavailable.
 /// </summary>
 public class CatalogLoader
 {
@@ -69,14 +68,14 @@ public class CatalogLoader
             {
                 _logger.LogWarning(
                     ex,
-                    "Failed to load swagger for {Service} service. Will use static catalog for this service.",
+                    "Failed to load swagger for {Service} service.",
                     service);
             }
         }
 
         if (endpoints.Count == 0)
         {
-            _logger.LogWarning("No swagger endpoints loaded. Using static catalog entirely.");
+            _logger.LogWarning("No swagger endpoints loaded; catalog will be empty until next attempt.");
             return null;
         }
 

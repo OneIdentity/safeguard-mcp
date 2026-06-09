@@ -6,8 +6,8 @@ namespace SafeguardMcp.Catalog;
 /// <summary>
 /// Provides access to the API catalog and schemas. Single-target:
 /// at most one dynamic catalog (loaded from the configured Safeguard
-/// appliance) is cached at any time; falls back to the compiled static
-/// catalog when none has been loaded.
+/// appliance) is cached at any time. Returns an empty endpoint span
+/// until a dynamic catalog has been successfully loaded.
 /// </summary>
 public class CatalogProvider
 {
@@ -45,16 +45,16 @@ public class CatalogProvider
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load dynamic catalog from '{Host}'. Using static catalog.", host);
+            _logger.LogWarning(ex, "Failed to load dynamic catalog from '{Host}'.", host);
         }
     }
 
     /// <summary>
-    /// Gets the endpoint catalog. Prefers the dynamic catalog when
-    /// available; otherwise returns the compiled static catalog.
+    /// Gets the endpoint catalog. Returns the dynamic catalog when
+    /// loaded; otherwise an empty span.
     /// </summary>
     public ReadOnlySpan<ApiEndpoint> GetEndpoints()
-        => _dynamic != null ? _dynamic.Endpoints.AsSpan() : SafeguardCatalog.Endpoints.AsSpan();
+        => _dynamic != null ? _dynamic.Endpoints.AsSpan() : ReadOnlySpan<ApiEndpoint>.Empty;
 
     /// <summary>
     /// Gets the request schema for a specific endpoint key

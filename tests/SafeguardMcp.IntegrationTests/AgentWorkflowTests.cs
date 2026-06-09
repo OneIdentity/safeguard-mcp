@@ -139,24 +139,4 @@ public class AgentWorkflowTests
         // Should return an array of cluster members (at least one — this appliance)
         Assert.StartsWith("[", response.Body.TrimStart());
     }
-
-    [RequiresApplianceFact]
-    public void StaticCatalog_LoadsAndMatchesDynamic()
-    {
-        // The static catalog should be a subset of what the dynamic catalog provides
-        var staticEndpoints = SafeguardCatalog.Endpoints;
-        var dynamicEndpoints = _fixture.CatalogProvider.GetEndpoints(_fixture.Host);
-
-        Assert.True(staticEndpoints.Length > 500,
-            $"Static catalog should have 500+ endpoints, got {staticEndpoints.Length}");
-
-        // Check a few known static entries exist in dynamic
-        var staticUsers = staticEndpoints.FirstOrDefault(
-            e => e.Path == "/v4/Users" && e.Method == "GET");
-        var dynamicUsers = dynamicEndpoints.ToArray().FirstOrDefault(
-            e => e.Path == "/v4/Users" && e.Method == "GET");
-
-        Assert.Equal(staticUsers.Method, dynamicUsers.Method);
-        Assert.Equal(staticUsers.Path, dynamicUsers.Path);
-    }
 }
