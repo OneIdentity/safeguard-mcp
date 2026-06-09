@@ -404,6 +404,13 @@ well; this is documented degrade-gracefully behavior rather than a
 refusal, because Safeguard credentials can be rotated if a host turns
 out not to honor the hint and the operator wants a stronger separation.
 
+The `audience` annotation is defined in the MCP specification:
+[*Resources → Annotations*](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations)
+("An array indicating the intended audience(s) for this resource. Valid
+values are `\"user\"` and `\"assistant\"`."). Annotations apply to
+resources, resource templates, and content blocks, which is the path
+this tool uses.
+
 #### Refuse-and-redirect on `Safeguard_Execute`
 
 The dynamic catalog flags every Safeguard API path that returns plaintext
