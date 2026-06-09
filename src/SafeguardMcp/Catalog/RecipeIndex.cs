@@ -12,7 +12,8 @@ internal sealed record WorkflowRecipe(
     string Name,
     string Description,
     IReadOnlyList<string> Tags,
-    string Content);
+    string Content,
+    string Tool = null);
 
 /// <summary>
 /// A recipe that scored above zero against a set of expanded search terms.
@@ -179,7 +180,10 @@ internal static class RecipeIndex
             ? Array.Empty<string>()
             : tagsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+        metadata.TryGetValue("tool", out var toolRaw);
+        var tool = string.IsNullOrWhiteSpace(toolRaw) ? null : toolRaw.Trim();
+
         var content = string.Join('\n', lines.Skip(contentStartIndex)).Trim();
-        return new WorkflowRecipe(id, name, description, tags, content);
+        return new WorkflowRecipe(id, name, description, tags, content, tool);
     }
 }

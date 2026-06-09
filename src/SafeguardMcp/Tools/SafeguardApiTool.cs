@@ -244,6 +244,11 @@ internal sealed class SafeguardApiTool(
             sb.Append("Strong recipe match: ").Append(strong.Recipe.Id)
                 .Append(" -- ").AppendLine(strong.Recipe.Name);
             sb.Append("  Call: Safeguard_Workflows id=\"").Append(strong.Recipe.Id).AppendLine("\"");
+            if (!string.IsNullOrWhiteSpace(strong.Recipe.Tool))
+            {
+                sb.Append("  Or call the composite tool directly: ")
+                    .AppendLine(strong.Recipe.Tool);
+            }
             sb.AppendLine();
         }
 
@@ -252,6 +257,10 @@ internal sealed class SafeguardApiTool(
         {
             sb.Append("  ").Append(match.Recipe.Id.PadRight(28))
                 .Append("  ").AppendLine(match.Recipe.Name);
+            if (!string.IsNullOrWhiteSpace(match.Recipe.Tool))
+            {
+                sb.Append("    composite tool: ").AppendLine(match.Recipe.Tool);
+            }
             if (match.Recipe.Tags.Count > 0)
             {
                 sb.Append("    tags: ").AppendLine(string.Join(", ", match.Recipe.Tags));
@@ -605,7 +614,7 @@ internal sealed class SafeguardApiTool(
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, parameters);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
             }
 
             FullResponse response;
@@ -620,7 +629,7 @@ internal sealed class SafeguardApiTool(
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, parameters);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
         }
         catch (McpException ex)
         {
@@ -628,7 +637,7 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit, IDictionary<string, string> parameters)
+    private string FormatResponse(string body, string format, int injectedLimit, IDictionary<string, string> parameters, string method = null, string path = null)
     {
         var safeBody = body ?? string.Empty;
         var notices = new List<Notice>();
@@ -640,6 +649,10 @@ internal sealed class SafeguardApiTool(
                 $"Auto-applied limit={injectedLimit}.",
                 "Specify 'limit' in the query to override; pass page=N for further pages."));
         }
+
+        var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
+        if (recipeNotice != null)
+            notices.Add(recipeNotice);
 
         // Determine effective limit/page for the paging block.
         int? effectiveLimit = null;
@@ -765,6 +778,35 @@ internal sealed class SafeguardApiTool(
         }
 
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
+    }
+
+    private static Notice BuildRecipeCrossLinkNotice(string method, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        // Only surface composite-tool hints for the highest-leverage launch path; broader
+        // path-to-recipe matching could become noisy and would belong in RecipeIndex if
+        // expanded. Currently the only composite tool is Safeguard_LaunchAccessRequest.
+        var segments = GetPathSegments(path);
+        if (segments.Length == 0)
+            return null;
+
+        // /v4/AccessRequests (POST creates) and /v4/AccessRequests/{id}/InitializeSession,
+        // /CheckOutPassword, /CheckOutSshKey, /CheckOutApiKeys, /CheckOutFile are all part
+        // of the launch workflow.
+        if (!segments.Any(s => s.Equals("AccessRequests", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+        var suggestion = verb == "POST" && segments.Length == 2
+            ? "Safeguard_LaunchAccessRequest performs the pre-flight entitlement check and submits the request in one call."
+            : "Use Safeguard_Workflows id=\"session-access-request\" for the full launch workflow.";
+
+        return new Notice(
+            NoticeKinds.WorkflowRecipeSuggested,
+            "Related workflow recipe: session-access-request (composite tool: Safeguard_LaunchAccessRequest).",
+            suggestion);
     }
 
     private string FormatErrorResponse(McpException ex, string method, string serviceName, string requestPath)
