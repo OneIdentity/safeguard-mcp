@@ -560,7 +560,7 @@ internal sealed class SafeguardApiTool(
         }
         catch (McpException ex)
         {
-            throw new McpException(FormatErrorResponse(ex));
+            throw new McpException(FormatErrorResponse(ex, normalizedMethod, GetServiceName(service), normalizedPath));
         }
     }
 
@@ -703,7 +703,7 @@ internal sealed class SafeguardApiTool(
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
     }
 
-    private string FormatErrorResponse(McpException ex)
+    private string FormatErrorResponse(McpException ex, string method, string serviceName, string requestPath)
     {
         var rawMessage = ex.Message ?? "Safeguard API request failed.";
         var statusCode = ExtractStatusCode(rawMessage);
@@ -733,11 +733,55 @@ internal sealed class SafeguardApiTool(
             lines.Add(modelStateSummary);
         }
 
-        var hint = GetErrorHint(statusCode, rawMessage, apiMessage, !string.IsNullOrWhiteSpace(modelStateSummary));
+        var hint = GetErrorHint(
+            statusCode,
+            rawMessage,
+            apiMessage,
+            !string.IsNullOrWhiteSpace(modelStateSummary),
+            method,
+            serviceName,
+            requestPath);
         if (!string.IsNullOrWhiteSpace(hint))
             lines.Add($"Hint: {hint}");
 
         return string.Join("\n", lines);
+    }
+
+    private (string TemplatePath, ApiSchemaPropertyPath[] Paths) ResolveErrorContext(
+        string method, string serviceName, string requestPath)
+    {
+        var endpoints = catalogProvider.GetEndpoints();
+        string templatePath = null;
+        for (int i = 0; i < endpoints.Length; i++)
+        {
+            ref readonly var endpoint = ref endpoints[i];
+            if (!endpoint.Service.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!PathsMatch(endpoint.Path, requestPath))
+                continue;
+            // Prefer the endpoint matching the actual method; otherwise keep
+            // looking but remember the first path match as a fallback.
+            if (endpoint.Method.Equals(method, StringComparison.OrdinalIgnoreCase))
+            {
+                templatePath = endpoint.Path;
+                break;
+            }
+            templatePath ??= endpoint.Path;
+        }
+
+        templatePath ??= requestPath;
+
+        var response = catalogProvider.GetResponseSchema(method, serviceName, templatePath)
+            ?? catalogProvider.GetResponseSchema("GET", serviceName, templatePath);
+        var request = catalogProvider.GetSchema(method, serviceName, templatePath);
+
+        ApiSchemaPropertyPath[] paths = null;
+        if (response != null && response.Value.Paths != null && response.Value.Paths.Length > 0)
+            paths = response.Value.Paths;
+        else if (request != null && request.Value.Paths != null && request.Value.Paths.Length > 0)
+            paths = request.Value.Paths;
+
+        return (templatePath, paths ?? Array.Empty<ApiSchemaPropertyPath>());
     }
 
     private static int ExtractStatusCode(string message)
@@ -818,9 +862,19 @@ internal sealed class SafeguardApiTool(
         _ => element.ToString()
     };
 
-    private static string GetErrorHint(int statusCode, string rawMessage, string apiMessage, bool hasModelState)
+    private string GetErrorHint(
+        int statusCode,
+        string rawMessage,
+        string apiMessage,
+        bool hasModelState,
+        string method,
+        string serviceName,
+        string requestPath)
     {
-        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState);
+        var (templatePath, paths) = ResolveErrorContext(method, serviceName, requestPath);
+        var ctx = new ErrorContext(serviceName, method, templatePath);
+
+        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState, ctx, paths);
         if (!string.IsNullOrWhiteSpace(hint))
             return hint;
 

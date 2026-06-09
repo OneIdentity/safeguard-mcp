@@ -88,14 +88,14 @@ public class ErrorParsingTests
     }
 
     [Fact]
-    public void GetErrorHint_ContextAware_FlatFkFieldSuggestsNestedForm()
+    public void GetErrorHint_ContextAware_FlatFkFieldUsesGenericGuidance()
     {
         var hint = ApiToolHelpers.GetErrorHint(
             400,
             "Invalid field property - 'AssetId' is not a valid property name.",
             hasModelState: false);
+        Assert.Contains("Safeguard_Schema", hint);
         Assert.Contains("nested objects", hint);
-        Assert.Contains("Asset.Id", hint);
     }
 
     [Fact]
@@ -110,13 +110,13 @@ public class ErrorParsingTests
     }
 
     [Fact]
-    public void GetErrorHint_ContextAware_InvalidFieldHintWinsOverModelState()
+    public void GetErrorHint_ContextAware_InvalidFieldFallbackWinsOverModelState()
     {
         var hint = ApiToolHelpers.GetErrorHint(
             400,
             "Invalid field property - 'AssetId' is not a valid property name.",
             hasModelState: true);
-        Assert.Contains("Asset.Id", hint);
+        Assert.Contains("Safeguard_Schema", hint);
     }
 
     [Fact]
