@@ -64,8 +64,12 @@ public static class TerminologyMap
         // Audit / logging — agents looking for activity history
         ["audit", "audit log", "auditlog", "activity", "activities", "event log"],
 
-        // Access requests — the full lifecycle term set
-        ["access request", "access requests", "accessrequests", "request", "requests"],
+        // Access requests — the full lifecycle term set. Also folds in the
+        // umbrella PAM vocabulary ("privileged access", "pam") so that agents
+        // who search for the broad concept land on the AccessRequests family
+        // of endpoints, which is what they almost always mean.
+        ["access request", "access requests", "accessrequests", "request", "requests",
+         "privilege", "privileged", "pam", "privileged access"],
 
         // Service accounts / dependent accounts
         ["service account", "service accounts", "dependent account", "dependent accounts"],
@@ -88,11 +92,8 @@ public static class TerminologyMap
         // Backup / restore
         ["backup", "backups", "restore", "archive"],
 
-        // Common PAM vocabulary — umbrella terms agents will try.
-        // Folded with the dedicated access-request group above so we don't
-        // ship the same alias in two groups (still works either way, but
-        // confusing for maintenance).
-        ["privilege", "privileged", "pam", "privileged access"],
+        // Common PAM vocabulary is folded into the access-request group
+        // above (single source of truth) — see comment there.
 
         // --- Verb / intent groups -----------------------------------------
         // These groups pair common verbs the agent will type with one or
