@@ -64,8 +64,12 @@ public static class TerminologyMap
         // Audit / logging — agents looking for activity history
         ["audit", "audit log", "auditlog", "activity", "activities", "event log"],
 
-        // Access requests — the full lifecycle term set
-        ["access request", "access requests", "accessrequests", "request", "requests"],
+        // Access requests — the full lifecycle term set. Also folds in the
+        // umbrella PAM vocabulary ("privileged access", "pam") so that agents
+        // who search for the broad concept land on the AccessRequests family
+        // of endpoints, which is what they almost always mean.
+        ["access request", "access requests", "accessrequests", "request", "requests",
+         "privilege", "privileged", "pam", "privileged access"],
 
         // Service accounts / dependent accounts
         ["service account", "service accounts", "dependent account", "dependent accounts"],
@@ -88,10 +92,45 @@ public static class TerminologyMap
         // Backup / restore
         ["backup", "backups", "restore", "archive"],
 
-        // Common PAM vocabulary — umbrella terms agents will try
-        // Maps to access requests since that's the primary PAM workflow endpoint
-        ["privilege", "privileged", "pam", "privileged access",
-         "access request", "access requests", "accessrequests"],
+        // Common PAM vocabulary is folded into the access-request group
+        // above (single source of truth) — see comment there.
+
+        // --- Verb / intent groups -----------------------------------------
+        // These groups pair common verbs the agent will type with one or
+        // more API-shaped anchors so ScoreMatch can hit endpoint paths or
+        // summaries directly. They also drive recipe ranking in
+        // Safeguard_Discover via RecipeIndex.
+
+        // Reassigning ownership of an asset/account to a different partition
+        ["move", "transfer", "migrate", "reassign",
+         "partition reassignment", "partition transfer"],
+
+        // Discovering soft-deleted accounts/assets/users and audit history
+        ["deleted", "removed", "archived", "trashed", "restore",
+         "deletedaccounts", "deletedassets", "auditlog/objectchanges"],
+
+        // "Show me recent activity" — last-login + audit log queries
+        ["recent", "latest", "last activity", "last login",
+         "lastlogindate", "auditlog/logins"],
+
+        // Stale credentials / expiring secrets
+        ["expired", "expiring", "stale", "rotated",
+         "lastsuccesspasswordchangedate"],
+
+        // Failure-state diagnostics
+        ["broken", "failing", "unhealthy", "failure",
+         "taskproperties.hasfailure", "reports/tasks"],
+
+        // "Who can access X?" entitlement lookups
+        ["who has access", "authorized", "allowed", "entitled",
+         "requestentitlements", "accountentitlements",
+         "roles/{id}/members"],
+
+        // Acknowledge / remediate failed tasks
+        ["acknowledge", "retry", "remediate", "fix", "repair"],
+
+        // Bulk operations vocabulary
+        ["bulk", "batch", "many", "import"],
     ];
 
     /// <summary>

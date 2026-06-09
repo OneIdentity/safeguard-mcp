@@ -60,15 +60,11 @@ public static class SchemaHints
             "Id of an existing Role (called 'Entitlement' in the UI). "
             + "Create one first via POST /v4/Roles, then reference it here.",
 
-        ["AccessRequestType"] =
-            "String enum. Allowed values: \"Password\", \"Ssh\", \"RemoteDesktop\", "
-            + "\"RdpFile\", \"Telnet\", \"SshKey\", \"RemoteDesktopApplication\", \"ApiKey\", \"File\".",
-
         ["AccessRequestProperties"] =
             "Nested object describing the type and constraints of access. Required properties: "
-            + "AccessRequestType (see enum above). Optional: AllowSimultaneousAccess (bool), "
-            + "MaximumDurationDays (int), MaximumDurationHours (int), "
-            + "ChangePasswordAfterCheckin (bool).",
+            + "AccessRequestType (call Safeguard_Enum name=\"AccessRequestType\" for allowed values). "
+            + "Optional: AllowSimultaneousAccess (bool), MaximumDurationDays (int), "
+            + "MaximumDurationHours (int), ChangePasswordAfterCheckin (bool).",
 
         // --- Member/Scope Operations ---
         ["Members"] =
@@ -82,11 +78,6 @@ public static class SchemaHints
         // --- Misc ---
         ["NetworkAddress"] =
             "Hostname, IP address, or FQDN of the target system.",
-
-        ["AdminRoles"] =
-            "Array of admin role strings. Available roles: GlobalAdmin, Auditor, "
-            + "ApplicationAuditor, SystemAuditor, AssetAdmin, ApplianceAdmin, "
-            + "PolicyAdmin, UserAdmin, HelpdeskAdmin, OperationsAdmin.",
 
         // --- Batch Operations ---
         ["BatchOperations"] =

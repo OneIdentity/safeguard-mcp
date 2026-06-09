@@ -3,8 +3,23 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using OneIdentity.SafeguardDotNet;
+using SafeguardMcp.Catalog;
 
 namespace SafeguardMcp.Tools;
+
+/// <summary>
+/// Endpoint context threaded into <see cref="ApiToolHelpers.GetErrorHint(int, string, bool, ErrorContext, ApiSchemaPropertyPath[])"/>
+/// so a 70001 / 70002 / 70009 hint can name the rejected token, the
+/// endpoint, and the closest valid property pulled from the catalog's
+/// already-extracted path graph. <see cref="Path"/> is the swagger
+/// template path (e.g. <c>/v4/AssetAccounts/{id}</c>) when one was
+/// matched, otherwise the concrete request path -- both are safe to
+/// echo back to the agent.
+/// </summary>
+internal readonly record struct ErrorContext(
+    string Service,
+    string Method,
+    string Path);
 
 /// <summary>
 /// Pure helper functions extracted from SafeguardApiTool for testability.
@@ -151,6 +166,110 @@ internal static class ApiToolHelpers
         }
     }
 
+    internal enum TruncationOutcome
+    {
+        /// <summary>Body was not a JSON array; caller should leave it intact.</summary>
+        NotArray,
+        /// <summary>Array fit under both budgets unchanged.</summary>
+        WithinBudget,
+        /// <summary>Records were dropped (either by maxItems or by maxBytes); JSON remains valid.</summary>
+        RecordsDropped,
+        /// <summary>A single record alone exceeds maxBytes; returned intact (no mid-record cut).</summary>
+        RecordTooLarge
+    }
+
+    /// <summary>
+    /// Whole-record-boundary truncation for JSON-array responses, enforcing both an
+    /// item-count budget (<paramref name="maxItems"/>) and a byte budget (<paramref name="maxBytes"/>)
+    /// while never producing a mid-object cut. The JSON output is always a valid array.
+    /// </summary>
+    /// <param name="body">Raw JSON response body.</param>
+    /// <param name="maxItems">Hard cap on the number of items kept.</param>
+    /// <param name="maxBytes">Soft cap on the serialized byte length; records are dropped from the tail until the budget is met (with a one-record floor).</param>
+    /// <param name="resultBody">When the outcome is anything other than <see cref="TruncationOutcome.NotArray"/>, the (possibly trimmed) JSON array body. Otherwise null.</param>
+    /// <param name="totalItems">Total number of items the upstream response contained.</param>
+    /// <param name="keptItems">Number of items present in <paramref name="resultBody"/> after truncation.</param>
+    internal static TruncationOutcome TryTruncateJsonArrayWithBudget(
+        string body,
+        int maxItems,
+        int maxBytes,
+        out string resultBody,
+        out int totalItems,
+        out int keptItems)
+    {
+        resultBody = null;
+        totalItems = 0;
+        keptItems = 0;
+
+        if (string.IsNullOrWhiteSpace(body))
+            return TruncationOutcome.NotArray;
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            return TruncationOutcome.NotArray;
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return TruncationOutcome.NotArray;
+
+            var items = new List<JsonElement>();
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                totalItems++;
+                items.Add(item.Clone());
+            }
+
+            var droppedByItemCap = false;
+            if (items.Count > maxItems)
+            {
+                items.RemoveRange(maxItems, items.Count - maxItems);
+                droppedByItemCap = true;
+            }
+
+            // Drop from the tail until the serialized array fits the byte budget.
+            // Always keep at least one record so we never emit "[]" when the upstream had data.
+            var droppedByByteCap = false;
+            string serialized = SerializeArray(items);
+            while (items.Count > 1 && serialized.Length > maxBytes)
+            {
+                items.RemoveAt(items.Count - 1);
+                droppedByByteCap = true;
+                serialized = SerializeArray(items);
+            }
+
+            keptItems = items.Count;
+            resultBody = serialized;
+
+            if (items.Count == 1 && serialized.Length > maxBytes)
+                return TruncationOutcome.RecordTooLarge;
+
+            if (droppedByItemCap || droppedByByteCap)
+                return TruncationOutcome.RecordsDropped;
+
+            return TruncationOutcome.WithinBudget;
+        }
+    }
+
+    private static string SerializeArray(List<JsonElement> items)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var item in items)
+                item.WriteTo(writer);
+            writer.WriteEndArray();
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
     // --- Error parsing ---
 
     internal static int ExtractStatusCode(string message)
@@ -209,14 +328,189 @@ internal static class ApiToolHelpers
                     + "For child collections, call the sub-resource endpoint (GET /v4/<parent>/{id}/<collection>) instead of dotting into them.";
             }
 
-            return "Safeguard exposes parent relationships as nested objects, not flat foreign-key columns. "
-                + "Use Asset.Id / Asset.Name (not AssetId / AssetName). Run Safeguard_Schema to see the nested shape.";
+            return "Run Safeguard_Schema for this endpoint to see valid property paths. "
+                + "Safeguard exposes parent relationships as nested objects (e.g. Asset.Id, Asset.Name), not flat foreign-key columns.";
         }
 
         if (statusCode == 400 && hasModelState)
             return "Fix the fields listed under 'Validation errors' and retry.";
 
         return GetErrorHint(statusCode);
+    }
+
+    /// <summary>
+    /// Context- and graph-aware hint for the 70001 / 70002 / 70009 family of
+    /// filter / orderby / fields property-name errors. The suggester pulls
+    /// candidates only from <paramref name="paths"/> (A.4's path graph for
+    /// the endpoint) and from the operator vocabulary on disk -- it never
+    /// invents a path. When no candidate scores above threshold the caller's
+    /// hint falls back to "use Safeguard_Schema" rather than guessing.
+    /// </summary>
+    internal static string GetErrorHint(
+        int statusCode,
+        string apiMessage,
+        bool hasModelState,
+        ErrorContext ctx,
+        ApiSchemaPropertyPath[] paths)
+    {
+        if (statusCode == 400 && !string.IsNullOrWhiteSpace(apiMessage))
+        {
+            if (apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
+                return BuildPropertyHint(apiMessage, paths, QueryParamKind.OrderBy, ctx);
+            if (apiMessage.Contains("Invalid filter property", StringComparison.OrdinalIgnoreCase))
+                return BuildPropertyHint(apiMessage, paths, QueryParamKind.Filter, ctx);
+            if (apiMessage.Contains("Invalid field property", StringComparison.OrdinalIgnoreCase))
+                return BuildPropertyHint(apiMessage, paths, QueryParamKind.Fields, ctx);
+        }
+
+        // Access-request 90408: "not authorized to use this request type" — wire-accurate but
+        // misleading. The real cause is almost always (account, asset) selected ≠ asset the
+        // policy is scoped to. Surface the entitlements check that resolves it, and point at
+        // the composite tool that pre-validates the same combination.
+        if (!string.IsNullOrWhiteSpace(apiMessage)
+            && (apiMessage.Contains("not authorized to use this request type", StringComparison.OrdinalIgnoreCase)
+                || apiMessage.Contains("90408", StringComparison.Ordinal)))
+        {
+            return "Appliance error 90408 ('not authorized to use this request type') usually means "
+                + "the (AccountId, AssetId) pair you posted does not have a policy of the requested "
+                + "AccessRequestType — the entitlement exists for that account but on a different asset. "
+                + "Run Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements "
+                + "query=accountIds=<id>&accessRequestType=<type> to see which asset the entitlement is "
+                + "scoped to, then re-POST with that AssetId. Or use Safeguard_OpenAccessRequest, "
+                + "which performs this pre-flight check automatically.";
+        }
+
+        return GetErrorHint(statusCode, apiMessage, hasModelState);
+    }
+
+    private static string BuildPropertyHint(
+        string apiMessage,
+        ApiSchemaPropertyPath[] paths,
+        QueryParamKind kind,
+        ErrorContext ctx)
+    {
+        var badName = ExtractQuotedToken(apiMessage);
+        var label = kind switch
+        {
+            QueryParamKind.OrderBy => "orderby",
+            QueryParamKind.Fields => "field",
+            QueryParamKind.Filter => "filter",
+            _ => "query"
+        };
+        var pathLabel = string.IsNullOrWhiteSpace(ctx.Path) ? null : ctx.Path;
+
+        if (string.IsNullOrWhiteSpace(badName))
+        {
+            var sbFallback = new StringBuilder();
+            sbFallback.Append("Rejected ").Append(label).Append(" property.");
+            sbFallback.Append(" Use Safeguard_Schema");
+            if (pathLabel != null)
+                sbFallback.Append(" path=").Append(pathLabel);
+            sbFallback.Append(" to see valid properties.");
+            return sbFallback.ToString();
+        }
+
+        // Operator-shape hint: only meaningful for filter, where the parser
+        // mistook an operator token for an identifier.
+        if (kind == QueryParamKind.Filter)
+        {
+            var opHint = TryGetOperatorSuggestion(badName);
+            if (!string.IsNullOrWhiteSpace(opHint))
+            {
+                var opSb = new StringBuilder();
+                opSb.Append('\'').Append(badName).Append("' is not a Safeguard filter operator. ");
+                opSb.Append(opHint);
+                return opSb.ToString();
+            }
+        }
+
+        var suggestions = (paths != null && paths.Length > 0)
+            ? PropertyPathSuggester.Suggest(badName, paths, kind)
+            : Array.Empty<string>();
+
+        var sb = new StringBuilder();
+        sb.Append('\'').Append(badName).Append("' is not a valid ").Append(label).Append(" property");
+        if (pathLabel != null)
+            sb.Append(" on ").Append(pathLabel);
+        sb.Append('.');
+
+        if (suggestions.Length > 0)
+        {
+            var best = suggestions[0];
+            if (kind == QueryParamKind.OrderBy)
+                sb.Append(" Try `").Append(best).Append("` (descending: `-").Append(best).Append("`).");
+            else
+                sb.Append(" Try `").Append(best).Append("`.");
+
+            if (suggestions.Length > 1)
+            {
+                sb.Append(" Other close matches: ");
+                for (int i = 1; i < suggestions.Length; i++)
+                {
+                    if (i > 1) sb.Append(", ");
+                    sb.Append('`').Append(suggestions[i]).Append('`');
+                }
+                sb.Append('.');
+            }
+        }
+        else
+        {
+            sb.Append(" No close match found; use Safeguard_Schema");
+            if (pathLabel != null)
+                sb.Append(" path=").Append(pathLabel);
+            sb.Append(" to see valid properties.");
+        }
+
+        if (kind == QueryParamKind.Filter || kind == QueryParamKind.OrderBy)
+        {
+            sb.Append(" (Note: filter/orderby sometimes use flattened forms like `Account.AssetName`")
+              .Append(" instead of the nested `Account.Asset.Name` shown in fields= and the response body;")
+              .Append(" if this also fails the field exists in the response but is not filterable -- pick a sibling.)");
+        }
+        else if (kind == QueryParamKind.Fields)
+        {
+            sb.Append(" For child collections, call `GET ");
+            sb.Append(pathLabel ?? "<endpoint>");
+            sb.Append("/{id}/<collection>` instead of dotting into them.");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string TryGetOperatorSuggestion(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        try
+        {
+            using var doc = QueryOperatorsResource.Parse();
+            if (!doc.RootElement.TryGetProperty("rules", out var rules))
+                return null;
+            if (!rules.TryGetProperty("unsupported", out var unsupported)
+                || unsupported.ValueKind != JsonValueKind.Array)
+                return null;
+
+            foreach (var item in unsupported.EnumerateArray())
+            {
+                if (!item.TryGetProperty("token", out var tokenEl)
+                    || tokenEl.ValueKind != JsonValueKind.String)
+                    continue;
+                var candidate = tokenEl.GetString();
+                if (string.IsNullOrEmpty(candidate)) continue;
+                if (!candidate.Equals(token, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (item.TryGetProperty("reason", out var reasonEl)
+                    && reasonEl.ValueKind == JsonValueKind.String)
+                {
+                    return reasonEl.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Resource is embedded; a parse failure is a build-time bug, not
+            // an agent-time concern. Fall through to the generic hint.
+        }
+        return null;
     }
 
     /// <summary>

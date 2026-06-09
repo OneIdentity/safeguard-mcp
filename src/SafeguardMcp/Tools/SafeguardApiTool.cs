@@ -115,13 +115,21 @@ internal sealed class SafeguardApiTool(
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Search the Safeguard API catalog to find available endpoints. "
         + "Returns matching endpoints with their HTTP method, path, summary, query parameters, and whether they accept a request body. "
+        + "When the search matches a workflow recipe, the recipe is listed first so multi-step operations don't get bypassed in favor of a single endpoint. "
         + "Use this to find the right endpoint before calling Safeguard_Execute.")]
     public string Safeguard_Discover(
         [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all services.")] string service = null,
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null)
+        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method);
+
+    /// <summary>
+    /// Pure formatter for <c>Safeguard_Discover</c>; isolated so unit tests can
+    /// exercise the recipe-ranking and synonym-expansion behavior without
+    /// having to construct the full DI graph.
+    /// </summary>
+    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
     {
-        var results = catalogProvider.GetEndpoints();
         var sb = new StringBuilder();
         const int limit = 80;
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
@@ -146,6 +154,18 @@ internal sealed class SafeguardApiTool(
             matches.Add((score, i));
         }
 
+        // Recipe matching only runs when there is a search; an empty search keeps
+        // the existing "everything in catalog order" behavior unchanged.
+        var recipeMatches = string.IsNullOrWhiteSpace(search)
+            ? Array.Empty<RecipeMatch>()
+            : RecipeIndex.Score(searchTerms).ToArray();
+
+        // Don't surface description-only recipe hits unless there's at least one
+        // strong (id or tag) match — otherwise "list assets" would prepend a
+        // noisy recipe block on every word-cloud search.
+        var hasStrongRecipe = recipeMatches.Any(m => m.Strong);
+        var emitRecipes = hasStrongRecipe;
+
         var batchSearched = !string.IsNullOrWhiteSpace(search)
             && search.Contains("batch", StringComparison.OrdinalIgnoreCase);
         var anyBatchMatch = false;
@@ -163,6 +183,15 @@ internal sealed class SafeguardApiTool(
 
         if (matches.Count == 0)
         {
+            // Empty-result fallback: if no endpoints matched but a recipe did,
+            // steer the agent toward the recipe rather than blanking out.
+            if (emitRecipes)
+            {
+                sb.Append("No endpoints matched '").Append(search).AppendLine("', but a related workflow recipe exists:");
+                AppendRecipeBlock(sb, recipeMatches, includeStrongCallout: true);
+                return sb.ToString().TrimEnd();
+            }
+
             if (batchSearched)
                 return BuildNoBatchHint() + "\n\nNo endpoints matched the search criteria. Try broader search terms.";
             return "No endpoints matched the search criteria. Try broader search terms.\nTip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.";
@@ -170,6 +199,17 @@ internal sealed class SafeguardApiTool(
 
         if (batchSearched && !anyBatchMatch)
             sb.AppendLine(BuildNoBatchHint()).AppendLine();
+
+        // Recipe block sits ABOVE the endpoint listing. Workflows describe
+        // multi-step compositions the agent is about to attempt one endpoint
+        // at a time; ranking them first prevents the "right URL, wrong
+        // workflow" failure mode.
+        if (emitRecipes)
+        {
+            AppendRecipeBlock(sb, recipeMatches, includeStrongCallout: true);
+            sb.AppendLine("----");
+            sb.Append("Endpoints (").Append(matches.Count).AppendLine("):");
+        }
 
         // Sort by descending relevance; ties keep catalog order (stable sort).
         matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
@@ -183,8 +223,8 @@ internal sealed class SafeguardApiTool(
             sb.Append(ep.Service.PadRight(13));
             sb.Append(ep.Path);
             if (ep.HasBody) sb.Append("  [body]");
-            if (!string.IsNullOrEmpty(ep.Params)) sb.Append("  params: ").Append(ep.Params);
             sb.Append("  -- ").AppendLine(ep.Summary);
+            AppendParameterDetails(sb, ep);
             shown++;
         }
 
@@ -196,17 +236,55 @@ internal sealed class SafeguardApiTool(
         return sb.ToString();
     }
 
+    private static void AppendRecipeBlock(StringBuilder sb, IReadOnlyList<RecipeMatch> matches, bool includeStrongCallout)
+    {
+        var strong = matches.FirstOrDefault(m => m.Strong);
+        if (includeStrongCallout && strong != null)
+        {
+            sb.Append("Strong recipe match: ").Append(strong.Recipe.Id)
+                .Append(" -- ").AppendLine(strong.Recipe.Name);
+            sb.Append("  Call: Safeguard_Workflows id=\"").Append(strong.Recipe.Id).AppendLine("\"");
+            if (!string.IsNullOrWhiteSpace(strong.Recipe.Tool))
+            {
+                sb.Append("  Or call the composite tool directly: ")
+                    .AppendLine(strong.Recipe.Tool);
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Recipes that match (call Safeguard_Workflows id=\"<id>\"):");
+        foreach (var match in matches)
+        {
+            sb.Append("  ").Append(match.Recipe.Id.PadRight(28))
+                .Append("  ").AppendLine(match.Recipe.Name);
+            if (!string.IsNullOrWhiteSpace(match.Recipe.Tool))
+            {
+                sb.Append("    composite tool: ").AppendLine(match.Recipe.Tool);
+            }
+            if (match.Recipe.Tags.Count > 0)
+            {
+                sb.Append("    tags: ").AppendLine(string.Join(", ", match.Recipe.Tags));
+            }
+        }
+        sb.AppendLine();
+    }
+
     [McpServerTool(Name = "Safeguard_Execute", Title = "Execute Safeguard API",
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("Execute any Safeguard API endpoint. The service (Core, Appliance, Notification) "
         + "is automatically determined from the endpoint path. "
-        + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format.")]
+        + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format. "
+        + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json. "
+        + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
+        + "always read the data field for the actual API payload, and meta.notices for applied auto-limit / paging hints / truncation events. "
+        + "Responses are capped at ~30 KB; for fat endpoints (audit logs, Assets, AssetAccounts) "
+        + "use fields= to project, or follow meta.paging.next to fetch the next page.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). The correct service is auto-detected from the path.")] string path,
         [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
-        [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets).")]
+        [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets). GET-only — non-GET methods must use 'json'.")]
         string format = "json",
         CancellationToken ct = default)
         => await DispatchAsync(server, method, path, query, body, format, ct);
@@ -215,10 +293,12 @@ internal sealed class SafeguardApiTool(
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the request body schema and response schema for a Safeguard API endpoint. "
         + "Returns property names, types, required fields, and descriptions. "
-        + "Use this before POST or PUT calls to understand the JSON body format.")]
+        + "Use this before POST or PUT calls to understand the JSON body format. "
+        + "Set depth>1 (max 3) to expand nested object/array properties one or more levels.")]
     public string Safeguard_Schema(
         [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users').")] string path,
-        [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST")
+        [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST",
+        [Description("How many levels deep to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/AssetAccounts').");
@@ -227,9 +307,24 @@ internal sealed class SafeguardApiTool(
         var normalizedMethod = ParseMethod(method);
         var service = ResolveService(normalizedPath);
         var serviceName = GetServiceName(service);
+        var clampedDepth = Math.Max(1, Math.Min(depth, 3));
 
         var requestSchema = catalogProvider.GetSchema(normalizedMethod, serviceName, normalizedPath);
-        var responseSchema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath);
+
+        // Prefer the response schema for the requested method (PUT/POST often return the
+        // updated entity); fall back to GET-on-same-path so query-only callers still get a
+        // useful response shape.
+        var responseSchema = catalogProvider.GetResponseSchema(normalizedMethod, serviceName, normalizedPath);
+        var responseHeading = $"RESPONSE BODY ({normalizedMethod})";
+        if (responseSchema == null && normalizedMethod != "GET")
+        {
+            responseSchema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath);
+            responseHeading = "RESPONSE BODY (GET)";
+        }
+        else if (normalizedMethod == "GET")
+        {
+            responseHeading = "RESPONSE BODY (GET)";
+        }
 
         if (requestSchema == null && responseSchema == null)
         {
@@ -243,16 +338,91 @@ internal sealed class SafeguardApiTool(
             .Append(" (").Append(serviceName).AppendLine(")");
 
         if (requestSchema != null)
-            AppendSchemaSection(sb, "REQUEST BODY", requestSchema.Value);
-        else
+        {
+            AppendSchemaSection(sb, "REQUEST BODY", requestSchema.Value, clampedDepth, catalogProvider);
+        }
+        else if (HasRequestBody(normalizedMethod, serviceName, normalizedPath))
+        {
             sb.AppendLine().AppendLine("REQUEST BODY:").AppendLine("  No request schema available.");
+        }
+        else if (normalizedMethod is "POST" or "PUT" or "PATCH")
+        {
+            sb.AppendLine().AppendLine("REQUEST BODY:").AppendLine("  No request body required.");
+        }
 
         if (responseSchema != null)
-            AppendSchemaSection(sb, "RESPONSE BODY (GET)", responseSchema.Value);
+            AppendSchemaSection(sb, responseHeading, responseSchema.Value, clampedDepth, catalogProvider);
         else
-            sb.AppendLine().AppendLine("RESPONSE BODY (GET):").AppendLine("  No response schema available.");
+            sb.AppendLine().Append(responseHeading).AppendLine(":").AppendLine("  No response schema available.");
+
+        AppendPropertyPaths(sb, responseSchema, requestSchema);
 
         return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendPropertyPaths(StringBuilder sb, ApiSchema? responseSchema, ApiSchema? requestSchema)
+    {
+        // Prefer the response graph (matches `fields=` and the appliance's serializer ~95%);
+        // fall back to the request body graph for write-only endpoints.
+        var primary = responseSchema?.Paths;
+        var primaryHeading = "Field paths (for fields=; ~90%+ also valid for filter/orderby)";
+        if (primary == null || primary.Length == 0)
+        {
+            primary = requestSchema?.Paths;
+            primaryHeading = "Body field paths (for request-body construction)";
+        }
+        if (primary == null || primary.Length == 0)
+            return;
+
+        var fieldPaths = primary.Where(p => !p.IsSynthetic).ToArray();
+        var syntheticPaths = primary.Where(p => p.IsSynthetic).ToArray();
+
+        sb.AppendLine().Append("Property paths:").AppendLine();
+        sb.Append("  ").Append(primaryHeading).AppendLine(":");
+        if (fieldPaths.Length == 0)
+        {
+            sb.AppendLine("    (none)");
+        }
+        else
+        {
+            foreach (var p in fieldPaths)
+                sb.Append("    ").Append(p.Path).Append("  ").AppendLine(p.Type);
+        }
+
+        if (syntheticPaths.Length > 0)
+        {
+            sb.AppendLine("  Synthetic count paths (orderby/filter only):");
+            foreach (var p in syntheticPaths)
+                sb.Append("    ").Append(p.Path).Append("  ").AppendLine(p.Type);
+        }
+
+        sb.AppendLine("  Notes:")
+            .AppendLine("    - Paths are case-insensitive.")
+            .AppendLine("    - filter/orderby may use flattened forms (e.g. Account.AssetName) where")
+            .AppendLine("      fields walks the full graph (Account.Asset.Name). When the appliance")
+            .AppendLine("      returns 70001 / 70009, try the flattened sibling at the parent level.")
+            .AppendLine("    - Enum properties cannot be sorted in the pre-filter (HTTP 70019); they")
+            .AppendLine("      sort post-fetch only.");
+
+        if (primary.Length >= 500)
+        {
+            sb.AppendLine("    - Path closure was capped at 500 entries; deeply nested branches may")
+                .AppendLine("      not appear above. Use Safeguard_Execute and inspect a sample row.");
+        }
+    }
+
+    private bool HasRequestBody(string method, string service, string path)
+    {
+        foreach (var endpoint in catalogProvider.GetEndpoints())
+        {
+            if (string.Equals(endpoint.Method, method, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(endpoint.Service, service, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(endpoint.Path, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return endpoint.HasBody;
+            }
+        }
+        return false;
     }
 
     [McpServerTool(Name = "Safeguard_QueryHelp", Title = "Safeguard Query Syntax",
@@ -264,9 +434,13 @@ internal sealed class SafeguardApiTool(
     {
         var sb = new StringBuilder();
         sb.AppendLine("Safeguard query syntax:")
-            .AppendLine("  Filter operators: eq, ne, gt, ge, lt, le, contains, ieq, icontains, sw, isw, ew, iew, in [...], not_in [...]")
+            .AppendLine("  Filter operators: eq, ne, gt, ge, lt, le, contains, icontains, ieq, sw, isw, ew, iew, in [...]")
+            .AppendLine("  Operators are case-insensitive; string literals are case-sensitive (use ieq/icontains/isw/iew for case-insensitive text)")
             .AppendLine("  String values use single quotes: filter=Name eq 'Admin'")
+            .AppendLine("  Null literal: filter=Description eq null  /  filter=Description ne null")
             .AppendLine("  Combine expressions with and, or, not, and parentheses")
+            .AppendLine("  No 'not_in' / 'not in' operator: use filter=not (Id in [1,2,3])")
+            .AppendLine("  Collections expose synthetic .Count for filter/orderby: filter=ScopeItems.Count gt 0")
             .AppendLine("  Nested properties: filter=TaskProperties.HasAccountTaskFailure eq true")
             .AppendLine("  Relationships: parents are nested objects, NOT flat FK columns.")
             .AppendLine("    To-one is dottable: fields=Asset.Id,Asset.Name (NOT AssetId/AssetName).")
@@ -331,6 +505,72 @@ internal sealed class SafeguardApiTool(
         return sb.ToString().TrimEnd();
     }
 
+    [McpServerTool(Name = "Safeguard_Enum", Title = "Get Enum Values",
+        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("List the allowed values for a Safeguard enum schema (e.g. 'AccessRequestType', "
+        + "'EventName', 'ScheduleType'). Call without arguments to list all known enum names. "
+        + "Use this to resolve enum<...>-typed properties surfaced by Safeguard_Schema, especially "
+        + "for the high-cardinality ones (EventName has 600+ values) that are not inlined.")]
+    public string Safeguard_Enum(
+        [Description("Enum schema name (case-insensitive). Omit to list all known enum names.")]
+        string name = null,
+        [Description("Optional case-insensitive substring filter to narrow long lists.")]
+        string pattern = null,
+        [Description("Maximum values to return. Default 50.")] int limit = 50)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            var names = catalogProvider.GetEnumNames();
+            if (names.Count == 0)
+            {
+                return "No enums are available. Connect first with Safeguard_Connect to load "
+                    + "the dynamic catalog from the appliance swagger.";
+            }
+            var sb0 = new StringBuilder();
+            sb0.Append(names.Count).AppendLine(" enum(s) available:");
+            foreach (var n in names)
+                sb0.Append("  ").AppendLine(n);
+            sb0.AppendLine().AppendLine("Call Safeguard_Enum name=\"<Name>\" to see allowed values.");
+            return sb0.ToString().TrimEnd();
+        }
+
+        var values = catalogProvider.GetEnum(name);
+        if (values == null)
+        {
+            return $"No enum named '{name}' is available. "
+                + "Call Safeguard_Enum (no args) to list known enum names. "
+                + "Names are case-insensitive but must match a swagger schema name exactly.";
+        }
+
+        IEnumerable<string> filtered = values;
+        if (!string.IsNullOrWhiteSpace(pattern))
+        {
+            filtered = values.Where(v => v.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+        }
+        var clampedLimit = Math.Max(1, limit);
+        var matched = filtered.ToArray();
+        var shown = matched.Take(clampedLimit).ToArray();
+
+        var sb = new StringBuilder();
+        sb.Append("Enum: ").AppendLine(name);
+        sb.Append("Total values: ").Append(values.Length);
+        if (!string.IsNullOrWhiteSpace(pattern))
+            sb.Append("  (filter: '").Append(pattern).Append("' matched ").Append(matched.Length).Append(')');
+        sb.AppendLine();
+        if (shown.Length == 0)
+        {
+            sb.AppendLine("  (no matches)");
+        }
+        else
+        {
+            foreach (var v in shown)
+                sb.Append("  ").AppendLine(v);
+        }
+        if (matched.Length > shown.Length)
+            sb.Append("  ... showing ").Append(shown.Length).Append(" of ").Append(matched.Length).AppendLine(".");
+        return sb.ToString().TrimEnd();
+    }
+
     private async Task<string> DispatchAsync(
         McpServer server,
         string method,
@@ -374,7 +614,7 @@ internal sealed class SafeguardApiTool(
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
             }
 
             FullResponse response;
@@ -389,43 +629,187 @@ internal sealed class SafeguardApiTool(
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
         }
         catch (McpException ex)
         {
-            throw new McpException(FormatErrorResponse(ex));
+            throw new McpException(FormatErrorResponse(ex, normalizedMethod, GetServiceName(service), normalizedPath));
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit)
+    private string FormatResponse(string body, string format, int injectedLimit, IDictionary<string, string> parameters, string method = null, string path = null)
     {
-        var notes = new List<string>();
-        var formattedBody = body ?? string.Empty;
+        var safeBody = body ?? string.Empty;
+        var notices = new List<Notice>();
 
         if (injectedLimit > 0)
         {
-            notes.Add($"Note: Auto-applied limit={injectedLimit}. Specify 'limit' in the query to override it.");
+            notices.Add(new Notice(
+                NoticeKinds.AutoLimitApplied,
+                $"Auto-applied limit={injectedLimit}.",
+                "Specify 'limit' in the query to override; pass page=N for further pages."));
         }
 
-        if (format == "json" && ApiToolHelpers.TryTruncateJsonArray(formattedBody, MaxResultsBeforeTruncation, out var truncatedBody, out var totalItems))
+        var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
+        if (recipeNotice != null)
+            notices.Add(recipeNotice);
+
+        // Determine effective limit/page for the paging block.
+        int? effectiveLimit = null;
+        var limitSource = "none";
+        if (parameters != null && parameters.TryGetValue("limit", out var limitText)
+            && int.TryParse(limitText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLimit)
+            && parsedLimit > 0)
         {
-            formattedBody = truncatedBody;
-            notes.Add($"Returned {totalItems} items. Showing the first {MaxResultsBeforeTruncation}. Use filter, fields, page, or limit to narrow the result.");
+            effectiveLimit = parsedLimit;
+            limitSource = injectedLimit > 0 ? "auto" : "explicit";
         }
 
-        if (formattedBody.Length > MaxResponseChars)
+        var currentPage = 0;
+        if (parameters != null && parameters.TryGetValue("page", out var pageText)
+            && int.TryParse(pageText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPage)
+            && parsedPage >= 0)
         {
-            formattedBody = formattedBody[..MaxResponseChars];
-            notes.Add($"Response truncated to {MaxResponseChars} characters. Use fields, filter, page/limit, or format='csv' to reduce payload size.");
+            currentPage = parsedPage;
         }
 
-        if (notes.Count == 0)
-            return formattedBody;
+        if (format == "csv")
+        {
+            // CSV: never prepend or interleave prose into the data. Append meta as a
+            // single trailing comment line only when there is something to surface.
+            // Paging info for CSV is best-effort: we don't parse the CSV to count rows here,
+            // so we surface only what we already know from the request.
+            PagingInfo csvPaging = null;
+            if (effectiveLimit.HasValue)
+            {
+                csvPaging = new PagingInfo
+                {
+                    Page = currentPage,
+                    Limit = effectiveLimit,
+                    Returned = -1,
+                    LimitSource = limitSource,
+                    More = false,
+                    Next = ResponseEnvelopeBuilder.BuildNextQueryString(parameters, currentPage, effectiveLimit)
+                };
+            }
 
-        return string.Join("\n", notes) + "\n\n" + formattedBody;
+            return ResponseEnvelopeBuilder.BuildCsvWithMeta(safeBody, notices, csvPaging, truncation: null);
+        }
+
+        // JSON path.
+        var truncationOutcome = ApiToolHelpers.TryTruncateJsonArrayWithBudget(
+            safeBody,
+            MaxResultsBeforeTruncation,
+            MaxResponseChars,
+            out var truncatedBody,
+            out var totalItems,
+            out var keptItems);
+
+        var isArray = truncationOutcome != ApiToolHelpers.TruncationOutcome.NotArray;
+        var dataBody = isArray ? truncatedBody : safeBody;
+        TruncationInfo truncationInfo = null;
+
+        switch (truncationOutcome)
+        {
+            case ApiToolHelpers.TruncationOutcome.RecordsDropped:
+                truncationInfo = new TruncationInfo
+                {
+                    Applied = true,
+                    Kind = "records_dropped",
+                    ReturnedRecords = keptItems,
+                    TotalRecords = totalItems
+                };
+                notices.Add(new Notice(
+                    NoticeKinds.BodyTruncatedRecords,
+                    $"Returned {totalItems} items; trimmed to the first {keptItems} to fit the response cap.",
+                    "Use filter=, fields=, or page=/limit= to narrow the result."));
+                break;
+            case ApiToolHelpers.TruncationOutcome.RecordTooLarge:
+                truncationInfo = new TruncationInfo
+                {
+                    Applied = true,
+                    Kind = "record_too_large",
+                    ReturnedRecords = keptItems,
+                    TotalRecords = totalItems
+                };
+                notices.Add(new Notice(
+                    NoticeKinds.RecordTooLargeForCap,
+                    $"A single record exceeds the response cap (~{MaxResponseChars} chars). Returned intact to preserve JSON validity.",
+                    "Use fields= to project (e.g. fields=Id,ObjectName,Action,LogTime to drop OldValue/NewValue), or query the per-record path if available."));
+                break;
+        }
+
+        // Non-array: never mid-character truncate. Surface a notice if oversize.
+        if (!isArray && dataBody.Length > MaxResponseChars)
+        {
+            notices.Add(new Notice(
+                NoticeKinds.BodyTruncatedChars,
+                $"Response exceeds the {MaxResponseChars}-character cap. Body returned intact to preserve JSON validity.",
+                "Use fields= to project, or call a more specific endpoint to reduce payload size."));
+        }
+
+        PagingInfo paging = null;
+        if (isArray)
+        {
+            var truncationApplied = truncationInfo != null && truncationInfo.Applied;
+            var more = truncationApplied
+                || (effectiveLimit.HasValue && keptItems >= effectiveLimit.Value);
+            string next = null;
+            if (effectiveLimit.HasValue && more)
+                next = ResponseEnvelopeBuilder.BuildNextQueryString(parameters, currentPage, effectiveLimit);
+
+            paging = new PagingInfo
+            {
+                Page = currentPage,
+                Limit = effectiveLimit,
+                Returned = keptItems,
+                LimitSource = limitSource,
+                More = more,
+                Next = next
+            };
+
+            if (more && next != null && truncationInfo == null)
+            {
+                notices.Add(new Notice(
+                    NoticeKinds.PagingMoreAvailable,
+                    "More records may be available.",
+                    $"Fetch the next page with query='{next}'."));
+            }
+        }
+
+        return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
     }
 
-    private string FormatErrorResponse(McpException ex)
+    private static Notice BuildRecipeCrossLinkNotice(string method, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        // Only surface composite-tool hints for the highest-leverage launch path; broader
+        // path-to-recipe matching could become noisy and would belong in RecipeIndex if
+        // expanded. Currently the only composite tool is Safeguard_OpenAccessRequest.
+        var segments = GetPathSegments(path);
+        if (segments.Length == 0)
+            return null;
+
+        // /v4/AccessRequests (POST creates) and /v4/AccessRequests/{id}/InitializeSession,
+        // /CheckOutPassword, /CheckOutSshKey, /CheckOutApiKeys, /CheckOutFile are all part
+        // of the launch workflow.
+        if (!segments.Any(s => s.Equals("AccessRequests", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+        var suggestion = verb == "POST" && segments.Length == 2
+            ? "Safeguard_OpenAccessRequest performs the pre-flight entitlement check and submits the request in one call."
+            : "Use Safeguard_Workflows id=\"session-access-request\" for the full launch workflow.";
+
+        return new Notice(
+            NoticeKinds.WorkflowRecipeSuggested,
+            "Related workflow recipe: session-access-request (composite tool: Safeguard_OpenAccessRequest).",
+            suggestion);
+    }
+
+    private string FormatErrorResponse(McpException ex, string method, string serviceName, string requestPath)
     {
         var rawMessage = ex.Message ?? "Safeguard API request failed.";
         var statusCode = ExtractStatusCode(rawMessage);
@@ -455,11 +839,55 @@ internal sealed class SafeguardApiTool(
             lines.Add(modelStateSummary);
         }
 
-        var hint = GetErrorHint(statusCode, rawMessage, apiMessage, !string.IsNullOrWhiteSpace(modelStateSummary));
+        var hint = GetErrorHint(
+            statusCode,
+            rawMessage,
+            apiMessage,
+            !string.IsNullOrWhiteSpace(modelStateSummary),
+            method,
+            serviceName,
+            requestPath);
         if (!string.IsNullOrWhiteSpace(hint))
             lines.Add($"Hint: {hint}");
 
         return string.Join("\n", lines);
+    }
+
+    private (string TemplatePath, ApiSchemaPropertyPath[] Paths) ResolveErrorContext(
+        string method, string serviceName, string requestPath)
+    {
+        var endpoints = catalogProvider.GetEndpoints();
+        string templatePath = null;
+        for (int i = 0; i < endpoints.Length; i++)
+        {
+            ref readonly var endpoint = ref endpoints[i];
+            if (!endpoint.Service.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!PathsMatch(endpoint.Path, requestPath))
+                continue;
+            // Prefer the endpoint matching the actual method; otherwise keep
+            // looking but remember the first path match as a fallback.
+            if (endpoint.Method.Equals(method, StringComparison.OrdinalIgnoreCase))
+            {
+                templatePath = endpoint.Path;
+                break;
+            }
+            templatePath ??= endpoint.Path;
+        }
+
+        templatePath ??= requestPath;
+
+        var response = catalogProvider.GetResponseSchema(method, serviceName, templatePath)
+            ?? catalogProvider.GetResponseSchema("GET", serviceName, templatePath);
+        var request = catalogProvider.GetSchema(method, serviceName, templatePath);
+
+        ApiSchemaPropertyPath[] paths = null;
+        if (response != null && response.Value.Paths != null && response.Value.Paths.Length > 0)
+            paths = response.Value.Paths;
+        else if (request != null && request.Value.Paths != null && request.Value.Paths.Length > 0)
+            paths = request.Value.Paths;
+
+        return (templatePath, paths ?? Array.Empty<ApiSchemaPropertyPath>());
     }
 
     private static int ExtractStatusCode(string message)
@@ -540,9 +968,19 @@ internal sealed class SafeguardApiTool(
         _ => element.ToString()
     };
 
-    private static string GetErrorHint(int statusCode, string rawMessage, string apiMessage, bool hasModelState)
+    private string GetErrorHint(
+        int statusCode,
+        string rawMessage,
+        string apiMessage,
+        bool hasModelState,
+        string method,
+        string serviceName,
+        string requestPath)
     {
-        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState);
+        var (templatePath, paths) = ResolveErrorContext(method, serviceName, requestPath);
+        var ctx = new ErrorContext(serviceName, method, templatePath);
+
+        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState, ctx, paths);
         if (!string.IsNullOrWhiteSpace(hint))
             return hint;
 
@@ -714,6 +1152,105 @@ internal sealed class SafeguardApiTool(
             + "call them in parallel by id from the client.";
     }
 
+    // Renders the parameter contract for one endpoint underneath its header line. Preferred
+    // parameters (the audit-endpoint scoping params marked "(Preferred over 'filter')" in the
+    // controller XML docs) are listed first with a "[preferred]" tag and short description.
+    // Path parameters appear separately so the agent doesn't try to send them as query strings.
+    // The Defaults: line is built straight from the preferred parameter descriptions (e.g. the
+    // "Default 1 day before endDate" sentence on startDate) — no hand-maintained hint table.
+    internal static void AppendParameterDetails(StringBuilder sb, ApiEndpoint endpoint)
+    {
+        var infos = endpoint.ParamInfos;
+        if (infos == null || infos.Length == 0)
+            return;
+
+        var preferred = new List<ParamInfo>();
+        var otherQuery = new List<ParamInfo>();
+        var pathParams = new List<ParamInfo>();
+
+        foreach (var p in infos)
+        {
+            if (string.Equals(p.In, "path", StringComparison.OrdinalIgnoreCase))
+                pathParams.Add(p);
+            else if (p.PreferredOverFilter)
+                preferred.Add(p);
+            else
+                otherQuery.Add(p);
+        }
+
+        if (preferred.Count > 0)
+        {
+            sb.Append("  Preferred params: ");
+            for (int i = 0; i < preferred.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(preferred[i].Name);
+                if (!string.IsNullOrEmpty(preferred[i].Type))
+                    sb.Append(" (").Append(preferred[i].Type).Append(')');
+                sb.Append(" [preferred]");
+            }
+            sb.AppendLine();
+        }
+
+        if (otherQuery.Count > 0)
+        {
+            sb.Append("  Other params:     ");
+            for (int i = 0; i < otherQuery.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(otherQuery[i].Name);
+                if (otherQuery[i].Required)
+                    sb.Append('*');
+            }
+            sb.AppendLine();
+        }
+
+        if (pathParams.Count > 0)
+        {
+            sb.Append("  Path params:      ");
+            for (int i = 0; i < pathParams.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append('{').Append(pathParams[i].Name).Append('}');
+            }
+            sb.AppendLine();
+        }
+
+        var defaults = BuildDefaultsLine(preferred);
+        if (defaults != null)
+            sb.Append("  Defaults:         ").AppendLine(defaults);
+
+        foreach (var p in preferred)
+        {
+            if (!string.IsNullOrWhiteSpace(p.Description))
+                sb.Append("    - ").Append(p.Name).Append(": ").AppendLine(p.Description);
+        }
+    }
+
+    private static string BuildDefaultsLine(List<ParamInfo> preferred)
+    {
+        var parts = new List<string>();
+        foreach (var p in preferred)
+        {
+            if (string.IsNullOrWhiteSpace(p.Description))
+                continue;
+            // Extract any "Default ..." sentence from the controller XML doc, e.g.
+            // "Log time range start. Default 1 day before endDate. (Preferred over 'filter')."
+            var match = DefaultSentenceRegex.Match(p.Description);
+            if (match.Success)
+            {
+                var text = match.Groups[1].Value.Trim().TrimEnd('.');
+                parts.Add($"{p.Name} = {text}");
+            }
+        }
+        return parts.Count == 0 ? null : string.Join("; ", parts);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex DefaultSentenceRegex =
+        new(@"Default\s+([^.]+)\.",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private static int ScoreMatch(IReadOnlyList<string> terms, string path, string summary)
     {
         if (terms == null || terms.Count == 0)
@@ -758,7 +1295,7 @@ internal sealed class SafeguardApiTool(
         return normalized;
     }
 
-    private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema)
+    private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema, int depth, CatalogProvider catalog)
     {
         sb.AppendLine().Append(heading).AppendLine(":");
         if (!string.IsNullOrWhiteSpace(schema.TypeName))
@@ -778,14 +1315,14 @@ internal sealed class SafeguardApiTool(
             sb.AppendLine("    None");
         else
             foreach (var property in required)
-                AppendSchemaProperty(sb, property);
+                AppendSchemaProperty(sb, property, indent: 4, depth: depth, catalog);
 
         sb.AppendLine("  Optional:");
         if (optional.Length == 0)
             sb.AppendLine("    None");
         else
             foreach (var property in optional)
-                AppendSchemaProperty(sb, property);
+                AppendSchemaProperty(sb, property, indent: 4, depth: depth, catalog);
 
         var hints = SchemaHints.GetHints(schema);
         if (hints != null)
@@ -796,16 +1333,47 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property)
+    // Inlines enum vocabularies up to this many values; beyond that, prints a pointer to
+    // Safeguard_Enum so the agent can fetch the full list explicitly. Matches the threshold
+    // recommended by the live-swagger inventory (134 enums; 8 exceed 30 values).
+    private const int InlineEnumValueThreshold = 30;
+
+    private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property, int indent, int depth, CatalogProvider catalog)
     {
-        sb.Append("    ").Append(property.Name).Append(" (").Append(property.Type).Append(')');
+        sb.Append(' ', indent).Append(property.Name).Append(" (").Append(property.Type).Append(')');
         if (!string.IsNullOrWhiteSpace(property.Description))
             sb.Append(" - ").Append(property.Description.Trim());
         sb.AppendLine();
 
-        if (property.NestedFields != null && property.NestedFields.Length > 0)
+        // Enum vocabularies: inline up to N values, otherwise point at Safeguard_Enum.
+        if (!string.IsNullOrEmpty(property.EnumName) && catalog != null)
         {
-            sb.Append("      Fields: ").AppendLine(string.Join(", ", property.NestedFields));
+            var values = catalog.GetEnum(property.EnumName);
+            if (values != null && values.Length > 0)
+            {
+                if (values.Length <= InlineEnumValueThreshold)
+                {
+                    sb.Append(' ', indent + 2).Append("Allowed: ").AppendLine(string.Join(", ", values));
+                }
+                else
+                {
+                    sb.Append(' ', indent + 2)
+                        .Append("Allowed: ").Append(values.Length)
+                        .Append(" values — call Safeguard_Enum name=\"").Append(property.EnumName).AppendLine("\".");
+                }
+            }
+        }
+
+        // depth>1: walk parsed-time NestedProperties recursively. Fall back to the legacy
+        // immediate-name list when no full child schemas were captured (e.g. unresolvable refs).
+        if (depth > 1 && property.NestedProperties != null && property.NestedProperties.Length > 0)
+        {
+            foreach (var child in property.NestedProperties)
+                AppendSchemaProperty(sb, child, indent + 2, depth - 1, catalog);
+        }
+        else if (property.NestedFields != null && property.NestedFields.Length > 0)
+        {
+            sb.Append(' ', indent + 2).Append("Fields: ").AppendLine(string.Join(", ", property.NestedFields));
         }
     }
 
