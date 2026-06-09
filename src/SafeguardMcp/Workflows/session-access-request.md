@@ -3,6 +3,7 @@ id: session-access-request
 name: Session Access Request (RDP/SSH)
 description: Request and launch a privileged session (RDP or SSH) through Safeguard's proxy.
 tags: session, access request, RDP, SSH, proxy, recording, privileged session, launch, mstsc, rdp launch, request
+tool: Safeguard_LaunchAccessRequest
 ---
 
 ID: session-access-request
@@ -11,44 +12,66 @@ Goal: Request a privileged session (RDP or SSH) that is proxied and recorded by 
 
 Context: Session requests are distinct from password checkouts. The user never sees the credential — Safeguard proxies the connection, injects credentials, and records all activity. Sessions auto-close after 10 minutes of inactivity.
 
-Typical workflow: Request → Approve → Available → Launch → Check-in
+Preferred path: Use the composite tool Safeguard_LaunchAccessRequest. It pre-validates the (account, asset, type) combination against /v4/Me/RequestEntitlements before submitting, which catches the most common failure mode — appliance error 90408 "not authorized to use this request type" — that actually means "your entitlement for this type is scoped to a different asset". The raw multi-step flow below is the same operation broken into individual calls for diagnostics.
+
+Typical workflow: Discover entitlements → Request → Approve → Available → Launch → Check-in
 
 Steps:
-1. Find available session accounts (what can the current user request):
-   - GET /v4/Me/RequestableAccounts with query: filter=AllowSessionRequests eq true&fields=Id,Name,Asset.Name,Asset.NetworkAddress,AllowSessionRequests
+1. Find what the current user can request (account+asset+type combinations):
+   - GET /v4/Me/RequestEntitlements
+   - Useful query: accessRequestType=RemoteDesktop&fields=Account.Id,Account.Name,Asset.Id,Asset.Name,Policy.Name
+   - Each row carries the Account, Asset, and Policy you must combine; AccountId+AssetId from the same row is the only combination the appliance will accept for that policy.
+   - Note: /v4/Me/AccessRequestAssets does NOT expose an AccessRequestTypes field; resolve types via the entitlement's Policy.AccessRequestProperties.AccessRequestType.
 2. Create a session access request:
    - POST /v4/AccessRequests with body:
      {
        "AccountId": <accountId>,
+       "AssetId": <assetId>,
        "AccessRequestType": "RemoteDesktop",
-       "ReasonCode": null,
+       "ReasonCodeId": null,
        "ReasonComment": "Routine maintenance",
        "RequestedDurationDays": 0,
        "RequestedDurationHours": 2,
+       "RequestedDurationMinutes": 0,
        "IsEmergency": false
      }
-   - AccessRequestType options: "RemoteDesktop" (RDP), "Ssh", "Telnet", "RemoteDesktopApplication"
-   - Values verified by Safeguard_Enum name="AccessRequestType". Use the enum spelling exactly;
-     the API rejects case-folded variants and shorthand like "RDP"/"SSH".
+   - AccessRequestType values: "Password", "RemoteDesktop", "Ssh", "Telnet", "SshKey",
+     "RemoteDesktopApplication", "ApiKey", "File". Verified by Safeguard_Enum name="AccessRequestType".
+     The API rejects shorthand like "RDP"/"SSH" and is case-sensitive — use the exact spelling.
 3. Check request status:
-   - GET /v4/AccessRequests/{requestId} -> watch State field
-   - States: Pending → Approved → Available → Expired/CheckedIn
-4. Once Available, get connection info:
-   - GET /v4/AccessRequests/{requestId}/SessionConnectionInfo
-   - Returns: Hostname, Port, UserName, ConnectionString, Protocol
-   - For RDP: provides .rdp file download or connection parameters
-   - For SSH: provides hostname:port with injected credentials
+   - GET /v4/AccessRequests/{requestId} — watch the State field
+   - Common states: Pending → Approved → RequestAvailable / Available → Expired / Complete
+   - Auto-approval policies skip Pending and land in Available immediately.
+4. Once Available, initialize the session:
+   - POST /v4/AccessRequests/{requestId}/InitializeSession with body {}
+   - Returns SessionsLaunchData. For each type:
+     - RemoteDesktop / RemoteDesktopApplication: RdpConnectionFile is the literal .rdp file contents
+       built by the appliance (gateway hostname, certificate, token, RDP display settings). Save it
+       to disk and run mstsc against it. Do NOT hand-build a .rdp file — any server-side RDP setting
+       change (gateway, display, certificate) would silently drift.
+     - Ssh: SshConnectionString in the form
+       vaultaddress=...@token=...@user@host:port@scbHost; ConnectionUri is the ssh:// SCALUS handler form.
+     - Telnet: TelnetConnectionString and ConnectionUri.
 5. Launch the session:
-   - RDP: Use the connection string with mstsc or SCALUS-registered handler
-   - SSH: Connect to the proxy address with PuTTY or SCALUS-registered handler
-   - Credentials are injected by Safeguard — user never sees the password
+   - RDP: mstsc <saved.rdp>, or open the ConnectionUri with the SCALUS handler.
+   - SSH/Telnet: use the connection string or ConnectionUri.
+   - Credentials are injected by Safeguard — the user never sees the password.
 6. Check in when done:
    - POST /v4/AccessRequests/{requestId}/CheckIn
-   - Or the session expires automatically based on policy duration
+   - Or the session expires automatically based on policy duration.
+
+Common failures:
+- Appliance error 90408 ("not authorized to use this request type") almost always means the
+  (account, asset) pair you selected does not have a policy of the requested AccessRequestType.
+  Re-query /v4/Me/RequestEntitlements with accountIds=<id>&accessRequestType=<type> to see which
+  asset the entitlement is actually scoped to. Safeguard_LaunchAccessRequest catches this before
+  the POST.
+- Policy may require ReasonCodeId (RequireReasonCode) or TicketNumber (RequireServiceTicket).
+  Read RequesterProperties on the entitlement's Policy to see which are required.
 
 Session Policies (for administrators setting up):
-- AccessRequestType must be "RemoteDesktop" or "Ssh" in the access policy
-- SessionProperties in the policy controls recording, command restrictions
+- AccessRequestType on the access policy must be RemoteDesktop, Ssh, Telnet, or RemoteDesktopApplication
+- SessionProperties on the policy controls recording, command restrictions
 - POST /v4/AccessPolicies with SessionProperties block
 
 Key Differences from Password Requests:
@@ -62,4 +85,4 @@ Related:
 - Use access-request-audit to review completed session recordings.
 - Use create-entitlement to set up session-type policies.
 
-Source: Official Safeguard user guide and administration documentation — Privileged access requests, Session request workflow.
+Source: PangaeaAppliance source — AccessRequestsController, MeController_Requests, SessionsLaunchData.

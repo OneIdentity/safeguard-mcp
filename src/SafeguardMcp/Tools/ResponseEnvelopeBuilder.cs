@@ -20,6 +20,7 @@ internal static class NoticeKinds
     internal const string BodyTruncatedChars = "body_truncated_chars";
     internal const string RecordTooLargeForCap = "record_too_large_for_cap";
     internal const string CsvSaved = "csv_saved";
+    internal const string WorkflowRecipeSuggested = "workflow_recipe_suggested";
 }
 
 internal sealed class Notice
