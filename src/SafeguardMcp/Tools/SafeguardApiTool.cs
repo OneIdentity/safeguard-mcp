@@ -357,9 +357,13 @@ internal sealed class SafeguardApiTool(
     {
         var sb = new StringBuilder();
         sb.AppendLine("Safeguard query syntax:")
-            .AppendLine("  Filter operators: eq, ne, gt, ge, lt, le, contains, ieq, icontains, sw, isw, ew, iew, in [...], not_in [...]")
+            .AppendLine("  Filter operators: eq, ne, gt, ge, lt, le, contains, icontains, ieq, sw, isw, ew, iew, in [...]")
+            .AppendLine("  Operators are case-insensitive; string literals are case-sensitive (use ieq/icontains/isw/iew for case-insensitive text)")
             .AppendLine("  String values use single quotes: filter=Name eq 'Admin'")
+            .AppendLine("  Null literal: filter=Description eq null  /  filter=Description ne null")
             .AppendLine("  Combine expressions with and, or, not, and parentheses")
+            .AppendLine("  No 'not_in' / 'not in' operator: use filter=not (Id in [1,2,3])")
+            .AppendLine("  Collections expose synthetic .Count for filter/orderby: filter=ScopeItems.Count gt 0")
             .AppendLine("  Nested properties: filter=TaskProperties.HasAccountTaskFailure eq true")
             .AppendLine("  Relationships: parents are nested objects, NOT flat FK columns.")
             .AppendLine("    To-one is dottable: fields=Asset.Id,Asset.Name (NOT AssetId/AssetName).")
