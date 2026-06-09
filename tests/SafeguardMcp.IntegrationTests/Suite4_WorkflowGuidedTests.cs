@@ -310,25 +310,11 @@ public class Suite4_WorkflowGuidedTests
     }
 
     /// <summary>
-    /// Extracts the JSON body from an Execute response that may include prefixed notes.
+    /// Peels the <c>data</c> field off the Safeguard_Execute envelope so tests can assert
+    /// against the raw API body (array, scalar, or object) returned by the appliance.
     /// </summary>
     private static string ExtractJsonBody(string response)
-    {
-        var arrayStart = response.IndexOf('[');
-        var objectStart = response.IndexOf('{');
-
-        int start;
-        if (arrayStart >= 0 && objectStart >= 0)
-            start = Math.Min(arrayStart, objectStart);
-        else if (arrayStart >= 0)
-            start = arrayStart;
-        else if (objectStart >= 0)
-            start = objectStart;
-        else
-            return response;
-
-        return response[start..];
-    }
+        => EnvelopeTestHelpers.UnwrapData(response);
 
     private async Task<bool> WaitForRequestEntitlementAsync(int accountId, string accountName, int attempts = 10)
     {

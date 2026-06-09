@@ -1,0 +1,52 @@
+{
+  "_comment": "Authoritative Safeguard query operator vocabulary. Source: appliance ApiDoc.xml <Get>/<param name=\"filter\"> and Data/Middleware/Query/QueryFilterUtils.cs binary-operator regex. Keep this file in lock-step with those sources; the unit test 'QueryOperators_BinaryListMatchesApplianceRegex' guards against drift.",
+  "binary": [
+    { "op": "eq",        "meaning": "Equals",                            "example": "filter=Name eq 'Admin'" },
+    { "op": "ne",        "meaning": "Not equals",                        "example": "filter=Disabled ne true" },
+    { "op": "gt",        "meaning": "Greater than",                      "example": "filter=Id gt 100" },
+    { "op": "ge",        "meaning": "Greater than or equal",             "example": "filter=CreatedDate ge '2024-01-01'" },
+    { "op": "lt",        "meaning": "Less than",                         "example": "filter=Id lt 50" },
+    { "op": "le",        "meaning": "Less than or equal",                "example": "filter=CreatedDate le '2024-12-31'" },
+    { "op": "contains",  "meaning": "Substring (case-sensitive)",        "example": "filter=Name contains 'srv'" },
+    { "op": "icontains", "meaning": "Substring (case-insensitive)",      "example": "filter=Name icontains 'admin'" },
+    { "op": "ieq",       "meaning": "Equals (case-insensitive)",         "example": "filter=Name ieq 'administrator'" },
+    { "op": "sw",        "meaning": "Starts with (case-sensitive)",      "example": "filter=Name sw 'DC'" },
+    { "op": "isw",       "meaning": "Starts with (case-insensitive)",    "example": "filter=Name isw 'dc'" },
+    { "op": "ew",        "meaning": "Ends with (case-sensitive)",        "example": "filter=Name ew '-prod'" },
+    { "op": "iew",       "meaning": "Ends with (case-insensitive)",      "example": "filter=Name iew '-PROD'" },
+    { "op": "in",        "meaning": "Member of list literal",            "example": "filter=Id in [1,2,3]" }
+  ],
+  "unary": [
+    { "op": "not", "meaning": "Negate the following expression", "example": "filter=not (Id in [4,5,6])" }
+  ],
+  "logical": [
+    { "op": "and", "meaning": "Both sub-expressions must match", "example": "filter=Disabled eq false and Name contains 'admin'" },
+    { "op": "or",  "meaning": "Either sub-expression matches",   "example": "filter=State eq 'Available' or State eq 'Pending'" }
+  ],
+  "grouping": [
+    { "op": "()", "meaning": "Parenthesized sub-expression", "example": "filter=(Name sw 'DC') and (Platform.DisplayName eq 'Windows')" }
+  ],
+  "literals": [
+    { "kind": "string",   "example": "'Admin'",          "note": "Single quotes. Escape ' \" * \\ with backslash." },
+    { "kind": "number",   "example": "42",               "note": "Integer or decimal." },
+    { "kind": "boolean",  "example": "true",             "note": "true or false (case-insensitive)." },
+    { "kind": "null",     "example": "null",             "note": "Use with eq/ne, e.g. 'Description eq null'." },
+    { "kind": "list",     "example": "[1,2,3]",          "note": "Square-bracketed comma list, used with the 'in' operator." }
+  ],
+  "rules": {
+    "operators_case_insensitive": true,
+    "string_literals_case_sensitive": true,
+    "global_search_parameter": "q",
+    "list_negation_form": "not (Field in [...])",
+    "unsupported": [
+      { "token": "not_in",  "reason": "Not a Safeguard operator. Use 'not (Field in [...])'." },
+      { "token": "not in",  "reason": "Space-separated form is not parsed. Use 'not (Field in [...])'." },
+      { "token": "like",    "reason": "Not a Safeguard operator. Use 'contains' / 'icontains' / 'sw' / 'ew'." },
+      { "token": "ilike",   "reason": "Not a Safeguard operator. Use 'icontains'." },
+      { "token": "between", "reason": "Not supported. Combine 'ge' and 'le' with 'and'." },
+      { "token": "<>",      "reason": "Not supported. Use 'ne'." },
+      { "token": "!=",      "reason": "Not supported. Use 'ne'." },
+      { "token": "=",       "reason": "Not supported. Use 'eq'." }
+    ]
+  }
+}

@@ -80,6 +80,30 @@ public class CatalogProvider
     /// <summary>Whether a dynamic catalog has been loaded.</summary>
     public bool HasDynamicCatalog => _dynamic != null;
 
+    /// <summary>
+    /// Looks up enum values by schema name (case-insensitive). Returns null if no enum with
+    /// that name was discovered in the loaded swagger.
+    /// </summary>
+    public string[] GetEnum(string name)
+    {
+        if (_dynamic == null || string.IsNullOrWhiteSpace(name))
+            return null;
+        return _dynamic.Enums.TryGetValue(name, out var values) ? values : null;
+    }
+
+    /// <summary>
+    /// Returns the names of all enums in the dynamic catalog, sorted alphabetically.
+    /// Empty when no dynamic catalog has been loaded.
+    /// </summary>
+    public IReadOnlyList<string> GetEnumNames()
+    {
+        if (_dynamic == null)
+            return Array.Empty<string>();
+        return _dynamic.Enums.Keys
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     /// <summary>Drops any cached dynamic catalog (e.g. on disconnect).</summary>
     public void ClearCatalog() => _dynamic = null;
 }

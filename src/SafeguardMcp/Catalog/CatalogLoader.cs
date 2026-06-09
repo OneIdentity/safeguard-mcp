@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SafeguardMcp.Tools;
 
@@ -42,6 +43,7 @@ public class CatalogLoader
     {
         var endpoints = new List<ApiEndpoint>();
         var schemas = new Dictionary<string, ApiSchema>(StringComparer.OrdinalIgnoreCase);
+        var enums = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         var client = ignoreSsl ? IgnoreSslClient : StrictSslClient;
 
         foreach (var service in new[] { "Core", "Appliance", "Notification" })
@@ -55,6 +57,7 @@ public class CatalogLoader
                 using var doc = JsonDocument.Parse(json);
 
                 ParseSwaggerPaths(doc, service, endpoints);
+                ExtractEnums(doc.RootElement, enums);
                 ParseSwaggerSchemas(doc, service, schemas);
 
                 _logger.LogInformation(
@@ -80,8 +83,70 @@ public class CatalogLoader
         return new DynamicCatalog
         {
             Endpoints = endpoints.ToArray(),
-            Schemas = schemas
+            Schemas = schemas,
+            Enums = enums
         };
+    }
+
+    // Pulls every components.schemas.X with a non-empty `.enum` array into the dictionary,
+    // preserving swagger declaration order. Last wins on cross-service collisions (the same
+    // enum name typically appears in every service's swagger with identical values).
+    internal static void ExtractEnums(JsonElement root, Dictionary<string, string[]> enums)
+    {
+        if (!root.TryGetProperty("components", out var components)
+            || !components.TryGetProperty("schemas", out var schemas))
+            return;
+
+        foreach (var entry in schemas.EnumerateObject())
+        {
+            if (!entry.Value.TryGetProperty("enum", out var enumValues)
+                || enumValues.ValueKind != JsonValueKind.Array)
+                continue;
+
+            var values = new List<string>();
+            foreach (var v in enumValues.EnumerateArray())
+            {
+                if (v.ValueKind == JsonValueKind.String)
+                {
+                    var s = v.GetString();
+                    if (!string.IsNullOrEmpty(s))
+                        values.Add(s);
+                }
+                else if (v.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+                {
+                    values.Add(v.GetRawText());
+                }
+            }
+
+            if (values.Count > 0)
+                enums[entry.Name] = values.ToArray();
+        }
+    }
+
+    // Inspects a $ref target and returns its declared `.enum` values if present, else null.
+    private static string[] TryGetEnumValues(JsonElement components, bool hasComponents, string refName)
+    {
+        if (!hasComponents || string.IsNullOrEmpty(refName))
+            return null;
+        if (!components.TryGetProperty(refName, out var resolved))
+            return null;
+        if (!resolved.TryGetProperty("enum", out var enumValues) || enumValues.ValueKind != JsonValueKind.Array)
+            return null;
+        var values = new List<string>();
+        foreach (var v in enumValues.EnumerateArray())
+        {
+            if (v.ValueKind == JsonValueKind.String)
+            {
+                var s = v.GetString();
+                if (!string.IsNullOrEmpty(s))
+                    values.Add(s);
+            }
+            else if (v.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+            {
+                values.Add(v.GetRawText());
+            }
+        }
+        return values.Count == 0 ? null : values.ToArray();
     }
 
     private void ParseSwaggerPaths(JsonDocument doc, string service, List<ApiEndpoint> endpoints)
@@ -106,28 +171,42 @@ public class CatalogLoader
                     : string.Empty;
                 var hasBody = operation.TryGetProperty("requestBody", out _);
 
-                var paramNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                AddQueryParameterNames(pathItem, paramNames);
-                AddQueryParameterNames(operation, paramNames);
+                var paramInfos = new List<ParamInfo>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                // Operation-level parameters take precedence over path-level when names collide.
+                CollectParameters(operation, paramInfos, seen);
+                CollectParameters(pathItem, paramInfos, seen);
+
+                var queryParamNames = paramInfos
+                    .Where(p => string.Equals(p.In, "query", StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p.Name)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase);
 
                 endpoints.Add(new ApiEndpoint(
                     service,
                     method,
                     path,
                     summary,
-                    string.Join(", ", paramNames.OrderBy(name => name, StringComparer.OrdinalIgnoreCase)),
-                    hasBody));
+                    string.Join(", ", queryParamNames),
+                    hasBody,
+                    paramInfos.ToArray()));
             }
         }
     }
 
     private void ParseSwaggerSchemas(JsonDocument doc, string service, Dictionary<string, ApiSchema> schemas)
     {
-        if (!doc.RootElement.TryGetProperty("paths", out var paths))
+        ParseSwaggerSchemas(doc.RootElement, service, schemas);
+    }
+
+    internal void ParseSwaggerSchemas(JsonElement root, string service, Dictionary<string, ApiSchema> schemas)
+    {
+        if (!root.TryGetProperty("paths", out var paths))
             return;
 
         JsonElement components = default;
-        var hasComponents = doc.RootElement.TryGetProperty("components", out var componentsRoot)
+        var hasComponents = root.TryGetProperty("components", out var componentsRoot)
             && componentsRoot.TryGetProperty("schemas", out components);
 
         foreach (var pathEntry in paths.EnumerateObject())
@@ -160,21 +239,78 @@ public class CatalogLoader
 
     private static bool IsOperationMethod(string method) => method is "GET" or "POST" or "PUT" or "PATCH" or "DELETE";
 
-    private static void AddQueryParameterNames(JsonElement container, HashSet<string> paramNames)
+    // Matches the controller-XML-doc preference marker as it appears in swagger descriptions.
+    // Both quoted forms — `(Preferred over 'filter')` (single-quoted, observed on startDate/endDate)
+    // and `(Preferred over filter)` (unquoted, observed on userId) — are accepted. Verified on
+    // /service/core/swagger/v4/swagger.json from a live appliance.
+    private static readonly Regex PreferredOverFilterRegex = new(
+        @"\(\s*Preferred\s+over\s+['""]?filter['""]?\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    internal static bool IsPreferredOverFilter(string description)
+        => !string.IsNullOrEmpty(description) && PreferredOverFilterRegex.IsMatch(description);
+
+    internal static void CollectParameters(JsonElement container, List<ParamInfo> paramInfos, HashSet<string> seen)
     {
         if (!container.TryGetProperty("parameters", out var parameters) || parameters.ValueKind != JsonValueKind.Array)
             return;
 
         foreach (var param in parameters.EnumerateArray())
         {
-            if (param.TryGetProperty("name", out var name)
-                && param.TryGetProperty("in", out var location)
-                && string.Equals(location.GetString(), "query", StringComparison.OrdinalIgnoreCase))
+            if (!param.TryGetProperty("name", out var nameProp))
+                continue;
+            var name = nameProp.GetString();
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var location = param.TryGetProperty("in", out var inProp) ? inProp.GetString() ?? string.Empty : string.Empty;
+            if (!string.Equals(location, "query", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(location, "path", StringComparison.OrdinalIgnoreCase))
             {
-                var paramName = name.GetString();
-                if (!string.IsNullOrWhiteSpace(paramName))
-                    paramNames.Add(paramName);
+                continue;
             }
+
+            // Operation-level params are added first; skip the same name on the path-level pass.
+            if (!seen.Add(name))
+                continue;
+
+            var description = param.TryGetProperty("description", out var descProp)
+                ? descProp.GetString() ?? string.Empty
+                : string.Empty;
+
+            var required = param.TryGetProperty("required", out var reqProp)
+                && reqProp.ValueKind == JsonValueKind.True;
+
+            var type = string.Empty;
+            if (param.TryGetProperty("schema", out var schemaProp))
+            {
+                if (schemaProp.TryGetProperty("type", out var typeProp) && typeProp.ValueKind == JsonValueKind.String)
+                {
+                    type = typeProp.GetString() ?? string.Empty;
+                    if (string.Equals(type, "array", StringComparison.OrdinalIgnoreCase)
+                        && schemaProp.TryGetProperty("items", out var itemsProp)
+                        && itemsProp.TryGetProperty("type", out var itemsTypeProp)
+                        && itemsTypeProp.ValueKind == JsonValueKind.String)
+                    {
+                        type = $"array<{itemsTypeProp.GetString()}>";
+                    }
+                }
+                else if (schemaProp.TryGetProperty("$ref", out var refProp))
+                {
+                    var refPath = refProp.GetString();
+                    const string prefix = "#/components/schemas/";
+                    if (refPath != null && refPath.StartsWith(prefix, StringComparison.Ordinal))
+                        type = refPath[prefix.Length..];
+                }
+            }
+
+            paramInfos.Add(new ParamInfo(
+                name,
+                location.ToLowerInvariant(),
+                type,
+                description,
+                required,
+                IsPreferredOverFilter(description)));
         }
     }
 
@@ -186,7 +322,7 @@ public class CatalogLoader
             return null;
         }
 
-        return ResolveSchema(schema, components, hasComponents);
+        return ResolveSchema(schema, components, hasComponents, omitReadOnly: true);
     }
 
     private ApiSchema? ExtractSchemaFromResponse(JsonElement responses, JsonElement components, bool hasComponents)
@@ -204,7 +340,7 @@ public class CatalogLoader
             return null;
         }
 
-        return ResolveSchema(schema, components, hasComponents);
+        return ResolveSchema(schema, components, hasComponents, omitReadOnly: false);
     }
 
     private static bool TryGetSchemaFromContent(JsonElement content, out JsonElement schema)
@@ -228,7 +364,7 @@ public class CatalogLoader
         return false;
     }
 
-    private ApiSchema? ResolveSchema(JsonElement schema, JsonElement components, bool hasComponents)
+    private ApiSchema? ResolveSchema(JsonElement schema, JsonElement components, bool hasComponents, bool omitReadOnly)
     {
         if (schema.TryGetProperty("$ref", out var refProp))
         {
@@ -237,7 +373,7 @@ public class CatalogLoader
             {
                 var schemaName = refPath["#/components/schemas/".Length..];
                 if (components.TryGetProperty(schemaName, out var resolved))
-                    return ParseSchemaObject(resolved, components, hasComponents, schemaName);
+                    return ParseSchemaObject(resolved, components, hasComponents, schemaName, omitReadOnly);
             }
 
             return null;
@@ -247,17 +383,22 @@ public class CatalogLoader
             && string.Equals(typeProp.GetString(), "array", StringComparison.OrdinalIgnoreCase))
         {
             if (schema.TryGetProperty("items", out var items))
-                return ResolveSchema(items, components, hasComponents);
+                return ResolveSchema(items, components, hasComponents, omitReadOnly);
 
             return null;
         }
 
-        return ParseSchemaObject(schema, components, hasComponents, null);
+        return ParseSchemaObject(schema, components, hasComponents, null, omitReadOnly);
     }
 
     private const int MaxNestedFields = 25;
 
-    private ApiSchema? ParseSchemaObject(JsonElement schema, JsonElement components, bool hasComponents, string schemaName)
+    // Maximum nesting depth for parsed-time recursive child SchemaProperty[] expansion.
+    // The renderer's `depth` knob caps at this value; the agent can still chase deeper paths
+    // via the flat property-path closure on ApiSchema (added by the property-paths feature).
+    private const int MaxParsedNestedDepth = 3;
+
+    private ApiSchema? ParseSchemaObject(JsonElement schema, JsonElement components, bool hasComponents, string schemaName, bool omitReadOnly)
     {
         if (!schema.TryGetProperty("properties", out var properties))
             return null;
@@ -279,7 +420,8 @@ public class CatalogLoader
             var propName = prop.Name;
             var propSchema = prop.Value;
 
-            var (propType, nestedFields) = DescribePropertyType(propSchema, components, hasComponents);
+            var (propType, nestedFields, enumName) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly);
+            var nestedProps = BuildNestedProperties(propSchema, components, hasComponents, omitReadOnly, depth: 1, parentChain: schemaName);
 
             var description = propSchema.TryGetProperty("description", out var desc)
                 ? desc.GetString() ?? string.Empty
@@ -290,7 +432,7 @@ public class CatalogLoader
             // Keep readOnly properties if they are in the required array — the swagger may mark
             // navigation properties as readOnly for GET responses while they are still needed in
             // POST/PUT request bodies (common in Safeguard API swagger documentation).
-            if (isReadOnly && !requiredSet.Contains(propName))
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(propName))
                 continue;
 
             props.Add(new SchemaProperty(
@@ -298,33 +440,201 @@ public class CatalogLoader
                 propType,
                 description,
                 requiredSet.Contains(propName),
-                nestedFields));
+                nestedFields,
+                nestedProps,
+                enumName));
         }
 
         return new ApiSchema(
             schemaName ?? "inline",
             props.ToArray(),
-            requiredSet.ToArray());
+            requiredSet.ToArray(),
+            omitReadOnly,
+            BuildPropertyPaths(schema, components, hasComponents, omitReadOnly, schemaName));
+    }
+
+    // Total path entries returned per schema. The live appliance has a handful of types whose
+    // full reachable graph (RequestableAccount with full Asset+Platform expansion, AuditLog,
+    // SearchSearchResult) exceeds a few hundred; capping keeps Safeguard_Schema output usable.
+    private const int MaxPathEntries = 500;
+
+    // Cycle-guard depth, matching the appliance's serializer (JsonSerializerUtil.cs:245):
+    // a given type may appear at most 5 levels deep in the parent chain.
+    private const int MaxPathTypeDepth = 5;
+
+    private static ApiSchemaPropertyPath[] BuildPropertyPaths(
+        JsonElement objectSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly,
+        string rootTypeName)
+    {
+        var paths = new List<ApiSchemaPropertyPath>();
+        var typeStack = new List<string>();
+        if (!string.IsNullOrEmpty(rootTypeName))
+            typeStack.Add(rootTypeName);
+
+        WalkPaths(objectSchema, components, hasComponents, omitReadOnly, prefix: string.Empty, typeStack, paths);
+        return paths.ToArray();
+    }
+
+    private static void WalkPaths(
+        JsonElement objectSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly,
+        string prefix,
+        List<string> typeStack,
+        List<ApiSchemaPropertyPath> paths)
+    {
+        if (paths.Count >= MaxPathEntries)
+            return;
+        if (!objectSchema.TryGetProperty("properties", out var properties))
+            return;
+
+        var requiredSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (objectSchema.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var req in required.EnumerateArray())
+            {
+                var n = req.GetString();
+                if (!string.IsNullOrWhiteSpace(n))
+                    requiredSet.Add(n);
+            }
+        }
+
+        foreach (var prop in properties.EnumerateObject())
+        {
+            if (paths.Count >= MaxPathEntries)
+                return;
+
+            var propName = prop.Name;
+            var propSchema = prop.Value;
+
+            var isReadOnly = propSchema.TryGetProperty("readOnly", out var ro)
+                && ro.ValueKind == JsonValueKind.True;
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(propName))
+                continue;
+
+            var (typeLabel, _, enumName) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly);
+            var dotted = string.IsNullOrEmpty(prefix) ? propName : prefix + "." + propName;
+            var isCollection = typeLabel.StartsWith("array", StringComparison.Ordinal);
+
+            paths.Add(new ApiSchemaPropertyPath(
+                dotted,
+                typeLabel,
+                enumName,
+                isCollection,
+                IsSynthetic: false));
+
+            // Synthetic <Collection>.Count for orderby/filter usage. Only emitted for
+            // collection-typed properties; not valid in fields=.
+            if (isCollection)
+            {
+                paths.Add(new ApiSchemaPropertyPath(
+                    dotted + ".Count",
+                    "integer",
+                    null,
+                    IsCollection: false,
+                    IsSynthetic: true));
+            }
+
+            // Recurse into the property's underlying object schema if there is one.
+            if (TryResolveToObjectSchema(propSchema, components, hasComponents, parentChain: null, out var childSchema, out _))
+            {
+                var childTypeName = ExtractRefTypeName(propSchema);
+                if (!string.IsNullOrEmpty(childTypeName))
+                {
+                    var occurrences = 0;
+                    foreach (var t in typeStack)
+                    {
+                        if (string.Equals(t, childTypeName, StringComparison.OrdinalIgnoreCase))
+                            occurrences++;
+                    }
+                    if (occurrences >= MaxPathTypeDepth)
+                        continue;
+                    typeStack.Add(childTypeName);
+                    WalkPaths(childSchema, components, hasComponents, omitReadOnly, dotted, typeStack, paths);
+                    typeStack.RemoveAt(typeStack.Count - 1);
+                }
+                else
+                {
+                    // Inline anonymous object — no type to track for cycle guard. Cap raw
+                    // structural depth via the path entry budget.
+                    WalkPaths(childSchema, components, hasComponents, omitReadOnly, dotted, typeStack, paths);
+                }
+            }
+        }
+    }
+
+    // Returns the $ref'd schema name when propSchema is a $ref, allOf-of-$ref, or
+    // array-of-$ref; otherwise null.
+    private static string ExtractRefTypeName(JsonElement propSchema)
+    {
+        if (propSchema.TryGetProperty("$ref", out var refProp))
+            return ResolveRefName(refProp);
+
+        if (propSchema.TryGetProperty("type", out var typeProp)
+            && string.Equals(typeProp.GetString(), "array", StringComparison.OrdinalIgnoreCase)
+            && propSchema.TryGetProperty("items", out var items))
+        {
+            return ExtractRefTypeName(items);
+        }
+
+        if (propSchema.TryGetProperty("allOf", out var allOf) && allOf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var part in allOf.EnumerateArray())
+            {
+                var n = ExtractRefTypeName(part);
+                if (n != null)
+                    return n;
+            }
+        }
+        return null;
     }
 
     /// <summary>
     /// Computes the human-readable type label and the immediate child property names for a
     /// property's schema. For complex types referenced via <c>$ref</c> the type is decorated with
     /// the referenced schema name (e.g. <c>object&lt;TaskProperties&gt;</c>) and the child names
-    /// are returned. Falls back conservatively for unresolvable refs, free-form objects, and
-    /// <c>oneOf</c>/<c>anyOf</c>.
+    /// are returned. For enum-typed <c>$ref</c>s the label is <c>enum&lt;Name&gt;</c> and no
+    /// nested fields are emitted (callers can resolve allowed values via the catalog's
+    /// <c>Enums</c> dictionary or the <c>EnumName</c> field on <see cref="SchemaProperty"/>).
     /// </summary>
     internal static (string Type, string[] NestedFields) DescribePropertyType(
         JsonElement propSchema,
         JsonElement components,
         bool hasComponents)
     {
-        // Direct $ref to a complex type.
+        var (type, nested, _) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly: true);
+        return (type, nested);
+    }
+
+    internal static (string Type, string[] NestedFields) DescribePropertyType(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly)
+    {
+        var (type, nested, _) = DescribePropertyTypeWithEnum(propSchema, components, hasComponents, omitReadOnly);
+        return (type, nested);
+    }
+
+    internal static (string Type, string[] NestedFields, string EnumName) DescribePropertyTypeWithEnum(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly)
+    {
+        // Direct $ref to a complex type — enum or object.
         if (propSchema.TryGetProperty("$ref", out var refProp))
         {
             var refName = ResolveRefName(refProp);
-            var nested = TryEnumerateRefProperties(refProp, components, hasComponents);
-            return (refName != null ? $"object<{refName}>" : "object", nested);
+            if (refName != null && TryGetEnumValues(components, hasComponents, refName) != null)
+                return ($"enum<{refName}>", Array.Empty<string>(), refName);
+
+            var nested = TryEnumerateRefProperties(refProp, components, hasComponents, omitReadOnly);
+            return (refName != null ? $"object<{refName}>" : "object", nested, null);
         }
 
         // type: array of complex items.
@@ -336,15 +646,18 @@ public class CatalogLoader
                 if (items.TryGetProperty("$ref", out var itemsRef))
                 {
                     var refName = ResolveRefName(itemsRef);
-                    var nested = TryEnumerateRefProperties(itemsRef, components, hasComponents);
-                    return (refName != null ? $"array<{refName}>" : "array", nested);
+                    if (refName != null && TryGetEnumValues(components, hasComponents, refName) != null)
+                        return ($"array<enum<{refName}>>", Array.Empty<string>(), refName);
+
+                    var nested = TryEnumerateRefProperties(itemsRef, components, hasComponents, omitReadOnly);
+                    return (refName != null ? $"array<{refName}>" : "array", nested, null);
                 }
 
                 if (items.TryGetProperty("properties", out _))
-                    return ("array<object>", EnumerateImmediateProperties(items));
+                    return ("array<object>", EnumerateImmediateProperties(items, omitReadOnly), null);
             }
 
-            return ("array", Array.Empty<string>());
+            return ("array", Array.Empty<string>(), null);
         }
 
         // Inline object with properties.
@@ -352,7 +665,7 @@ public class CatalogLoader
             && string.Equals(typeProp.GetString(), "object", StringComparison.OrdinalIgnoreCase)
             && propSchema.TryGetProperty("properties", out _))
         {
-            return ("object", EnumerateImmediateProperties(propSchema));
+            return ("object", EnumerateImmediateProperties(propSchema, omitReadOnly), null);
         }
 
         // allOf containing a $ref or inline object — pick the first resolvable part.
@@ -363,13 +676,16 @@ public class CatalogLoader
                 if (part.TryGetProperty("$ref", out var partRef))
                 {
                     var refName = ResolveRefName(partRef);
-                    var nested = TryEnumerateRefProperties(partRef, components, hasComponents);
+                    if (refName != null && TryGetEnumValues(components, hasComponents, refName) != null)
+                        return ($"enum<{refName}>", Array.Empty<string>(), refName);
+
+                    var nested = TryEnumerateRefProperties(partRef, components, hasComponents, omitReadOnly);
                     if (nested.Length > 0)
-                        return (refName != null ? $"object<{refName}>" : "object", nested);
+                        return (refName != null ? $"object<{refName}>" : "object", nested, null);
                 }
                 else if (part.TryGetProperty("properties", out _))
                 {
-                    return ("object", EnumerateImmediateProperties(part));
+                    return ("object", EnumerateImmediateProperties(part, omitReadOnly), null);
                 }
             }
         }
@@ -381,7 +697,158 @@ public class CatalogLoader
         else if (propSchema.TryGetProperty("$ref", out _))
             propType = "object";
 
-        return (propType, Array.Empty<string>());
+        return (propType, Array.Empty<string>(), null);
+    }
+
+    // Recursive child SchemaProperty[] expansion done at parse time. Returns an array of
+    // SchemaProperty matching the children of this property's resolved object schema, walked up
+    // to MaxParsedNestedDepth levels deep. Cycle-guarded by parent-type chain.
+    private static SchemaProperty[] BuildNestedProperties(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        bool omitReadOnly,
+        int depth,
+        string parentChain)
+    {
+        if (depth >= MaxParsedNestedDepth)
+            return Array.Empty<SchemaProperty>();
+
+        // Resolve to an object schema (direct $ref, allOf-of-$ref, array-of-$ref, or inline).
+        if (!TryResolveToObjectSchema(propSchema, components, hasComponents, parentChain, out var resolved, out var nextChain))
+            return Array.Empty<SchemaProperty>();
+
+        if (!resolved.TryGetProperty("properties", out var properties))
+            return Array.Empty<SchemaProperty>();
+
+        var requiredSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (resolved.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var req in required.EnumerateArray())
+            {
+                var requiredName = req.GetString();
+                if (!string.IsNullOrWhiteSpace(requiredName))
+                    requiredSet.Add(requiredName);
+            }
+        }
+
+        var list = new List<SchemaProperty>();
+        foreach (var prop in properties.EnumerateObject())
+        {
+            var isReadOnly = prop.Value.TryGetProperty("readOnly", out var readOnly)
+                && readOnly.ValueKind == JsonValueKind.True;
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(prop.Name))
+                continue;
+
+            var (childType, childNestedFields, childEnumName) = DescribePropertyTypeWithEnum(prop.Value, components, hasComponents, omitReadOnly);
+            var description = prop.Value.TryGetProperty("description", out var desc)
+                ? desc.GetString() ?? string.Empty
+                : string.Empty;
+            var children = BuildNestedProperties(prop.Value, components, hasComponents, omitReadOnly, depth + 1, nextChain);
+            list.Add(new SchemaProperty(
+                prop.Name,
+                childType,
+                description,
+                requiredSet.Contains(prop.Name),
+                childNestedFields,
+                children,
+                childEnumName));
+        }
+
+        return list.ToArray();
+    }
+
+    // Walks single-step indirections (direct $ref, allOf-of-$ref, array-items-$ref/object) to
+    // find an object schema with a `properties` block. Returns the resolved element and the
+    // updated parent-chain used for cycle-guarding (5-deep matches the appliance's serializer).
+    private static bool TryResolveToObjectSchema(
+        JsonElement propSchema,
+        JsonElement components,
+        bool hasComponents,
+        string parentChain,
+        out JsonElement resolved,
+        out string nextChain)
+    {
+        nextChain = parentChain ?? string.Empty;
+
+        if (propSchema.TryGetProperty("$ref", out var refProp))
+        {
+            var name = ResolveRefName(refProp);
+            if (!CycleGuardOk(parentChain, name) || !hasComponents || name == null
+                || !components.TryGetProperty(name, out var refTarget))
+            {
+                resolved = default;
+                return false;
+            }
+            nextChain = AppendChain(parentChain, name);
+            resolved = refTarget;
+
+            // Single allOf-of-$ref hop for inheritance shapes.
+            if (!resolved.TryGetProperty("properties", out _)
+                && resolved.TryGetProperty("allOf", out var allOfInner)
+                && allOfInner.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var part in allOfInner.EnumerateArray())
+                {
+                    if (part.TryGetProperty("properties", out _))
+                    {
+                        resolved = part;
+                        break;
+                    }
+                }
+            }
+            return true;
+        }
+
+        if (propSchema.TryGetProperty("type", out var typeProp)
+            && string.Equals(typeProp.GetString(), "array", StringComparison.OrdinalIgnoreCase)
+            && propSchema.TryGetProperty("items", out var items))
+        {
+            return TryResolveToObjectSchema(items, components, hasComponents, parentChain, out resolved, out nextChain);
+        }
+
+        if (propSchema.TryGetProperty("allOf", out var allOf) && allOf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var part in allOf.EnumerateArray())
+            {
+                if (TryResolveToObjectSchema(part, components, hasComponents, parentChain, out resolved, out nextChain))
+                    return true;
+            }
+        }
+
+        if (propSchema.TryGetProperty("properties", out _))
+        {
+            resolved = propSchema;
+            return true;
+        }
+
+        resolved = default;
+        return false;
+    }
+
+    private static bool CycleGuardOk(string parentChain, string nextName)
+    {
+        if (string.IsNullOrEmpty(parentChain) || string.IsNullOrEmpty(nextName))
+            return true;
+        // Same type may appear at most 5 levels deep (matches the appliance serializer).
+        var count = 0;
+        var idx = 0;
+        while (true)
+        {
+            var match = parentChain.IndexOf("/" + nextName + "/", idx, StringComparison.OrdinalIgnoreCase);
+            if (match < 0)
+                break;
+            count++;
+            idx = match + 1;
+        }
+        return count < 5;
+    }
+
+    private static string AppendChain(string parentChain, string name)
+    {
+        if (string.IsNullOrEmpty(parentChain))
+            return "/" + name + "/";
+        return parentChain + name + "/";
     }
 
     private static string ResolveRefName(JsonElement refProp)
@@ -394,6 +861,9 @@ public class CatalogLoader
     }
 
     private static string[] TryEnumerateRefProperties(JsonElement refProp, JsonElement components, bool hasComponents)
+        => TryEnumerateRefProperties(refProp, components, hasComponents, omitReadOnly: true);
+
+    private static string[] TryEnumerateRefProperties(JsonElement refProp, JsonElement components, bool hasComponents, bool omitReadOnly)
     {
         if (!hasComponents)
             return Array.Empty<string>();
@@ -417,10 +887,13 @@ public class CatalogLoader
             }
         }
 
-        return EnumerateImmediateProperties(resolved);
+        return EnumerateImmediateProperties(resolved, omitReadOnly);
     }
 
     internal static string[] EnumerateImmediateProperties(JsonElement schema)
+        => EnumerateImmediateProperties(schema, omitReadOnly: true);
+
+    internal static string[] EnumerateImmediateProperties(JsonElement schema, bool omitReadOnly)
     {
         if (!schema.TryGetProperty("properties", out var properties))
             return Array.Empty<string>();
@@ -442,7 +915,7 @@ public class CatalogLoader
         {
             var isReadOnly = prop.Value.TryGetProperty("readOnly", out var readOnly)
                 && readOnly.ValueKind == JsonValueKind.True;
-            if (isReadOnly && !requiredSet.Contains(prop.Name))
+            if (omitReadOnly && isReadOnly && !requiredSet.Contains(prop.Name))
                 continue;
 
             totalKept++;
