@@ -55,10 +55,23 @@ public class DynamicCatalog
 /// <summary>
 /// Represents the schema for an API request or response body.
 /// </summary>
+/// <remarks>
+/// <para><see cref="OmitReadOnly"/> indicates whether <c>readOnly</c>-marked properties were
+/// filtered out at parse time. Request-body schemas set this to <c>true</c> (the agent cannot
+/// send <c>Id</c>, <c>CreatedDate</c>, etc.); response-body schemas set this to <c>false</c>
+/// so the agent can see what the appliance returns.</para>
+/// </remarks>
 public readonly record struct ApiSchema(
     string TypeName,
     SchemaProperty[] Properties,
-    string[] RequiredFields);
+    string[] RequiredFields,
+    bool OmitReadOnly)
+{
+    public ApiSchema(string typeName, SchemaProperty[] properties, string[] requiredFields)
+        : this(typeName, properties, requiredFields, true)
+    {
+    }
+}
 
 /// <summary>
 /// Represents a single property in a schema.
@@ -67,16 +80,31 @@ public readonly record struct ApiSchema(
 /// <para><see cref="NestedFields"/> contains the immediate child property names of a complex
 /// object/array property whose schema was resolved from a <c>$ref</c>. Empty for primitive
 /// properties or when the referenced schema could not be resolved.</para>
+/// <para><see cref="NestedProperties"/> carries the same children with full type info, parsed
+/// recursively up to a depth cap. This is what feeds the <c>depth</c> knob on
+/// <c>Safeguard_Schema</c>; <see cref="NestedFields"/> is preserved as the cheap immediate-name
+/// view for callers that only need the names.</para>
+/// <para><see cref="EnumName"/> is set when the property is typed by a <c>$ref</c> to an enum
+/// schema (i.e. one whose definition has a non-empty <c>.enum</c> array). The renderer uses
+/// this to inline allowed values; the dynamic catalog's <c>Enums</c> dictionary holds the
+/// values themselves.</para>
 /// </remarks>
 public readonly record struct SchemaProperty(
     string Name,
     string Type,
     string Description,
     bool Required,
-    string[] NestedFields)
+    string[] NestedFields,
+    SchemaProperty[] NestedProperties,
+    string EnumName)
 {
     public SchemaProperty(string name, string type, string description, bool required)
-        : this(name, type, description, required, Array.Empty<string>())
+        : this(name, type, description, required, Array.Empty<string>(), Array.Empty<SchemaProperty>(), null)
+    {
+    }
+
+    public SchemaProperty(string name, string type, string description, bool required, string[] nestedFields)
+        : this(name, type, description, required, nestedFields, Array.Empty<SchemaProperty>(), null)
     {
     }
 }

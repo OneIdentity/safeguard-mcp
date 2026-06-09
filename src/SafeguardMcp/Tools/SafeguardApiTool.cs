@@ -216,10 +216,12 @@ internal sealed class SafeguardApiTool(
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the request body schema and response schema for a Safeguard API endpoint. "
         + "Returns property names, types, required fields, and descriptions. "
-        + "Use this before POST or PUT calls to understand the JSON body format.")]
+        + "Use this before POST or PUT calls to understand the JSON body format. "
+        + "Set depth>1 (max 3) to expand nested object/array properties one or more levels.")]
     public string Safeguard_Schema(
         [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users').")] string path,
-        [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST")
+        [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST",
+        [Description("How many levels deep to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/AssetAccounts').");
@@ -228,9 +230,24 @@ internal sealed class SafeguardApiTool(
         var normalizedMethod = ParseMethod(method);
         var service = ResolveService(normalizedPath);
         var serviceName = GetServiceName(service);
+        var clampedDepth = Math.Max(1, Math.Min(depth, 3));
 
         var requestSchema = catalogProvider.GetSchema(normalizedMethod, serviceName, normalizedPath);
-        var responseSchema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath);
+
+        // Prefer the response schema for the requested method (PUT/POST often return the
+        // updated entity); fall back to GET-on-same-path so query-only callers still get a
+        // useful response shape.
+        var responseSchema = catalogProvider.GetResponseSchema(normalizedMethod, serviceName, normalizedPath);
+        var responseHeading = $"RESPONSE BODY ({normalizedMethod})";
+        if (responseSchema == null && normalizedMethod != "GET")
+        {
+            responseSchema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath);
+            responseHeading = "RESPONSE BODY (GET)";
+        }
+        else if (normalizedMethod == "GET")
+        {
+            responseHeading = "RESPONSE BODY (GET)";
+        }
 
         if (requestSchema == null && responseSchema == null)
         {
@@ -244,16 +261,38 @@ internal sealed class SafeguardApiTool(
             .Append(" (").Append(serviceName).AppendLine(")");
 
         if (requestSchema != null)
-            AppendSchemaSection(sb, "REQUEST BODY", requestSchema.Value);
-        else
+        {
+            AppendSchemaSection(sb, "REQUEST BODY", requestSchema.Value, clampedDepth);
+        }
+        else if (HasRequestBody(normalizedMethod, serviceName, normalizedPath))
+        {
             sb.AppendLine().AppendLine("REQUEST BODY:").AppendLine("  No request schema available.");
+        }
+        else if (normalizedMethod is "POST" or "PUT" or "PATCH")
+        {
+            sb.AppendLine().AppendLine("REQUEST BODY:").AppendLine("  No request body required.");
+        }
 
         if (responseSchema != null)
-            AppendSchemaSection(sb, "RESPONSE BODY (GET)", responseSchema.Value);
+            AppendSchemaSection(sb, responseHeading, responseSchema.Value, clampedDepth);
         else
-            sb.AppendLine().AppendLine("RESPONSE BODY (GET):").AppendLine("  No response schema available.");
+            sb.AppendLine().Append(responseHeading).AppendLine(":").AppendLine("  No response schema available.");
 
         return sb.ToString().TrimEnd();
+    }
+
+    private bool HasRequestBody(string method, string service, string path)
+    {
+        foreach (var endpoint in catalogProvider.GetEndpoints())
+        {
+            if (string.Equals(endpoint.Method, method, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(endpoint.Service, service, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(endpoint.Path, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return endpoint.HasBody;
+            }
+        }
+        return false;
     }
 
     [McpServerTool(Name = "Safeguard_QueryHelp", Title = "Safeguard Query Syntax",
@@ -858,7 +897,7 @@ internal sealed class SafeguardApiTool(
         return normalized;
     }
 
-    private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema)
+    private static void AppendSchemaSection(StringBuilder sb, string heading, ApiSchema schema, int depth = 1)
     {
         sb.AppendLine().Append(heading).AppendLine(":");
         if (!string.IsNullOrWhiteSpace(schema.TypeName))
@@ -878,14 +917,14 @@ internal sealed class SafeguardApiTool(
             sb.AppendLine("    None");
         else
             foreach (var property in required)
-                AppendSchemaProperty(sb, property);
+                AppendSchemaProperty(sb, property, indent: 4, depth: depth);
 
         sb.AppendLine("  Optional:");
         if (optional.Length == 0)
             sb.AppendLine("    None");
         else
             foreach (var property in optional)
-                AppendSchemaProperty(sb, property);
+                AppendSchemaProperty(sb, property, indent: 4, depth: depth);
 
         var hints = SchemaHints.GetHints(schema);
         if (hints != null)
@@ -896,16 +935,23 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property)
+    private static void AppendSchemaProperty(StringBuilder sb, SchemaProperty property, int indent, int depth)
     {
-        sb.Append("    ").Append(property.Name).Append(" (").Append(property.Type).Append(')');
+        sb.Append(' ', indent).Append(property.Name).Append(" (").Append(property.Type).Append(')');
         if (!string.IsNullOrWhiteSpace(property.Description))
             sb.Append(" - ").Append(property.Description.Trim());
         sb.AppendLine();
 
-        if (property.NestedFields != null && property.NestedFields.Length > 0)
+        // depth>1: walk parsed-time NestedProperties recursively. Fall back to the legacy
+        // immediate-name list when no full child schemas were captured (e.g. unresolvable refs).
+        if (depth > 1 && property.NestedProperties != null && property.NestedProperties.Length > 0)
         {
-            sb.Append("      Fields: ").AppendLine(string.Join(", ", property.NestedFields));
+            foreach (var child in property.NestedProperties)
+                AppendSchemaProperty(sb, child, indent + 2, depth - 1);
+        }
+        else if (property.NestedFields != null && property.NestedFields.Length > 0)
+        {
+            sb.Append(' ', indent + 2).Append("Fields: ").AppendLine(string.Join(", ", property.NestedFields));
         }
     }
 
