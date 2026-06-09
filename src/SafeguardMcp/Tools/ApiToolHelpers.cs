@@ -341,10 +341,10 @@ internal static class ApiToolHelpers
     /// <summary>
     /// Context- and graph-aware hint for the 70001 / 70002 / 70009 family of
     /// filter / orderby / fields property-name errors. The suggester pulls
-    /// candidates only from <paramref name="paths"/> (A.4's path graph for
-    /// the endpoint) and from the operator vocabulary on disk -- it never
-    /// invents a path. When no candidate scores above threshold the caller's
-    /// hint falls back to "use Safeguard_Schema" rather than guessing.
+    /// candidates only from <paramref name="paths"/> (the endpoint's schema
+    /// property-path graph) and from the operator vocabulary on disk -- it
+    /// never invents a path. When no candidate scores above threshold the
+    /// caller's hint falls back to "use Safeguard_Schema" rather than guessing.
     /// </summary>
     internal static string GetErrorHint(
         int statusCode,

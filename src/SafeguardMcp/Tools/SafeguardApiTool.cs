@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
@@ -11,11 +13,25 @@ using SafeguardMcp.Catalog;
 namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
-internal sealed class SafeguardApiTool(
-    ISafeguardSession session,
-    CatalogProvider catalogProvider,
-    IConfiguration configuration)
+internal sealed class SafeguardApiTool
 {
+    private readonly ISafeguardSession session;
+    private readonly CatalogProvider catalogProvider;
+    private readonly IConfiguration configuration;
+    private readonly ILogger<SafeguardApiTool> logger;
+
+    public SafeguardApiTool(
+        ISafeguardSession session,
+        CatalogProvider catalogProvider,
+        IConfiguration configuration,
+        ILogger<SafeguardApiTool> logger = null)
+    {
+        this.session = session;
+        this.catalogProvider = catalogProvider;
+        this.configuration = configuration;
+        this.logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<SafeguardApiTool>.Instance;
+    }
+
     private int MaxResultsBeforeTruncation => ParseInt(configuration["Safeguard:MaxResultsBeforeTruncation"], 100);
     private int MaxResponseChars => ParseInt(configuration["Safeguard:MaxResponseChars"], 30000);
     private int DefaultLimit => ParseInt(configuration["Safeguard:DefaultLimit"], 50);
@@ -449,12 +465,27 @@ internal sealed class SafeguardApiTool(
             .AppendLine("    Schema labels: object<Type> = to-one (dottable); array<Type> = to-many (use child path).")
             .AppendLine("  Field selection: fields=Id,Name,Description")
             .AppendLine("  Exclude fields: fields=-TaskProperties,-Platform")
+            .AppendLine("  ObjectChanges default: on /v4/AuditLog/ObjectChanges list-style routes "
+                + "(collection, by-type, by-type+by-id) fields= defaults to '-OldValue,-NewValue' so the "
+                + "full-entity JSON-string snapshots are dropped and the structured Changes[] diff is "
+                + "retained; add OldValue or NewValue to your own fields= list to include the snapshots, "
+                + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view.")
             .AppendLine("  Ordering: orderby=Name or orderby=-CreatedDate")
             .AppendLine("  Multiple order fields: orderby=Name,-CreatedDate")
             .AppendLine("  NOTE: Not OData. Use -Field for descending; 'Name desc' or 'Name asc' returns HTTP 400.")
             .AppendLine("  Pagination: page=0&limit=50 (page is 0-indexed)")
             .AppendLine("  Quick search: q=searchterm")
             .AppendLine("  Count only: count=true")
+            .AppendLine()
+            .AppendLine("Aggregation and summarization:")
+            .AppendLine("  count=true returns just the row count for any collection endpoint -- the response body")
+            .AppendLine("    is a bare JSON integer (e.g. 52), not an object or array. Pair with filter= for")
+            .AppendLine("    scoped counts (per partition, per requester, per time window). See workflow recipe:")
+            .AppendLine("    count-with-filter.")
+            .AppendLine("  Group-by / distinct-values has NO server-side aggregation: no groupBy=, no distinct=,")
+            .AppendLine("    no aggregate= parameter exists. For per-group counts, page filtered rows and tally")
+            .AppendLine("    in agent context (recipe: summarize-audit-log). For per-time-bucket counts, issue N")
+            .AppendLine("    count=true calls one per bucket (recipe: time-bucketed-counts).")
             .AppendLine()
             .AppendLine("Examples:")
             .AppendLine("  fields=Id,Name&filter=Name icontains 'admin'&orderby=Name&page=0&limit=25")
@@ -471,14 +502,35 @@ internal sealed class SafeguardApiTool(
             .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.")
             .AppendLine()
             .AppendLine("Sensitive credential material:")
-            .AppendLine("  Passwords, SSH private keys, A2A secrets, API keys, and cert private keys are sensitive.")
-            .AppendLine("  Do NOT echo these in summaries, tables, logs, or follow-up tool calls. Reference accounts by id.")
+            .AppendLine("  Passwords, SSH private keys, A2A secrets, API client secrets, API key history, TOTP codes,")
+            .AppendLine("  generated passwords, personal-account password history, and secure-file content are all sensitive.")
+            .AppendLine("  These endpoints are NOT callable via Safeguard_Execute. Use Safeguard_RetrieveCredential")
+            .AppendLine("  (kinds: access-request-password, access-request-ssh-key, access-request-api-key,")
+            .AppendLine("  access-request-totp, access-request-file, personal-account-password,")
+            .AppendLine("  personal-account-password-history, personal-account-totp, generated-password,")
+            .AppendLine("  asset-account-api-secret-history). Calling those paths via Safeguard_Execute returns a")
+            .AppendLine("  structured sensitive_endpoint_redirected envelope naming the matching Safeguard_RetrieveCredential")
+            .AppendLine("  kind and arguments — lift data.next_call into a follow-up tool invocation.")
+            .AppendLine("  Safeguard_RetrieveCredential emits a two-block MCP response: block 1 (audience=assistant) is")
+            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. Hosts that honor audience")
+            .AppendLine("  annotations route the user block to a secure pane without exposing it to the LLM.")
             .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
             .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
             .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
             .AppendLine("  Setting a known value: PUT /v4/AssetAccounts/{id}/Password (body = value)")
             .AppendLine("  Do NOT mint passwords client-side (Get-Random, pwgen, LLM) - bypasses the password rule and leaks plaintext.")
-            .AppendLine("  See workflow recipe: set-initial-account-password.");
+            .AppendLine("  See workflow recipe: set-initial-account-password.")
+            .AppendLine()
+            .AppendLine("Access requests:")
+            .AppendLine("  Safeguard_OpenAccessRequest submits the request and briefly waits up to 5 seconds for auto-approval,")
+            .AppendLine("  then returns a structured envelope: data = the access-request JSON, meta.notices = exactly one notice")
+            .AppendLine("  describing the outcome. Notice kinds: auto_approved_ready (call Safeguard_RetrieveCredential or POST")
+            .AppendLine("  .../InitializeSession now), pending_approval_check_back (human approval needed; can take hours, check")
+            .AppendLine("  back via Safeguard_Execute GET /v4/AccessRequests/{id}), pending_scheduled (approved but waiting for")
+            .AppendLine("  RequestedFor), pending_account_action (appliance is elevating/restoring; usually under a minute),")
+            .AppendLine("  terminated_before_ready (Terminated/Expired/Closed/Complete — submit a fresh request if applicable).")
+            .AppendLine("  Read data.State directly; do not parse the notice text. The tool never waits longer than 5 seconds;")
+            .AppendLine("  for longer waits, the agent polls Safeguard_Execute GET /v4/AccessRequests/{id} itself.");
 
         if (string.IsNullOrWhiteSpace(path))
             return sb.ToString().TrimEnd();
@@ -587,6 +639,24 @@ internal sealed class SafeguardApiTool(
 
         var normalizedMethod = ParseMethod(method);
         var normalizedPath = NormalizePath(path);
+
+        // Refuse-and-redirect for sensitive credential endpoints BEFORE any I/O.
+        // The single source of truth lives in
+        // Catalog/Resources/sensitive-credential-endpoints.json. Anything in that
+        // catalog is owned by Safeguard_RetrieveCredential; Safeguard_Execute
+        // never touches the wire for those paths. The agent receives a
+        // structured next_call envelope so it can lift the suggested tool +
+        // arguments without re-deriving them.
+        var sensitiveMatch = SensitiveCredentialEndpoints.TryMatch(normalizedMethod, normalizedPath);
+        if (sensitiveMatch != null)
+        {
+            logger.LogInformation(
+                "Safeguard_Execute refused sensitive endpoint: refused_path={Path} redirected_to=Safeguard_RetrieveCredential kind={Kind}",
+                normalizedPath,
+                sensitiveMatch.Entry.Kind);
+            return BuildSensitiveEndpointRedirectEnvelope(normalizedMethod, normalizedPath, sensitiveMatch);
+        }
+
         var requestedFormat = string.IsNullOrWhiteSpace(format) ? "json" : format.Trim().ToLowerInvariant();
         if (requestedFormat != "json" && requestedFormat != "csv")
             throw new McpException("Unsupported response format. Use 'json' or 'csv'.");
@@ -597,6 +667,7 @@ internal sealed class SafeguardApiTool(
         var relativeUrl = ToSdkRelativeUrl(normalizedPath);
         var parameters = ParseQueryParameters(query);
         parameters = MaybeInjectLimit(normalizedMethod, normalizedPath, service, parameters, out var injectedLimit);
+        parameters = MaybeInjectDefaultFields(normalizedMethod, normalizedPath, parameters, out var injectedDefaultFields);
 
         try
         {
@@ -614,7 +685,7 @@ internal sealed class SafeguardApiTool(
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
             }
 
             FullResponse response;
@@ -629,7 +700,7 @@ internal sealed class SafeguardApiTool(
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, parameters, normalizedMethod, normalizedPath);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
         }
         catch (McpException ex)
         {
@@ -637,7 +708,7 @@ internal sealed class SafeguardApiTool(
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit, IDictionary<string, string> parameters, string method = null, string path = null)
+    private string FormatResponse(string body, string format, int injectedLimit, bool injectedDefaultFields, IDictionary<string, string> parameters, string method = null, string path = null)
     {
         var safeBody = body ?? string.Empty;
         var notices = new List<Notice>();
@@ -650,9 +721,32 @@ internal sealed class SafeguardApiTool(
                 "Specify 'limit' in the query to override; pass page=N for further pages."));
         }
 
+        if (injectedDefaultFields)
+        {
+            notices.Add(new Notice(
+                NoticeKinds.DefaultFieldsApplied,
+                "Default fields= projection applied to drop OldValue/NewValue (full-entity JSON-string snapshots). "
+                + "The structured per-property diff in Changes[] is retained.",
+                "Add 'OldValue' or 'NewValue' to your own fields= list to include the snapshots; "
+                + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view."));
+        }
+
         var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
         if (recipeNotice != null)
             notices.Add(recipeNotice);
+
+        // Heuristic backstop: a path NOT in the sensitive-credential catalog
+        // that returns a top-level (or first-array-element) field literally
+        // named Password / PrivateKey / ClientSecret / Secret / ApiKey /
+        // Passphrase / Code with a non-empty string value gets flagged for
+        // maintainers. Does not redact (the catalog is the contract); the
+        // notice surfaces the inventory gap so the next reader closes it.
+        if (format != "csv")
+        {
+            var heuristicNotice = BuildUncatalogedSensitiveShapeNotice(safeBody, method, path);
+            if (heuristicNotice != null)
+                notices.Add(heuristicNotice);
+        }
 
         // Determine effective limit/page for the paging block.
         int? effectiveLimit = null;
@@ -735,7 +829,11 @@ internal sealed class SafeguardApiTool(
                 notices.Add(new Notice(
                     NoticeKinds.RecordTooLargeForCap,
                     $"A single record exceeds the response cap (~{MaxResponseChars} chars). Returned intact to preserve JSON validity.",
-                    "Use fields= to project (e.g. fields=Id,ObjectName,Action,LogTime to drop OldValue/NewValue), or query the per-record path if available."));
+                    injectedDefaultFields
+                        ? "OldValue/NewValue snapshots were already excluded by the default projection; narrow with filter= "
+                            + "(e.g. by EventName, ObjectType, or LogTime range) or fetch the singleton "
+                            + "/v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for one record at a time."
+                        : "Use fields= to project (e.g. fields=Id,ObjectName,Action,LogTime to drop OldValue/NewValue), or query the per-record path if available."));
                 break;
         }
 
@@ -780,33 +878,175 @@ internal sealed class SafeguardApiTool(
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
     }
 
-    private static Notice BuildRecipeCrossLinkNotice(string method, string path)
+    internal static Notice BuildRecipeCrossLinkNotice(string method, string path)
     {
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
-        // Only surface composite-tool hints for the highest-leverage launch path; broader
-        // path-to-recipe matching could become noisy and would belong in RecipeIndex if
-        // expanded. Currently the only composite tool is Safeguard_OpenAccessRequest.
+        // Only surface composite-tool hints for the highest-leverage launch / close paths;
+        // broader path-to-recipe matching could become noisy and would belong in RecipeIndex
+        // if expanded. Currently the composite tools are Safeguard_OpenAccessRequest and
+        // Safeguard_CloseAccessRequest.
         var segments = GetPathSegments(path);
         if (segments.Length == 0)
             return null;
 
         // /v4/AccessRequests (POST creates) and /v4/AccessRequests/{id}/InitializeSession,
         // /CheckOutPassword, /CheckOutSshKey, /CheckOutApiKeys, /CheckOutFile are all part
-        // of the launch workflow.
+        // of the launch workflow. /Cancel, /CheckIn, /Close, /Acknowledge map to the close
+        // composite tool.
         if (!segments.Any(s => s.Equals("AccessRequests", StringComparison.OrdinalIgnoreCase)))
             return null;
 
         var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+
+        if (verb == "POST" && segments.Length >= 4)
+        {
+            var leaf = segments[^1];
+            if (leaf.Equals("Cancel", StringComparison.OrdinalIgnoreCase)
+                || leaf.Equals("CheckIn", StringComparison.OrdinalIgnoreCase)
+                || leaf.Equals("Close", StringComparison.OrdinalIgnoreCase)
+                || leaf.Equals("Acknowledge", StringComparison.OrdinalIgnoreCase))
+            {
+                return new Notice(
+                    NoticeKinds.WorkflowRecipeSuggested,
+                    "Related composite tool: Safeguard_CloseAccessRequest picks the correct sub-endpoint "
+                    + "(Cancel / CheckIn / Close / Acknowledge) for you based on the request's current State "
+                    + "and your role, so you don't have to guess which of the four to POST.",
+                    "Call Safeguard_CloseAccessRequest requestId=<id> [comment=...] [allFields=...]; "
+                    + "the tool returns a refusal envelope with a diagnostic naming the state when no "
+                    + "sub-endpoint is appropriate.");
+            }
+        }
+
         var suggestion = verb == "POST" && segments.Length == 2
             ? "Safeguard_OpenAccessRequest performs the pre-flight entitlement check and submits the request in one call."
             : "Use Safeguard_Workflows id=\"session-access-request\" for the full launch workflow.";
 
         return new Notice(
             NoticeKinds.WorkflowRecipeSuggested,
-            "Related workflow recipe: session-access-request (composite tool: Safeguard_OpenAccessRequest).",
+            "Related workflow recipe: session-access-request (composite tools: "
+            + "Safeguard_OpenAccessRequest, Safeguard_CloseAccessRequest).",
             suggestion);
+    }
+
+    // Field names whose presence in a top-level response body or first-array-element
+    // commonly indicates credential material. Match is literal and case-insensitive
+    // on the JSON property name; value must be a non-empty string. Numeric / null /
+    // boolean / object values do NOT trigger the notice (audit-log "Password event"
+    // records, schema descriptions that mention these names, etc. all skip naturally).
+    private static readonly string[] SensitiveFieldNames =
+    {
+        "Password", "PrivateKey", "ClientSecret", "Secret", "ApiKey", "Passphrase", "Code"
+    };
+
+    internal static Notice BuildUncatalogedSensitiveShapeNotice(string body, string method, string path)
+    {
+        if (string.IsNullOrWhiteSpace(body) || string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(path))
+            return null;
+        // Catalog wins: any cataloged sensitive endpoint is unreachable via Execute,
+        // so we never expect to see one here — but the guard above keeps the heuristic
+        // honest when paths drift.
+        if (SensitiveCredentialEndpoints.TryMatch(method, path) != null)
+            return null;
+
+        string firedField = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            JsonElement scope = root;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                var first = default(JsonElement);
+                var any = false;
+                foreach (var el in root.EnumerateArray()) { first = el; any = true; break; }
+                if (!any) return null;
+                scope = first;
+            }
+            if (scope.ValueKind != JsonValueKind.Object)
+                return null;
+
+            foreach (var name in SensitiveFieldNames)
+            {
+                if (!scope.TryGetProperty(name, out var prop)) continue;
+                if (prop.ValueKind != JsonValueKind.String) continue;
+                var v = prop.GetString();
+                if (string.IsNullOrEmpty(v)) continue;
+                firedField = name;
+                break;
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (firedField == null)
+            return null;
+
+        return new Notice(
+            NoticeKinds.UncatalogedSensitiveShape,
+            $"Response contains a field commonly used for credential material ('{firedField}') at an endpoint not "
+            + "in the sensitive-credential catalog. The catalog (Catalog/Resources/sensitive-credential-endpoints.json) "
+            + "is the authoritative boundary for Safeguard_RetrieveCredential; this notice flags a possible inventory gap. "
+            + "No redaction was applied.",
+            "If this endpoint does return live credential material, add it to the catalog so Safeguard_Execute "
+            + "refuses-and-redirects through Safeguard_RetrieveCredential instead of returning plaintext.");
+    }
+
+    internal static string BuildSensitiveEndpointRedirectEnvelope(
+        string method, string path, SensitiveCredentialEndpoints.Match match)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = false }))
+        {
+            writer.WriteStartObject();
+            writer.WritePropertyName("data");
+            writer.WriteStartObject();
+            writer.WriteString("error", "sensitive_endpoint_redirected");
+            writer.WriteString("message",
+                "This endpoint returns plaintext credential material and is not callable via Safeguard_Execute. "
+                + "Use Safeguard_RetrieveCredential, which returns a two-block MCP response that splits "
+                + "the assistant-audience metadata from the user-audience plaintext.");
+            writer.WriteString("refusedMethod", method);
+            writer.WriteString("refusedPath", path);
+
+            writer.WritePropertyName("next_call");
+            writer.WriteStartObject();
+            writer.WriteString("tool", "Safeguard_RetrieveCredential");
+            writer.WritePropertyName("arguments");
+            writer.WriteStartObject();
+            writer.WriteString("kind", match.Entry.Kind);
+            foreach (var kv in match.ExtractedArguments)
+            {
+                if (int.TryParse(kv.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+                    writer.WriteNumber(kv.Key, n);
+                else
+                    writer.WriteString(kv.Key, kv.Value);
+            }
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+
+            writer.WriteEndObject(); // data
+
+            writer.WritePropertyName("meta");
+            writer.WriteStartObject();
+            writer.WritePropertyName("notices");
+            writer.WriteStartArray();
+            writer.WriteStartObject();
+            writer.WriteString("kind", NoticeKinds.SensitiveEndpointRedirected);
+            writer.WriteString("message",
+                "Safeguard_Execute refused this endpoint because it returns plaintext credential material. "
+                + "Lift data.next_call into the suggested tool invocation.");
+            writer.WriteString("suggestion",
+                $"Call {match.Entry.Kind} via Safeguard_RetrieveCredential with the arguments in data.next_call.arguments.");
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+            writer.WriteEndObject(); // meta
+            writer.WriteEndObject(); // root
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     private string FormatErrorResponse(McpException ex, string method, string serviceName, string requestPath)
@@ -991,6 +1231,27 @@ internal sealed class SafeguardApiTool(
         }
 
         return null;
+    }
+
+    private static IDictionary<string, string> MaybeInjectDefaultFields(
+        string method,
+        string normalizedPath,
+        IDictionary<string, string> parameters,
+        out bool injected)
+    {
+        injected = false;
+
+        var callerSuppliedFields = parameters != null && parameters.ContainsKey("fields");
+        if (!DefaultProjections.TryGetDefaultFields(method, normalizedPath, callerSuppliedFields, out var defaultFields))
+            return parameters;
+
+        var updated = parameters == null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(parameters, StringComparer.OrdinalIgnoreCase);
+
+        updated["fields"] = defaultFields;
+        injected = true;
+        return updated;
     }
 
     private IDictionary<string, string> MaybeInjectLimit(
