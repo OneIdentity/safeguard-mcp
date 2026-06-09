@@ -115,13 +115,21 @@ internal sealed class SafeguardApiTool(
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Search the Safeguard API catalog to find available endpoints. "
         + "Returns matching endpoints with their HTTP method, path, summary, query parameters, and whether they accept a request body. "
+        + "When the search matches a workflow recipe, the recipe is listed first so multi-step operations don't get bypassed in favor of a single endpoint. "
         + "Use this to find the right endpoint before calling Safeguard_Execute.")]
     public string Safeguard_Discover(
         [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all services.")] string service = null,
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null)
+        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method);
+
+    /// <summary>
+    /// Pure formatter for <c>Safeguard_Discover</c>; isolated so unit tests can
+    /// exercise the recipe-ranking and synonym-expansion behavior without
+    /// having to construct the full DI graph.
+    /// </summary>
+    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
     {
-        var results = catalogProvider.GetEndpoints();
         var sb = new StringBuilder();
         const int limit = 80;
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
@@ -146,6 +154,18 @@ internal sealed class SafeguardApiTool(
             matches.Add((score, i));
         }
 
+        // Recipe matching only runs when there is a search; an empty search keeps
+        // the existing "everything in catalog order" behavior unchanged.
+        var recipeMatches = string.IsNullOrWhiteSpace(search)
+            ? Array.Empty<RecipeMatch>()
+            : RecipeIndex.Score(searchTerms).ToArray();
+
+        // Don't surface description-only recipe hits unless there's at least one
+        // strong (id or tag) match — otherwise "list assets" would prepend a
+        // noisy recipe block on every word-cloud search.
+        var hasStrongRecipe = recipeMatches.Any(m => m.Strong);
+        var emitRecipes = hasStrongRecipe;
+
         var batchSearched = !string.IsNullOrWhiteSpace(search)
             && search.Contains("batch", StringComparison.OrdinalIgnoreCase);
         var anyBatchMatch = false;
@@ -163,6 +183,15 @@ internal sealed class SafeguardApiTool(
 
         if (matches.Count == 0)
         {
+            // Empty-result fallback: if no endpoints matched but a recipe did,
+            // steer the agent toward the recipe rather than blanking out.
+            if (emitRecipes)
+            {
+                sb.Append("No endpoints matched '").Append(search).AppendLine("', but a related workflow recipe exists:");
+                AppendRecipeBlock(sb, recipeMatches, includeStrongCallout: true);
+                return sb.ToString().TrimEnd();
+            }
+
             if (batchSearched)
                 return BuildNoBatchHint() + "\n\nNo endpoints matched the search criteria. Try broader search terms.";
             return "No endpoints matched the search criteria. Try broader search terms.\nTip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.";
@@ -170,6 +199,17 @@ internal sealed class SafeguardApiTool(
 
         if (batchSearched && !anyBatchMatch)
             sb.AppendLine(BuildNoBatchHint()).AppendLine();
+
+        // Recipe block sits ABOVE the endpoint listing. Workflows describe
+        // multi-step compositions the agent is about to attempt one endpoint
+        // at a time; ranking them first prevents the "right URL, wrong
+        // workflow" failure mode.
+        if (emitRecipes)
+        {
+            AppendRecipeBlock(sb, recipeMatches, includeStrongCallout: true);
+            sb.AppendLine("----");
+            sb.Append("Endpoints (").Append(matches.Count).AppendLine("):");
+        }
 
         // Sort by descending relevance; ties keep catalog order (stable sort).
         matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
@@ -194,6 +234,30 @@ internal sealed class SafeguardApiTool(
         sb.AppendLine();
         sb.Append("Tip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.");
         return sb.ToString();
+    }
+
+    private static void AppendRecipeBlock(StringBuilder sb, IReadOnlyList<RecipeMatch> matches, bool includeStrongCallout)
+    {
+        var strong = matches.FirstOrDefault(m => m.Strong);
+        if (includeStrongCallout && strong != null)
+        {
+            sb.Append("Strong recipe match: ").Append(strong.Recipe.Id)
+                .Append(" -- ").AppendLine(strong.Recipe.Name);
+            sb.Append("  Call: Safeguard_Workflows id=\"").Append(strong.Recipe.Id).AppendLine("\"");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Recipes that match (call Safeguard_Workflows id=\"<id>\"):");
+        foreach (var match in matches)
+        {
+            sb.Append("  ").Append(match.Recipe.Id.PadRight(28))
+                .Append("  ").AppendLine(match.Recipe.Name);
+            if (match.Recipe.Tags.Count > 0)
+            {
+                sb.Append("    tags: ").AppendLine(string.Join(", ", match.Recipe.Tags));
+            }
+        }
+        sb.AppendLine();
     }
 
     [McpServerTool(Name = "Safeguard_Execute", Title = "Execute Safeguard API",

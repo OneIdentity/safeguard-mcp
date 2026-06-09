@@ -2,7 +2,7 @@
 id: user-audit
 name: Audit User Permissions and Activity
 description: Review a user's admin roles, entitlements, and recent activity.
-tags: user, audit, permissions, roles, activity, entitlement
+tags: user, audit, permissions, roles, activity, entitlement, recent, latest, last login, lastlogindate, recent activity
 ---
 
 ID: user-audit

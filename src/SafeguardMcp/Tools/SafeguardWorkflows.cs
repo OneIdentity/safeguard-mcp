@@ -1,14 +1,14 @@
 using System.ComponentModel;
-using System.Reflection;
 using System.Text;
 using ModelContextProtocol.Server;
+using SafeguardMcp.Catalog;
 
 namespace SafeguardMcp.Tools;
 
 [McpServerToolType]
 internal sealed class SafeguardWorkflows
 {
-    private static readonly WorkflowRecipe[] Recipes = LoadRecipes();
+    private static IReadOnlyList<WorkflowRecipe> Recipes => RecipeIndex.Recipes;
 
     [McpServerTool(Name = "Safeguard_Workflows", Title = "Safeguard Workflow Recipes",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -34,87 +34,10 @@ internal sealed class SafeguardWorkflows
         return BuildListing(matches, search);
     }
 
-    private static WorkflowRecipe[] LoadRecipes()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        const string prefix = "SafeguardMcp.Workflows.";
-        var resourceNames = assembly.GetManifestResourceNames()
-            .Where(name => name.StartsWith(prefix, StringComparison.Ordinal) && name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToArray();
-
-        var recipes = new List<WorkflowRecipe>();
-        foreach (var resourceName in resourceNames)
-        {
-            using var stream = assembly.GetManifestResourceStream(resourceName);
-            if (stream is null)
-                continue;
-
-            using var reader = new StreamReader(stream);
-            var raw = reader.ReadToEnd();
-            var recipe = ParseRecipe(raw);
-            if (recipe is not null)
-                recipes.Add(recipe);
-        }
-
-        return recipes.ToArray();
-    }
-
-    private static WorkflowRecipe ParseRecipe(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-
-        var normalized = raw.Replace("\r\n", "\n").Replace("\r", "\n").TrimStart('\uFEFF');
-        var lines = normalized.Split('\n');
-        if (lines.Length < 3 || !string.Equals(lines[0].Trim(), "---", StringComparison.Ordinal))
-            return null;
-
-        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var contentStartIndex = -1;
-
-        for (var i = 1; i < lines.Length; i++)
-        {
-            var line = lines[i].Trim();
-            if (string.Equals(line, "---", StringComparison.Ordinal))
-            {
-                contentStartIndex = i + 1;
-                break;
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
-
-            var separatorIndex = line.IndexOf(':');
-            if (separatorIndex <= 0)
-                continue;
-
-            var key = line[..separatorIndex].Trim();
-            var value = line[(separatorIndex + 1)..].Trim();
-            metadata[key] = value;
-        }
-
-        if (contentStartIndex < 0
-            || !metadata.TryGetValue("id", out var id) || string.IsNullOrWhiteSpace(id)
-            || !metadata.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name)
-            || !metadata.TryGetValue("description", out var description) || string.IsNullOrWhiteSpace(description))
-        {
-            return null;
-        }
-
-        metadata.TryGetValue("tags", out var tagsRaw);
-        var tags = string.IsNullOrWhiteSpace(tagsRaw)
-            ? []
-            : tagsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        var content = string.Join('\n', lines.Skip(contentStartIndex)).Trim();
-        return new WorkflowRecipe(id, name, description, tags, content);
-    }
-
     private static WorkflowRecipe[] FilterRecipes(string search)
     {
         if (string.IsNullOrWhiteSpace(search))
-            return Recipes;
+            return Recipes.ToArray();
 
         var trimmedSearch = search.Trim();
         var terms = trimmedSearch.Split([' ', '\t', '\r', '\n', ',', ';', '/', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -155,6 +78,4 @@ internal sealed class SafeguardWorkflows
         sb.Append("Use id='<workflow-id>' to get the full recipe.");
         return sb.ToString().TrimEnd();
     }
-
-    private record WorkflowRecipe(string Id, string Name, string Description, string[] Tags, string Content);
 }

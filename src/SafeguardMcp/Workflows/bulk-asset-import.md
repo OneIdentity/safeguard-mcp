@@ -2,7 +2,7 @@
 id: bulk-asset-import
 name: Bulk Create Assets and Accounts
 description: Onboard multiple assets and their accounts programmatically using single or batch endpoints.
-tags: bulk, import, asset, account, onboarding, platform, partition, batch, batchcreate
+tags: bulk, import, asset, account, onboarding, platform, partition, batch, batchcreate, many
 ---
 
 ID: bulk-asset-import

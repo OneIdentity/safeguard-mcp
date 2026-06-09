@@ -2,7 +2,7 @@
 id: task-triage
 name: Diagnose Password/SSH Key Task Failures
 description: Find accounts with failing platform tasks and identify root causes.
-tags: task, triage, password, ssh, failure, connectivity, service account
+tags: task, triage, password, ssh, failure, connectivity, service account, failing, broken, unhealthy, retry, remediate, acknowledge
 ---
 
 ID: task-triage
