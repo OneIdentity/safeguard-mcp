@@ -86,6 +86,12 @@ internal static class LoginCommand
             }
             catch (SafeguardDotNetException ex)
             {
+                if (SafeguardDotNetExceptionClassifier.TryGetSpecificMessage(ex, host, out var specific))
+                {
+                    Console.Error.WriteLine(specific);
+                    return 1;
+                }
+
                 Console.Error.WriteLine(
                     $"Authentication against '{host}' failed: {ex.Message}. "
                     + "If your administrator has not enabled the Device Authorization Grant, "

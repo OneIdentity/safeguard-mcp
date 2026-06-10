@@ -9,6 +9,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
 using SafeguardMcp.Catalog;
+using SafeguardMcp.Login;
 using DeviceCodeInfo = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeInfo;
 using DeviceCodeLoginParameters = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeLoginParameters;
 
@@ -180,6 +181,11 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
             }
             catch (SafeguardDotNetException ex)
             {
+                if (SafeguardDotNetExceptionClassifier.TryGetSpecificMessage(ex, _host, out var specific))
+                {
+                    throw new McpException(specific);
+                }
+
                 throw new McpException(
                     $"Authentication failed for '{_host}': {ex.Message}. "
                     + "If your Safeguard administrator has not enabled the Device Authorization Grant, "
