@@ -103,6 +103,7 @@ public class CloseAccessRequestPlannerTests
     [InlineData("Terminated")]
     [InlineData("PendingReview")]
     [InlineData("PendingAccountSuspended")]
+    [InlineData("PendingAccountDemoted")]
     public void Plan_RequesterPath_DivergenceRow_RefusesWithStateNamed(string state)
     {
         var plan = CloseAccessRequestPlanner.Plan(
@@ -123,23 +124,35 @@ public class CloseAccessRequestPlannerTests
         Assert.Equal("Close", plan.Action);
     }
 
-    [Fact]
-    public void Plan_PolicyAdminOnOwnRequest_DivergenceOther_RefusesWithStateNamed()
+    [Theory]
+    [InlineData("RequestCheckedIn")]
+    [InlineData("Terminated")]
+    [InlineData("PendingAccountSuspended")]
+    [InlineData("PendingAccountDemoted")]
+    public void Plan_PolicyAdminOnOwnRequest_NeedsAdminRow_DispatchesClose(string state)
     {
         var plan = CloseAccessRequestPlanner.Plan(
-            "Terminated", callerIsRequester: true, callerIsPolicyAdmin: true,
-            truncatedComment: null, requestId: ReqId);
-        Assert.Null(plan.Action);
-        Assert.NotNull(plan.Refusal);
-        Assert.Contains("Terminated", plan.Refusal);
+            state, callerIsRequester: true, callerIsPolicyAdmin: true,
+            truncatedComment: "admin-close", requestId: ReqId);
+        Assert.Null(plan.Refusal);
+        Assert.Equal("Close", plan.Action);
+        Assert.Equal("\"admin-close\"", plan.Body);
     }
 
-    [Fact]
-    public void Plan_PolicyAdminOnOtherRequest_PendingReview_DispatchesClose()
+    [Theory]
+    [InlineData("PendingReview")]
+    [InlineData("PendingPasswordReset")]
+    [InlineData("PendingAccountDemoted")]
+    [InlineData("PendingAccountSuspended")]
+    [InlineData("PendingAcknowledgment")]
+    [InlineData("RequestCheckedIn")]
+    [InlineData("Terminated")]
+    public void Plan_PolicyAdminOnOtherRequest_NonTerminalState_DispatchesClose(string state)
     {
         var plan = CloseAccessRequestPlanner.Plan(
-            "PendingReview", callerIsRequester: false, callerIsPolicyAdmin: true,
+            state, callerIsRequester: false, callerIsPolicyAdmin: true,
             truncatedComment: "review-close", requestId: ReqId);
+        Assert.Null(plan.Refusal);
         Assert.Equal("Close", plan.Action);
         Assert.Equal("\"review-close\"", plan.Body);
     }
@@ -147,16 +160,39 @@ public class CloseAccessRequestPlannerTests
     [Theory]
     [InlineData("New")]
     [InlineData("PasswordCheckedOut")]
-    [InlineData("Closed")]
-    public void Plan_PolicyAdminOnOtherRequest_NonPendingReview_Refuses(string state)
+    [InlineData("RequestAvailable")]
+    [InlineData("Expired")]
+    public void Plan_PolicyAdminOnOtherRequest_NonAdminRow_AlsoDispatchesClose(string state)
     {
         var plan = CloseAccessRequestPlanner.Plan(
             state, callerIsRequester: false, callerIsPolicyAdmin: true,
             truncatedComment: null, requestId: ReqId);
+        Assert.Null(plan.Refusal);
+        Assert.Equal("Close", plan.Action);
+    }
+
+    [Theory]
+    [InlineData("Closed")]
+    [InlineData("Complete")]
+    [InlineData("Reclaimed")]
+    public void Plan_PolicyAdminOnOtherRequest_TerminalState_NoOps(string state)
+    {
+        var plan = CloseAccessRequestPlanner.Plan(
+            state, callerIsRequester: false, callerIsPolicyAdmin: true,
+            truncatedComment: null, requestId: ReqId);
+        Assert.Null(plan.Refusal);
+        Assert.Equal("None", plan.Action);
+    }
+
+    [Fact]
+    public void Plan_PolicyAdminOnOtherRequest_UnknownState_RefusesWithDiagnostic()
+    {
+        var plan = CloseAccessRequestPlanner.Plan(
+            "Bogus", callerIsRequester: false, callerIsPolicyAdmin: true,
+            truncatedComment: null, requestId: ReqId);
         Assert.Null(plan.Action);
         Assert.NotNull(plan.Refusal);
-        Assert.Contains("PendingReview", plan.Refusal);
-        Assert.Contains(state, plan.Refusal);
+        Assert.Contains("Bogus", plan.Refusal);
     }
 
     [Fact]
