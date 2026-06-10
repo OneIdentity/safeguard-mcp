@@ -222,8 +222,31 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
             if (minutesLeft < 5)
             {
                 _logger.LogInformation("Token for '{Host}' expires in {Minutes} min — refreshing.", _host, minutesLeft);
-                _connection.RefreshAccessToken();
+                try
+                {
+                    _connection.RefreshAccessToken();
+                }
+                catch (ObjectDisposedException ex)
+                {
+                    // Defensive: a disposed authenticator inside the SDK
+                    // has historically been triggered by external code
+                    // disposing the borrowed access-token SecureString.
+                    // Treat as non-fatal so a healthy session is not
+                    // torn down and re-prompted; if the token is
+                    // genuinely stale, the next API call will surface
+                    // a 401 and authentication will be re-run then.
+                    _logger.LogWarning(ex, "Refresh threw ObjectDisposedException for '{Host}' — leaving session in place.", _host);
+                }
+                catch (Exception ex) when (IsUnableToRefresh(ex))
+                {
+                    _logger.LogWarning(ex, "Token refresh declined for '{Host}' — leaving session in place; the next API call will re-auth on 401 if needed.", _host);
+                }
             }
+            return true;
+        }
+        catch (ObjectDisposedException ex)
+        {
+            _logger.LogWarning(ex, "Lifetime probe threw ObjectDisposedException for '{Host}' — leaving session in place.", _host);
             return true;
         }
         catch (Exception ex)
@@ -231,6 +254,19 @@ internal sealed class StdioSafeguardSession : ISafeguardSession, IDisposable
             _logger.LogWarning(ex, "Failed to check/refresh token for '{Host}' — forcing re-authentication.", _host);
             return false;
         }
+    }
+
+    private static bool IsUnableToRefresh(Exception ex)
+    {
+        for (var current = ex; current != null; current = current.InnerException)
+        {
+            if (current.Message != null
+                && current.Message.IndexOf("unable to refresh", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private bool ResolveSslPolicy()
