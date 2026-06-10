@@ -1122,18 +1122,30 @@ internal sealed class SafeguardApiTool
         return separatorIndex >= 0 ? message[(separatorIndex + 2)..].Trim() : message.Trim();
     }
 
-    private static bool TryParseErrorBody(string message, out string apiMessage, out string apiCode, out string innerError)
+    internal static bool TryParseErrorBody(string message, out string apiMessage, out string apiCode, out string innerError)
     {
         apiMessage = null;
         apiCode = null;
         innerError = null;
 
-        if (string.IsNullOrWhiteSpace(message) || !message.TrimStart().StartsWith('{'))
+        if (string.IsNullOrWhiteSpace(message))
             return false;
+
+        // Belt-and-suspenders: SafeguardInvoker now prefers
+        // SafeguardDotNetException.Response so the body usually
+        // arrives bare. If a future SDK (or a code path we missed)
+        // hands us wrapper prose like "Error returned from Safeguard
+        // API, Error: BadRequest {…}", scan to the first '{' instead
+        // of giving up because position 0 isn't JSON.
+        var braceIndex = message.IndexOf('{');
+        if (braceIndex < 0)
+            return false;
+
+        var jsonCandidate = braceIndex == 0 ? message : message[braceIndex..];
 
         try
         {
-            using var document = JsonDocument.Parse(message);
+            using var document = JsonDocument.Parse(jsonCandidate);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
 
