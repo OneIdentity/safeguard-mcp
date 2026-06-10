@@ -1064,7 +1064,7 @@ internal sealed class SafeguardApiTool
         return string.Join("\n", lines);
     }
 
-    private (string TemplatePath, ApiSchemaPropertyPath[] Paths) ResolveErrorContext(
+    private (string TemplatePath, bool TemplateMatched, ApiSchemaPropertyPath[] Paths) ResolveErrorContext(
         string method, string serviceName, string requestPath)
     {
         var endpoints = catalogProvider.GetEndpoints();
@@ -1086,6 +1086,7 @@ internal sealed class SafeguardApiTool
             templatePath ??= endpoint.Path;
         }
 
+        var matched = templatePath != null;
         templatePath ??= requestPath;
 
         var response = catalogProvider.GetResponseSchema(method, serviceName, templatePath)
@@ -1098,7 +1099,7 @@ internal sealed class SafeguardApiTool
         else if (request != null && request.Value.Paths != null && request.Value.Paths.Length > 0)
             paths = request.Value.Paths;
 
-        return (templatePath, paths ?? Array.Empty<ApiSchemaPropertyPath>());
+        return (templatePath, matched, paths ?? Array.Empty<ApiSchemaPropertyPath>());
     }
 
     private static int ExtractStatusCode(string message)
@@ -1200,10 +1201,23 @@ internal sealed class SafeguardApiTool
         string serviceName,
         string requestPath)
     {
-        var (templatePath, paths) = ResolveErrorContext(method, serviceName, requestPath);
+        var (templatePath, templateMatched, paths) = ResolveErrorContext(method, serviceName, requestPath);
         var ctx = new ErrorContext(serviceName, method, templatePath);
 
-        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState, ctx, paths);
+        string[] pathSuggestions = Array.Empty<string>();
+        string[] supportedMethods = Array.Empty<string>();
+        if (statusCode == 404 && !templateMatched)
+        {
+            pathSuggestions = EndpointPathSuggester.Suggest(method, requestPath, catalogProvider.GetEndpoints());
+        }
+        else if (statusCode == 405 && templateMatched)
+        {
+            supportedMethods = CollectSupportedMethods(serviceName, templatePath);
+        }
+
+        var hint = ApiToolHelpers.GetErrorHint(
+            statusCode, apiMessage, hasModelState, ctx, paths,
+            requestPath, templateMatched, pathSuggestions, supportedMethods);
         if (!string.IsNullOrWhiteSpace(hint))
             return hint;
 
@@ -1214,6 +1228,25 @@ internal sealed class SafeguardApiTool
         }
 
         return null;
+    }
+
+    private string[] CollectSupportedMethods(string serviceName, string templatePath)
+    {
+        var endpoints = catalogProvider.GetEndpoints();
+        var methods = new List<string>(4);
+        for (int i = 0; i < endpoints.Length; i++)
+        {
+            ref readonly var endpoint = ref endpoints[i];
+            if (!endpoint.Service.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!endpoint.Path.Equals(templatePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var upper = endpoint.Method.ToUpperInvariant();
+            if (!methods.Contains(upper))
+                methods.Add(upper);
+        }
+        methods.Sort(StringComparer.Ordinal);
+        return methods.ToArray();
     }
 
     private static IDictionary<string, string> MaybeInjectDefaultFields(
