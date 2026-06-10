@@ -56,8 +56,7 @@ internal static class HttpModeStartup
                 + "environment variable" + (present.Count == 1 ? "" : "s")
                 + " before starting `safeguard-mcp --http`: "
                 + string.Join(", ", present)
-                + ". Acquire per-caller Safeguard user tokens via `safeguard-mcp login` "
-                + "or your MCP client's OAuth flow and send them as `Authorization: Bearer`.";
+                + ". " + HttpModeMessages.EnvForbiddenSuffix;
         }
 
         return null;

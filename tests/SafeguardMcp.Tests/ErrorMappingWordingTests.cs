@@ -9,6 +9,7 @@ using ModelContextProtocol;
 using OneIdentity.SafeguardDotNet;
 using OneIdentity.SafeguardDotNet.Event;
 using OneIdentity.SafeguardDotNet.Sps;
+using SafeguardMcp;
 using SafeguardMcp.Tools;
 using DeviceCodeLoginParameters = OneIdentity.SafeguardDotNet.DeviceCodeLogin.DeviceCodeLoginParameters;
 
@@ -16,17 +17,13 @@ namespace SafeguardMcp.Tests;
 
 /// <summary>
 /// Pins the exact error-mapping wording presented to MCP clients so
-/// it cannot drift silently:
-///
-/// <list type="bullet">
-///   <item><b>Missing bearer (HTTP):</b> "Not authenticated against
-///   Safeguard. Acquire a Safeguard user token (e.g.,
-///   <c>safeguard-mcp login</c>) and configure your client to send
-///   <c>Authorization: Bearer &lt;token&gt;</c>."</item>
-///   <item><b>401 from appliance (HTTP):</b> "Safeguard token has
-///   expired or been revoked. Re-acquire (<c>safeguard-mcp login</c> or
-///   your MCP client's OAuth flow) and retry."</item>
-/// </list>
+/// it cannot drift silently. Every HTTP-mode auth-failure message
+/// must lead with the MCP client's OAuth flow (the documented primary
+/// per <c>README.md</c>) and reference <c>safeguard-mcp login</c>
+/// only as a fallback for clients without OAuth discovery and for
+/// scripts/CI. The tests assert both substrings are present AND that
+/// the OAuth-flow phrase precedes the CLI fallback so future drift
+/// can't quietly invert the recommendation.
 ///
 /// The wording is exercised through the real runtime paths
 /// (<see cref="HttpRelaySafeguardSession.EnsureReadyAsync"/> and
@@ -38,14 +35,12 @@ public class ErrorMappingWordingTests
 {
     private const string TestHost = "safeguard.example.test";
 
-    private const string MissingBearerExpected =
-        "Not authenticated against Safeguard. Acquire a Safeguard user token "
-        + "(e.g., `safeguard-mcp login`) and configure your client to send "
-        + "`Authorization: Bearer <token>`.";
+    private const string MissingBearerExpected = HttpModeMessages.NotAuthenticated;
 
-    private const string Expired401Expected =
-        "Safeguard token has expired or been revoked. Re-acquire "
-        + "(`safeguard-mcp login` or your MCP client's OAuth flow) and retry.";
+    private const string Expired401Expected = HttpModeMessages.TokenExpired;
+
+    private const string PrimaryPhrase = "MCP client's OAuth flow";
+    private const string FallbackPhrase = "safeguard-mcp login";
 
     public ErrorMappingWordingTests()
     {
@@ -66,6 +61,7 @@ public class ErrorMappingWordingTests
         var ex = await Assert.ThrowsAsync<McpException>(
             () => session.EnsureReadyAsync(server: null));
         Assert.Equal(MissingBearerExpected, ex.Message);
+        AssertOAuthFlowLeadsCliFallback(ex.Message);
     }
 
     [Fact]
@@ -81,6 +77,7 @@ public class ErrorMappingWordingTests
         var ex = await Assert.ThrowsAsync<McpException>(
             () => session.ExecuteWithConnectionAsync(_ => Task.FromResult(0)));
         Assert.Equal(MissingBearerExpected, ex.Message);
+        AssertOAuthFlowLeadsCliFallback(ex.Message);
     }
 
     [Fact]
@@ -101,6 +98,18 @@ public class ErrorMappingWordingTests
             () => session.ExecuteWithConnectionAsync<int>(_ =>
                 throw new SafeguardDotNetException("simulated", HttpStatusCode.Unauthorized, response: "")));
         Assert.Equal(Expired401Expected, ex.Message);
+        AssertOAuthFlowLeadsCliFallback(ex.Message);
+    }
+
+    private static void AssertOAuthFlowLeadsCliFallback(string message)
+    {
+        var primary = message.IndexOf(PrimaryPhrase, StringComparison.Ordinal);
+        var fallback = message.IndexOf(FallbackPhrase, StringComparison.Ordinal);
+        Assert.True(primary >= 0, $"Expected '{PrimaryPhrase}' in: {message}");
+        Assert.True(fallback >= 0, $"Expected '{FallbackPhrase}' in: {message}");
+        Assert.True(
+            primary < fallback,
+            $"Expected '{PrimaryPhrase}' (primary) to precede '{FallbackPhrase}' (fallback) in: {message}");
     }
 
     private sealed class ThrowingConnectionFactory : ISafeguardConnectionFactory
