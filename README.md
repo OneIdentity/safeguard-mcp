@@ -477,7 +477,7 @@ that give the agent the ability to navigate, understand, and execute against any
 dynamically. Think of it as providing a map and a car rather than building 1,000 individual
 roads.
 
-The complete tool surface is **10 tools**:
+The complete tool surface is **11 tools**:
 
 | Tool | Purpose |
 |------|---------|
