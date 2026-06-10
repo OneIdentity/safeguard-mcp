@@ -102,7 +102,8 @@ internal sealed class SafeguardApiTool
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Search the Safeguard API catalog. Default emits one line per endpoint (method/path/summary). "
         + "Set verbose=true after narrowing to inspect query-parameter details. "
-        + "Recipe matches are listed first. Use this to find the right endpoint before calling Safeguard_Execute.")]
+        + "Recipe matches are listed first. Batch* endpoints are returned next to their per-id siblings; "
+        + "consider both before fan-firing. Use this to find the right endpoint before calling Safeguard_Execute.")]
     public string Safeguard_Discover(
         [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all services.")] string service = null,
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
@@ -402,7 +403,14 @@ internal sealed class SafeguardApiTool
         + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
         + "always read the data field for the actual API payload, and meta.notices for applied auto-limit / paging hints / truncation events. "
         + "Responses are capped at ~30 KB; for fat endpoints (audit logs, Assets, AssetAccounts) "
-        + "use fields= to project, or follow meta.paging.next to fetch the next page.")]
+        + "use fields= to project, or follow meta.paging.next to fetch the next page. "
+        + "Bulk reflex: before issuing DELETE / POST / PUT against the same top-level collection more "
+        + "than ~5 times in a row, check for a Batch* sibling. POST /v4/{Resource}/BatchCreate, "
+        + "/BatchUpdate, /BatchDelete take a JSON-array body. The appliance currently exposes Batch* on "
+        + "/v4/Assets, /v4/AssetAccounts, /v4/Users, /v4/UserGroups, /v4/AccountGroups, /v4/AssetGroups. "
+        + "Use Safeguard_Discover with search='Batch' to see all Batch* endpoints. The bulk path also "
+        + "returns per-row failure detail in one response, which is faster to triage than N parallel "
+        + "error envelopes.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). The correct service is auto-detected from the path.")] string path,
