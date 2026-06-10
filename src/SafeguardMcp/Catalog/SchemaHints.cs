@@ -78,13 +78,6 @@ public static class SchemaHints
         // --- Misc ---
         ["NetworkAddress"] =
             "Hostname, IP address, or FQDN of the target system.",
-
-        // --- Batch Operations ---
-        ["BatchOperations"] =
-            "For bulk operations, append /BatchCreate, /BatchUpdate, or /BatchDelete to the "
-            + "resource path (e.g., POST /v4/Assets/BatchCreate). The request body is a JSON "
-            + "array of objects, each with the same format as a single-item POST/PUT. "
-            + "Available for: Assets, AssetAccounts, Users, UserGroups, AccountGroups, AssetGroups.",
     };
 
     /// <summary>

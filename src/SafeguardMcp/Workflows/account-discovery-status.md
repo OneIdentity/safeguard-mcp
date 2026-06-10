@@ -79,7 +79,7 @@ Steps:
    - `POST /v4/Assets/{assetId}/DiscoverAccounts`
 
 Related:
-- Use `bulk-asset-import` when you need manual onboarding instead of discovery.
+- Use `bulk-asset-operations` when you need manual onboarding (or modify/delete) instead of discovery.
 - Use `password-rotation-status` after managing discovered accounts to confirm they enter the rotation.
 - Use `partition-schedule-update` to change the run cadence of an AccountDiscoverySchedule -- it follows the same ScheduleType conditional-required-field rules as the password/SSH schedules.
 

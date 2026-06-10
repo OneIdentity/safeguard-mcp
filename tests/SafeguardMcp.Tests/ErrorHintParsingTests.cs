@@ -170,4 +170,60 @@ public class ErrorHintParsingTests
         Assert.Contains("RequestEntitlements", hint);
         Assert.Contains("Safeguard_OpenAccessRequest", hint);
     }
+
+    [Fact]
+    public void Pipeline_50104_NamesBlockingAccessRequestAndPointsAtClose()
+    {
+        // Wire-accurate body shape: SqlError_50104 = "This object is referenced by {0}." and the
+        // emit site is `AccessRequest <id>  (<State>)` — verified against
+        // pangaeaappliance/src/Data/Middleware/Core/V4/System/AssetLogic.cs (line ~2958) and
+        // /Accounts/AssetAccountLogic.cs (line ~1943).
+        const string body = "Error returned from Safeguard API, Error: BadRequest "
+            + "{\"Code\":50104,\"Message\":\"This object is referenced by AccessRequest "
+            + "653-922-2132-51688-K1z6sfgT0lE5LwzJU2dgxQ  (PendingPasswordReset).\"}";
+
+        Assert.True(SafeguardApiTool.TryParseErrorBody(body, out var apiMessage, out var apiCode, out _));
+        Assert.Equal("50104", apiCode);
+
+        var ctx = new ErrorContext("core", "DELETE", "/v4/Assets/{id}");
+        var hint = ApiToolHelpers.GetErrorHint(400, apiMessage, hasModelState: false, ctx, paths: null);
+
+        Assert.NotNull(hint);
+        Assert.Contains("50104", hint);
+        Assert.Contains("AccessRequest 653-922-2132-51688-K1z6sfgT0lE5LwzJU2dgxQ", hint);
+        Assert.Contains("Safeguard_CloseAccessRequest requestId=653-922-2132-51688-K1z6sfgT0lE5LwzJU2dgxQ", hint);
+        Assert.Contains("/v4/Assets/BatchDelete", hint);
+    }
+
+    [Fact]
+    public void Pipeline_50104_AssetAccountsContext_PointsAtAssetAccountsBatchDelete()
+    {
+        const string body = "Error returned from Safeguard API, Error: BadRequest "
+            + "{\"Code\":50104,\"Message\":\"This object is referenced by AccessRequest "
+            + "abc-123  (RequestCheckedIn).\"}";
+
+        Assert.True(SafeguardApiTool.TryParseErrorBody(body, out var apiMessage, out _, out _));
+
+        var ctx = new ErrorContext("core", "DELETE", "/v4/AssetAccounts/{id}");
+        var hint = ApiToolHelpers.GetErrorHint(400, apiMessage, hasModelState: false, ctx, paths: null);
+
+        Assert.NotNull(hint);
+        Assert.Contains("AccessRequest abc-123", hint);
+        Assert.Contains("/v4/AssetAccounts/BatchDelete", hint);
+    }
+
+    [Fact]
+    public void ExtractAccessRequestId_HandlesGuidIshIdAndStripsTrailingState()
+    {
+        const string msg = "This object is referenced by AccessRequest 653-922-2132-51688-K1z6sfgT0lE5LwzJU2dgxQ  (PendingPasswordReset).";
+        Assert.Equal("653-922-2132-51688-K1z6sfgT0lE5LwzJU2dgxQ", ApiToolHelpers.ExtractAccessRequestId(msg));
+    }
+
+    [Fact]
+    public void ExtractAccessRequestId_ReturnsNull_WhenMarkerMissing()
+    {
+        Assert.Null(ApiToolHelpers.ExtractAccessRequestId("This object is referenced by Asset 'foo' (123)."));
+        Assert.Null(ApiToolHelpers.ExtractAccessRequestId(""));
+        Assert.Null(ApiToolHelpers.ExtractAccessRequestId(null));
+    }
 }

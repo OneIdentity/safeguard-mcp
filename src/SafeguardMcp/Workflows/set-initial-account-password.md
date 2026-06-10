@@ -49,6 +49,6 @@ Sensitive material — general rule:
 Related workflows:
 - Use password-rotation-status to verify scheduled rotations across an estate.
 - Use ssh-key-rotation for the SSH-key-bearing equivalent of this flow.
-- Use bulk-asset-import to create the assets and accounts before running this recipe on the new account ids.
+- Use bulk-asset-operations to create the assets and accounts before running this recipe on the new account ids.
 
 Source: Verified against pangaeaappliance src/Service/Core/Controllers/V4/Partitions/AssetAccountsController_Tasks.cs (ChangePasswordAsync) and src/Service/Core/Controllers/V2/Partitions/AssetAccountsController.cs (GeneratePasswordAsync).
