@@ -57,35 +57,6 @@ internal sealed class SafeguardApiTool
         return FormatPrincipal(info, "Connected and authenticated");
     }
 
-    [McpServerTool(Name = "Safeguard_Status", Title = "Safeguard Connection Status",
-        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Report the current Safeguard authentication state. In stdio mode reports the cached "
-        + "connection's token lifetime. In HTTP mode inspects the request bearer (decoding the JWT body "
-        + "WITHOUT signature verification, display only) and reports the principal and expiry; the "
-        + "Safeguard appliance is the authority on token validity.")]
-    public async Task<string> Safeguard_Status(McpServer server, CancellationToken ct = default)
-    {
-        if (!session.HasCredentials)
-        {
-            return string.IsNullOrWhiteSpace(session.Host)
-                ? "No Safeguard appliance is configured. Set SAFEGUARD_HOST and restart the MCP server."
-                : "Not authenticated against Safeguard. Acquire a Safeguard user token (e.g., "
-                    + "`safeguard-mcp login`) and configure your client to send `Authorization: Bearer <token>`.";
-        }
-
-        try
-        {
-            await session.EnsureReadyAsync(server, ct);
-            var info = await session.GetPrincipalInfoAsync(ct);
-            return FormatPrincipal(info, "Authenticated")
-                + "\nNote: The Safeguard appliance is the authority on token validity; this output is display-only.";
-        }
-        catch (McpException ex)
-        {
-            return ex.Message;
-        }
-    }
-
     [McpServerTool(Name = "Safeguard_Disconnect", Title = "Disconnect from Safeguard",
         ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = true)]
     [Description("Log out of the current Safeguard session. In stdio mode drops the cached connection. "

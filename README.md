@@ -482,7 +482,6 @@ The complete tool surface is **10 tools**:
 | Tool | Purpose |
 |------|---------|
 | `Safeguard_Connect` | Authenticate to one or more appliances via device code |
-| `Safeguard_Status` | Report the current connection/authentication state without a round-trip |
 | `Safeguard_Disconnect` | Revoke the active Safeguard token and drop the cached connection |
 | `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
