@@ -351,8 +351,55 @@ internal static class ApiToolHelpers
         string apiMessage,
         bool hasModelState,
         ErrorContext ctx,
-        ApiSchemaPropertyPath[] paths)
+        ApiSchemaPropertyPath[] paths,
+        string requestPath = null,
+        bool templateMatched = true,
+        string[] pathSuggestions = null,
+        string[] supportedMethods = null)
     {
+        if (statusCode == 404 && !templateMatched && !string.IsNullOrWhiteSpace(requestPath))
+        {
+            var sb404 = new StringBuilder();
+            sb404.Append("No endpoint at ").Append(requestPath).Append('.');
+            if (pathSuggestions != null && pathSuggestions.Length > 0)
+            {
+                sb404.Append(" Did you mean ");
+                for (int i = 0; i < pathSuggestions.Length; i++)
+                {
+                    if (i > 0) sb404.Append(", ");
+                    sb404.Append('`').Append(pathSuggestions[i]).Append('`');
+                }
+                sb404.Append("? Use Safeguard_Discover to browse other endpoints.");
+            }
+            else
+            {
+                sb404.Append(" Use Safeguard_Discover to find the right path.");
+            }
+            return sb404.ToString();
+        }
+
+        if (statusCode == 405 && !string.IsNullOrWhiteSpace(requestPath))
+        {
+            var sb405 = new StringBuilder();
+            sb405.Append("Method ").Append(ctx.Method).Append(" not supported at ")
+                 .Append(requestPath).Append('.');
+            if (supportedMethods != null && supportedMethods.Length > 0)
+            {
+                sb405.Append(" Supported: ");
+                for (int i = 0; i < supportedMethods.Length; i++)
+                {
+                    if (i > 0) sb405.Append(", ");
+                    sb405.Append(supportedMethods[i]);
+                }
+                sb405.Append('.');
+            }
+            else
+            {
+                sb405.Append(" Use Safeguard_Discover for endpoints that accept this method.");
+            }
+            return sb405.ToString();
+        }
+
         if (statusCode == 400 && !string.IsNullOrWhiteSpace(apiMessage))
         {
             if (apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
