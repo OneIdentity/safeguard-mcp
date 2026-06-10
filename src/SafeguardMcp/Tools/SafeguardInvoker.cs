@@ -192,7 +192,11 @@ internal static class SafeguardInvoker
 
     private static string GetBearerToken(ISafeguardConnection connection)
     {
-        using var token = connection.GetAccessToken();
-        return new NetworkCredential(string.Empty, token).Password;
+        // NOTE: GetAccessToken() hands back the SDK's internal bearer
+        // SecureString by reference. Do NOT wrap in `using` — disposing
+        // it zeroes the SDK's own copy and forces a re-login on the
+        // next call.
+        var token = connection.GetAccessToken();
+        return SecureStringExtensions.ReadInsecure(token) ?? string.Empty;
     }
 }
