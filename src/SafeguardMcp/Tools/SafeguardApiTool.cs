@@ -100,25 +100,45 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Discover", Title = "Discover Safeguard API Endpoints",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Search the Safeguard API catalog to find available endpoints. "
-        + "Returns matching endpoints with their HTTP method, path, summary, query parameters, and whether they accept a request body. "
-        + "When the search matches a workflow recipe, the recipe is listed first so multi-step operations don't get bypassed in favor of a single endpoint. "
-        + "Use this to find the right endpoint before calling Safeguard_Execute.")]
+    [Description("Search the Safeguard API catalog. Default emits one line per endpoint (method/path/summary). "
+        + "Set verbose=true after narrowing to inspect query-parameter details. "
+        + "Recipe matches are listed first. Use this to find the right endpoint before calling Safeguard_Execute.")]
     public string Safeguard_Discover(
         [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all services.")] string service = null,
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
-        [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null)
-        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method);
+        [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null,
+        [Description("Include per-endpoint query parameter details (defaults, accepted values). "
+            + "Default false returns one line per endpoint; set true after narrowing the search to inspect parameter details.")] bool verbose = false)
+        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method, verbose);
+
+    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
+        => FormatDiscovery(results, service, search, method, verbose: false);
 
     /// <summary>
     /// Pure formatter for <c>Safeguard_Discover</c>; isolated so unit tests can
     /// exercise the recipe-ranking and synonym-expansion behavior without
     /// having to construct the full DI graph.
     /// </summary>
-    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
+    /// <remarks>
+    /// Two listing modes:
+    ///   - <c>verbose=false</c> (default): one line per endpoint, cap
+    ///     <see cref="MaxRowsCompact"/>. Designed to fit the host render
+    ///     budget for typical broad searches (e.g. "audit log" GET).
+    ///   - <c>verbose=true</c>: emits per-endpoint parameter details, cap
+    ///     <see cref="MaxRowsVerbose"/>; if matches exceed the cap the
+    ///     output short-circuits to a paths-only listing prompting the
+    ///     caller to narrow further before requesting details.
+    /// A producer-side size guard (<see cref="MaxBytes"/>) trims trailing
+    /// rows and prepends a notice naming the available narrowers, so
+    /// pathological catalogs can't blow the host render budget.
+    /// </remarks>
+    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method, bool verbose)
     {
+        const int MaxRowsCompact = 200;
+        const int MaxRowsVerbose = 20;
+        const int MaxBytes = 18 * 1024;
+
         var sb = new StringBuilder();
-        const int limit = 80;
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
 
         // Collect matching endpoints with relevance scores so that exact path-segment
@@ -201,26 +221,143 @@ internal sealed class SafeguardApiTool
         // Sort by descending relevance; ties keep catalog order (stable sort).
         matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
 
+        // verbose=true with a wide match set: short-circuit to paths-only
+        // and prompt the caller to narrow further. Per-param detail blocks
+        // are the dominant byte source on broad searches.
+        if (verbose && matches.Count > MaxRowsVerbose)
+        {
+            sb.Append("Too many matches (").Append(matches.Count)
+                .Append(") for verbose=true (cap ").Append(MaxRowsVerbose)
+                .AppendLine("). Listing paths only — narrow further before requesting details.");
+            int pathsShown = 0;
+            foreach (var (_, idx) in matches)
+            {
+                if (pathsShown >= MaxRowsCompact) break;
+                ref readonly var ep = ref results[idx];
+                sb.Append(ep.Method.PadRight(7));
+                sb.Append(ep.Service.PadRight(13));
+                sb.AppendLine(ep.Path);
+                pathsShown++;
+            }
+            if (matches.Count > pathsShown)
+                sb.AppendLine().Append("... and ").Append(matches.Count - pathsShown).Append(" more.");
+            sb.AppendLine();
+            sb.Append("Narrow with service=, method=, or a more specific search= term, then re-run with verbose=true.");
+            return ApplySizeGuard(sb, matches.Count, MaxBytes);
+        }
+
+        // Shape hint for wide compact results: list the most common 2-segment
+        // path prefixes so the agent has a vocabulary for narrowing.
+        if (!verbose && matches.Count > 60)
+        {
+            var prefixes = TopPathPrefixes(results, matches, max: 4);
+            if (prefixes.Count > 0)
+            {
+                sb.Append("Matched ").Append(matches.Count).Append(" endpoints across the {")
+                    .Append(string.Join(", ", prefixes))
+                    .AppendLine("} path prefixes. Common narrowers: service=Core, method=GET, search='<refined-term>'.");
+            }
+        }
+
+        int effectiveLimit = verbose ? MaxRowsVerbose : MaxRowsCompact;
         int shown = 0;
+        int truncatedAtBytes = -1;
         foreach (var (_, idx) in matches)
         {
-            if (shown >= limit) break;
+            if (shown >= effectiveLimit) break;
+
+            int rowStart = sb.Length;
             ref readonly var ep = ref results[idx];
             sb.Append(ep.Method.PadRight(7));
             sb.Append(ep.Service.PadRight(13));
             sb.Append(ep.Path);
             if (ep.HasBody) sb.Append("  [body]");
             sb.Append("  -- ").AppendLine(ep.Summary);
-            AppendParameterDetails(sb, ep);
+            if (verbose)
+                AppendParameterDetails(sb, ep);
+
+            if (sb.Length > MaxBytes)
+            {
+                // Roll back the row that pushed us over the budget.
+                sb.Length = rowStart;
+                truncatedAtBytes = shown;
+                break;
+            }
             shown++;
         }
 
-        if (matches.Count > limit)
-            sb.AppendLine().Append("... and ").Append(matches.Count - limit).Append(" more. Narrow your search with service, method, or more specific search text.");
+        if (truncatedAtBytes < 0 && matches.Count > shown)
+            sb.AppendLine().Append("... and ").Append(matches.Count - shown).Append(" more. Narrow your search with service, method, or more specific search text.");
 
         sb.AppendLine();
         sb.Append("Tip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.");
+
+        return ApplySizeGuard(sb, matches.Count, MaxBytes, truncatedAtBytes);
+    }
+
+    /// <summary>
+    /// Defense-in-depth size guard: if the rendered buffer still exceeds
+    /// <paramref name="maxBytes"/> after the row loop's per-row check
+    /// (e.g. the recipe + shape-hint preamble alone is large), trim from
+    /// the tail and prepend a single notice naming the available
+    /// Safeguard_Discover narrowers.
+    /// </summary>
+    private static string ApplySizeGuard(StringBuilder sb, int totalMatches, int maxBytes, int truncatedAt = -1)
+    {
+        bool overBudget = sb.Length > maxBytes;
+        if (!overBudget && truncatedAt < 0)
+            return sb.ToString();
+
+        if (overBudget)
+        {
+            // Trim hard to the budget, then back off to the previous line break
+            // so the output ends cleanly.
+            sb.Length = maxBytes;
+            for (int i = sb.Length - 1; i > 0; i--)
+            {
+                if (sb[i] == '\n')
+                {
+                    sb.Length = i;
+                    break;
+                }
+            }
+        }
+
+        var notice = new StringBuilder();
+        notice.Append("Output truncated to fit host render limit. Showing top results of ")
+            .Append(totalMatches).AppendLine(" matches.")
+            .AppendLine("Narrow with Safeguard_Discover narrowers: search=, method=, or service=. Set verbose=false for the compact one-line-per-endpoint view.")
+            .AppendLine();
+        sb.Insert(0, notice.ToString());
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Returns up to <paramref name="max"/> most-common 2-segment path
+    /// prefixes (e.g. "/v4/Users") across the matched endpoints, ranked
+    /// by frequency.
+    /// </summary>
+    private static List<string> TopPathPrefixes(ApiEndpoint[] results, List<(int Score, int Index)> matches, int max)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (_, idx) in matches)
+        {
+            var path = results[idx].Path;
+            if (string.IsNullOrEmpty(path)) continue;
+            // Path looks like "/v4/Users/{id}" — take the first two non-empty segments.
+            int first = path.IndexOf('/', 1);
+            if (first <= 0) continue;
+            int second = path.IndexOf('/', first + 1);
+            string prefix = second < 0 ? path : path.Substring(0, second);
+            counts.TryGetValue(prefix, out var c);
+            counts[prefix] = c + 1;
+        }
+        return counts
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Take(max)
+            .Select(kv => kv.Key)
+            .ToList();
     }
 
     private static void AppendRecipeBlock(StringBuilder sb, IReadOnlyList<RecipeMatch> matches, bool includeStrongCallout)
