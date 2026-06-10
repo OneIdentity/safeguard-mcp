@@ -17,7 +17,7 @@ internal sealed class SafeguardWorkflows
         + "Use this when you need to perform a multi-step operation and want guidance on the correct approach.")]
     public string Safeguard_Workflows(
         [Description("Search for workflows by keyword (e.g. 'health', 'password failure', 'bulk import', 'access request').")] string search = null,
-        [Description("Get a specific workflow by ID (e.g. 'task-triage', 'health-check', 'bulk-assets').")] string id = null)
+        [Description("Get a specific workflow by ID (e.g. 'task-triage', 'health-check', 'bulk-asset-operations').")] string id = null)
     {
         if (!string.IsNullOrWhiteSpace(id))
         {

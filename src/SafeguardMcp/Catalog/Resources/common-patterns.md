@@ -45,7 +45,10 @@ POST /v4/AccessPolicies/{policyId}/ScopeItems/Add  body: [{"Id": 10}, {"Id": 11}
 # Remove members
 POST /v4/Roles/{roleId}/Members/Remove  body: [{"Id": 1}]
 
-# Batch asset creation — use POST /v4/Assets/BatchCreate (if available in your version)
+# Bulk asset / account operations — use the Batch* endpoints (POST /v4/{Resource}/BatchCreate,
+# /BatchUpdate, /BatchDelete) on Assets, AssetAccounts, Users, UserGroups, AccountGroups, AssetGroups.
+# Body is a JSON array; partial failures return per-row detail in one envelope.
+# See workflow recipe: bulk-asset-operations.
 ```
 
 ## Audit & Activity Queries
