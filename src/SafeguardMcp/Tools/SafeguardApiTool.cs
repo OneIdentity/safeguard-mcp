@@ -851,6 +851,10 @@ internal sealed class SafeguardApiTool
         if (recipeNotice != null)
             notices.Add(recipeNotice);
 
+        var offerNotice = BuildSessionLaunchOfferNotice(method, path);
+        if (offerNotice != null)
+            notices.Add(offerNotice);
+
         // Heuristic backstop: a path NOT in the sensitive-credential catalog
         // that returns a top-level (or first-array-element) field literally
         // named Password / PrivateKey / ClientSecret / Secret / ApiKey /
@@ -1044,6 +1048,55 @@ internal sealed class SafeguardApiTool
             "Related workflow recipe: session-access-request (composite tools: "
             + "Safeguard_OpenAccessRequest, Safeguard_CloseAccessRequest).",
             suggestion);
+    }
+
+    /// <summary>
+    /// Emits the session_token_issued_offer_to_launch notice ONLY when the caller
+    /// hits POST /v4/AccessRequests/{id}/InitializeSession. The notice names the
+    /// "present + offer + ask, never auto-launch" convention so the agent renders
+    /// the SessionsLaunchData block consistently. Credential-checkout leaves
+    /// (CheckOutPassword / CheckOutSshKey / CheckOutApiKeys / CheckOutFile) flow
+    /// through Safeguard_RetrieveCredential, which routes secrets to a user-audience
+    /// block — the agent does not have plaintext to "launch" with there, so this
+    /// notice intentionally does NOT fire on those paths.
+    /// </summary>
+    internal static Notice BuildSessionLaunchOfferNotice(string method, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+        if (verb != "POST")
+            return null;
+
+        var segments = GetPathSegments(path);
+        if (segments.Length < 4)
+            return null;
+
+        if (!segments.Any(s => s.Equals("AccessRequests", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        if (!segments[^1].Equals("InitializeSession", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var requestId = segments[^2];
+
+        var message =
+            "Session token issued for request " + requestId + ". The credential never enters this "
+            + "agent context — Safeguard injects it at the proxy. Present the user BOTH the manual "
+            + "launch command (and/or ConnectionUri) AND an explicit offer to launch the session on "
+            + "their behalf. Do not auto-launch without explicit consent. Use "
+            + "Safeguard_CloseAccessRequest requestId=" + requestId + " when the user is done (or "
+            + "accept the policy-driven idle timeout).";
+
+        var suggestion =
+            "Format: short connection block + \"Want me to launch it for you?\" + the request id ("
+            + requestId + ") for later check-in. On Windows use Start-Process ssh / mstsc; on POSIX "
+            + "use ssh / open / xfreerdp / Microsoft Remote Desktop / the SCALUS handler. RDP types: "
+            + "save RdpConnectionFile to disk and run mstsc against the saved file — do not hand-build "
+            + "the .rdp file.";
+
+        return new Notice(NoticeKinds.SessionTokenIssuedOfferToLaunch, message, suggestion);
     }
 
     // Field names whose presence in a top-level response body or first-array-element

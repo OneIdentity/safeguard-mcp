@@ -33,6 +33,10 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
         + "the notice kind names the next call (auto_approved_ready, pending_approval_check_back, "
         + "pending_scheduled, pending_account_action, or terminated_before_ready). "
         + "Does NOT auto-launch sessions or echo credentials. "
+        + "On a successful POST .../InitializeSession the response carries a "
+        + "session_token_issued_offer_to_launch notice that names the present-with-offer convention "
+        + "(show the manual launch command and ConnectionUri AND ask 'Want me to launch it for you?' "
+        + "with the request id for later check-in). Honor it: never auto-launch and never omit the offer. "
         + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to discover what you can "
         + "request before calling this tool.")]
     public async Task<string> Safeguard_OpenAccessRequest(
