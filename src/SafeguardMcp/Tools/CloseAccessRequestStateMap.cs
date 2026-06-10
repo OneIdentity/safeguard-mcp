@@ -40,11 +40,22 @@ internal enum VerificationStatus
 /// the literal string the appliance returns in
 /// <c>AccessRequest.State</c> (matches the
 /// <c>Pangaea.Data.Transfer.V2.AccessRequestWorkflow.AccessRequestState</c>
-/// enum name verbatim).
+/// enum name verbatim). <see cref="RequesterAction"/> is the
+/// sub-endpoint the planner POSTs when the caller is the requester
+/// (and is not also acting as PolicyAdmin on someone else's request);
+/// <see cref="AdminAction"/> is the sub-endpoint the planner POSTs
+/// when the caller is PolicyAdmin acting on someone else's request,
+/// or when the caller is both requester AND PolicyAdmin and the
+/// requester branch resolves to <see cref="CloseAction.NeedsAdmin"/>.
+/// The two axes are explicit so the matrix can encode both
+/// safeguard-ps's per-state requester map AND the controller's
+/// "PolicyAdmin can Close from any state the workflow permits"
+/// behavior without conflating them.
 /// </summary>
 internal readonly record struct CloseStateRow(
     string State,
     CloseAction RequesterAction,
+    CloseAction AdminAction,
     VerificationStatus Status,
     string Note);
 
@@ -104,44 +115,65 @@ internal static class CloseAccessRequestStateMap
     /// <summary>
     /// The locked dispatch table. Keep the order grouped by action so
     /// reviewers can scan the divergence row in isolation.
+    ///
+    /// Two axes per row: <c>RequesterAction</c> is what the planner
+    /// dispatches when the caller is acting as the requester (mirrors
+    /// safeguard-ps's per-state map); <c>AdminAction</c> is what the
+    /// planner dispatches when the caller is PolicyAdmin acting on
+    /// someone else's request (or the requester+PolicyAdmin caller on
+    /// a NeedsAdmin row). The admin column is <c>Close</c> for every
+    /// non-terminal state -- the V4 controller (CloseAsync) gates on
+    /// <c>[UserAuthorization(PolicyAdmin)]</c> + cluster-state
+    /// <c>[AllowIfState(WithQuorum)]</c> only; there is NO workflow-
+    /// state filter at the controller layer. The state machine's
+    /// <c>.Permit(CloseRequest, ...)</c> entries (PendingReview,
+    /// PendingPasswordReset, PendingAccountDemoted,
+    /// PendingAccountSuspended, PendingAcknowledgement, plus
+    /// PendingReview itself) accept Close from those workflow states,
+    /// and safeguard-ps (<c>requests.psm1:1841-1899</c>) dispatches
+    /// Close unconditionally for the admin branch. Terminal states
+    /// (Closed/Complete/Reclaimed) keep <c>AdminAction = None</c> to
+    /// match safeguard-ps's no-op there.
     /// </summary>
     internal static readonly CloseStateRow[] Rows =
     [
         // Cancel: pre-availability states the requester can always abort.
-        new("New",                    CloseAction.Cancel,      VerificationStatus.Verified, ""),
-        new("PendingApproval",        CloseAction.Cancel,      VerificationStatus.Verified, ""),
-        new("Approved",               CloseAction.Cancel,      VerificationStatus.Verified, ""),
-        new("PendingTimeRequested",   CloseAction.Cancel,      VerificationStatus.Inferred, "Requires a scheduled (not immediate) policy to reach."),
-        new("RequestAvailable",       CloseAction.Cancel,      VerificationStatus.Verified, ""),
-        new("PendingAccountRestored", CloseAction.Cancel,      VerificationStatus.Inferred, "Requires account-discovery workflow to reach."),
-        new("PendingPasswordReset",   CloseAction.Cancel,      VerificationStatus.Inferred, "Requires a check-in-triggered reset to reach."),
+        new("New",                    CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Verified, ""),
+        new("PendingApproval",        CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Verified, ""),
+        new("Approved",               CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Verified, ""),
+        new("PendingTimeRequested",   CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Inferred, "Requires a scheduled (not immediate) policy to reach."),
+        new("RequestAvailable",       CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Verified, ""),
+        new("PendingAccountRestored", CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Inferred, "Requires account-discovery workflow to reach."),
+        new("PendingPasswordReset",   CloseAction.Cancel,      CloseAction.Close, VerificationStatus.Inferred, "Requires a check-in-triggered reset to reach. PolicyAdmin Close from this state has been observed against a live appliance; pending re-run by the verification harness to upgrade Status to Verified."),
 
         // CheckIn: post-checkout states with an active artifact.
-        new("PasswordCheckedOut",     CloseAction.CheckIn,     VerificationStatus.Verified, ""),
-        new("SshKeyCheckedOut",       CloseAction.CheckIn,     VerificationStatus.Inferred, "Requires an SshKey-type entitlement to reach."),
-        new("SessionInitialized",     CloseAction.CheckIn,     VerificationStatus.Inferred, "Requires SPS link or built-in session proxy to reach."),
+        new("PasswordCheckedOut",     CloseAction.CheckIn,     CloseAction.Close, VerificationStatus.Verified, ""),
+        new("SshKeyCheckedOut",       CloseAction.CheckIn,     CloseAction.Close, VerificationStatus.Inferred, "Requires an SshKey-type entitlement to reach."),
+        new("SessionInitialized",     CloseAction.CheckIn,     CloseAction.Close, VerificationStatus.Inferred, "Requires SPS link or built-in session proxy to reach."),
 
-        // Divergence: safeguard-ps mapped these to Close, but the V4
-        // controller requires PolicyAdmin for Close. For non-admin
-        // requesters the planner returns a diagnostic naming the state
-        // rather than guessing (Cancel/CheckIn return 4xx on at least
-        // the live-verified PendingReview row). PolicyAdmin acting
-        // on a request that reaches PendingReview falls into the
-        // admin-on-other path and dispatches Close.
-        new("RequestCheckedIn",       CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Reached after CheckIn from PasswordCheckedOut on auto-reset policies; planner refuses for non-PolicyAdmin requester pending live verification of which sub-endpoint, if any, the requester can call."),
-        new("Terminated",             CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Substate of Reclaimed reached after Cancel/Deny/Revoke. Non-admin requester has no viable endpoint per the controller's PolicyAdmin-only Close attribute."),
-        new("PendingReview",          CloseAction.NeedsAdmin,  VerificationStatus.Verified, "Requires PolicyAdmin to close per the controller's Close attribute; live verification confirms Cancel/CheckIn/Acknowledge return 4xx for the requester here."),
-        new("PendingAccountSuspended",CloseAction.NeedsAdmin,  VerificationStatus.Inferred, "Requires account-discovery workflow to reach; non-admin requester has no viable endpoint per the controller's Close attribute."),
+        // NeedsAdmin: the requester has no viable sub-endpoint here
+        // (Cancel/CheckIn/Acknowledge return 4xx per the V4
+        // controller's per-action AllowIfState filters), but a
+        // PolicyAdmin caller can dispatch Close. The controller's
+        // CloseAsync method has NO workflow-state filter -- the state
+        // machine's .Permit(CloseRequest, ...) entries accept Close
+        // from each of these states.
+        new("RequestCheckedIn",       CloseAction.NeedsAdmin,  CloseAction.Close, VerificationStatus.Inferred, "Reached after CheckIn from PasswordCheckedOut on auto-reset policies. Admin-side Close is permitted by the state machine; pending verification harness re-run to upgrade Status to Verified."),
+        new("Terminated",             CloseAction.NeedsAdmin,  CloseAction.Close, VerificationStatus.Inferred, "Substate of Reclaimed reached after Cancel/Deny/Revoke. Admin-side Close is permitted by the state machine; pending verification harness re-run to upgrade Status to Verified."),
+        new("PendingReview",          CloseAction.NeedsAdmin,  CloseAction.Close, VerificationStatus.Verified, "Live verification confirms Cancel/CheckIn/Acknowledge return 4xx for the requester here; admin-side Close succeeds."),
+        new("PendingAccountSuspended",CloseAction.NeedsAdmin,  CloseAction.Close, VerificationStatus.Inferred, "Requires account-discovery workflow to reach. Admin-side Close is permitted by State.PendingAccountSuspended.cs:43 .Permit(CloseRequest, ...); pending verification harness re-run to upgrade Status to Verified."),
+        new("PendingAccountDemoted",  CloseAction.NeedsAdmin,  CloseAction.Close, VerificationStatus.Inferred, "Requires account-discovery workflow to reach. Admin-side Close is permitted by State.PendingAccountDemoted.cs:43 .Permit(CloseRequest, ...); pending verification harness run to upgrade Status to Verified."),
 
         // Acknowledge: substates of Reclaimed/Closed awaiting requester
         // acknowledgement before they transition to Complete.
-        new("Expired",                CloseAction.Acknowledge, VerificationStatus.Inferred, "Substate of Reclaimed reached after the request's duration elapsed."),
-        new("PendingAcknowledgment",  CloseAction.Acknowledge, VerificationStatus.Inferred, "Substate of Closed reached when policy sets RequireRequesterAcknowledgement."),
+        new("Expired",                CloseAction.Acknowledge, CloseAction.Close, VerificationStatus.Inferred, "Substate of Reclaimed reached after the request's duration elapsed."),
+        new("PendingAcknowledgment",  CloseAction.Acknowledge, CloseAction.Close, VerificationStatus.Inferred, "Substate of Closed reached when policy sets RequireRequesterAcknowledgement. Admin-side Close is permitted by State.PendingAcknowledgement.cs:20 .Permit(CloseRequest, ...)."),
 
-        // Terminal states: no-op.
-        new("Closed",                 CloseAction.None,        VerificationStatus.Verified, ""),
-        new("Complete",               CloseAction.None,        VerificationStatus.Verified, ""),
-        new("Reclaimed",              CloseAction.None,        VerificationStatus.Verified, ""),
+        // Terminal states: no-op for both axes. safeguard-ps
+        // requests.psm1:1841-1899 also no-ops these for admin callers.
+        new("Closed",                 CloseAction.None,        CloseAction.None,  VerificationStatus.Verified, ""),
+        new("Complete",               CloseAction.None,        CloseAction.None,  VerificationStatus.Verified, ""),
+        new("Reclaimed",              CloseAction.None,        CloseAction.None,  VerificationStatus.Verified, ""),
     ];
 
     /// <summary>
