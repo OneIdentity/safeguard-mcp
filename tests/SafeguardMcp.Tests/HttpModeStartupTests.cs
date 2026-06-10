@@ -89,7 +89,18 @@ public class HttpModeStartupTests
         Assert.NotNull(error);
         foreach (var name in HttpModeStartup.ForbiddenEnvVars)
             Assert.Contains(name, error);
-        Assert.Contains("safeguard-mcp login", error);
+
+        // OAuth flow is the documented primary; safeguard-mcp login
+        // is the fallback (README.md:134-163). Pin both phrases AND
+        // the order so future drift can't quietly invert them.
+        const string primary = "MCP client";
+        const string fallback = "safeguard-mcp login";
+        Assert.Contains(primary, error);
+        Assert.Contains(fallback, error);
+        Assert.True(
+            error.IndexOf(primary, StringComparison.Ordinal)
+                < error.IndexOf(fallback, StringComparison.Ordinal),
+            $"Expected '{primary}' (primary) to precede '{fallback}' (fallback) in: {error}");
     }
 
     [Fact]

@@ -143,9 +143,7 @@ internal static class SafeguardInvoker
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
-            throw new McpException(
-                "Safeguard token has expired or been revoked. Re-acquire "
-                + "(`safeguard-mcp login` or your MCP client's OAuth flow) and retry.");
+            throw new McpException(HttpModeMessages.TokenExpired);
         }
 
         if (!response.IsSuccessStatusCode)
