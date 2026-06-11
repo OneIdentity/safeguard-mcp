@@ -7,13 +7,14 @@ namespace SafeguardMcp.Tests;
 public class SafeguardRetrieveCredentialTwoBlockTests
 {
     private const string Plaintext = "hunter2-not-really";
+    private const string DashedRequestId = "3-4-6-8951-1-d7c2dff871514f669a61163dbd8548fa-0003";
 
     [Fact]
     public void AssistantBlock_ContainsMetadataOnly_NoPlaintext_ForAccessRequestPassword()
     {
         var json = SafeguardRetrieveCredentialTool.BuildAssistantMetadataBlock(
             kind: "access-request-password",
-            accessRequestId: 123,
+            accessRequestId: DashedRequestId,
             accountId: null,
             apiKeyId: null,
             retrievedAtUtc: DateTimeOffset.UtcNow);
@@ -21,7 +22,7 @@ public class SafeguardRetrieveCredentialTwoBlockTests
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("access-request-password", doc.RootElement.GetProperty("kind").GetString());
         Assert.Equal("retrieved", doc.RootElement.GetProperty("status").GetString());
-        Assert.Equal(123, doc.RootElement.GetProperty("subject").GetProperty("accessRequestId").GetInt32());
+        Assert.Equal(DashedRequestId, doc.RootElement.GetProperty("subject").GetProperty("accessRequestId").GetString());
 
         var delivery = doc.RootElement.GetProperty("delivery");
         Assert.Equal("user", delivery.GetProperty("block2_audience").GetString());
@@ -38,7 +39,7 @@ public class SafeguardRetrieveCredentialTwoBlockTests
         var text = SafeguardRetrieveCredentialTool.BuildUserAudienceBlock(
             kind: kind,
             body: body,
-            accessRequestId: kind.StartsWith("access-request") ? 123 : null,
+            accessRequestId: kind.StartsWith("access-request") ? DashedRequestId : null,
             accountId: kind.StartsWith("personal-account") ? 614 : null,
             apiKeyId: null);
         Assert.Contains(Plaintext, text);
@@ -51,7 +52,7 @@ public class SafeguardRetrieveCredentialTwoBlockTests
                    + "\"PublicKey\":\"ssh-rsa AAAA...\","
                    + "\"Fingerprint\":\"ab:cd\",\"KeyType\":\"Rsa\",\"KeyLength\":2048}";
         var text = SafeguardRetrieveCredentialTool.BuildUserAudienceBlock(
-            "access-request-ssh-key", body, accessRequestId: 9, accountId: null, apiKeyId: null);
+            "access-request-ssh-key", body, accessRequestId: DashedRequestId, accountId: null, apiKeyId: null);
         Assert.Contains("secret-pem", text);
         Assert.Contains("ssh-rsa AAAA", text);
         Assert.Contains("ab:cd", text);
@@ -62,7 +63,7 @@ public class SafeguardRetrieveCredentialTwoBlockTests
     {
         var body = "[{\"Name\":\"k1\",\"Id\":1,\"ClientId\":\"client-a\",\"ClientSecret\":\"S3CR3T\"}]";
         var text = SafeguardRetrieveCredentialTool.BuildUserAudienceBlock(
-            "access-request-api-key", body, accessRequestId: 42, accountId: null, apiKeyId: null);
+            "access-request-api-key", body, accessRequestId: DashedRequestId, accountId: null, apiKeyId: null);
         Assert.Contains("S3CR3T", text);
         Assert.Contains("client-a", text);
     }
@@ -73,7 +74,7 @@ public class SafeguardRetrieveCredentialTwoBlockTests
         var body = "[{\"Code\":\"111222\",\"Period\":30,\"TimeStamp\":\"2025-01-01T00:00:00Z\"},"
                  + "{\"Code\":\"333444\",\"Period\":30,\"TimeStamp\":\"2025-01-01T00:00:30Z\"}]";
         var text = SafeguardRetrieveCredentialTool.BuildUserAudienceBlock(
-            "access-request-totp", body, accessRequestId: 77, accountId: null, apiKeyId: null);
+            "access-request-totp", body, accessRequestId: DashedRequestId, accountId: null, apiKeyId: null);
         Assert.Contains("111222", text);
         Assert.Contains("333444", text);
         Assert.Contains("30 seconds", text);
@@ -106,7 +107,19 @@ public class SafeguardRetrieveCredentialTwoBlockTests
     {
         var body = "FILE-CONTENT-BYTES-HERE";
         var text = SafeguardRetrieveCredentialTool.BuildUserAudienceBlock(
-            "access-request-file", body, accessRequestId: 12, accountId: null, apiKeyId: null);
+            "access-request-file", body, accessRequestId: DashedRequestId, accountId: null, apiKeyId: null);
         Assert.Contains("FILE-CONTENT-BYTES-HERE", text);
+    }
+
+    [Fact]
+    public void UserBlock_AccessRequestPassword_HeaderIncludesDashedRequestId()
+    {
+        var text = SafeguardRetrieveCredentialTool.BuildUserAudienceBlock(
+            "access-request-password",
+            body: "\"hunter2-not-really\"",
+            accessRequestId: DashedRequestId,
+            accountId: null,
+            apiKeyId: null);
+        Assert.Contains(DashedRequestId, text);
     }
 }

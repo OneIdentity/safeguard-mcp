@@ -72,8 +72,10 @@ internal sealed class SafeguardRetrieveCredentialTool
             + "personal-account-password, personal-account-password-history, personal-account-totp, "
             + "generated-password, asset-account-api-secret-history.")]
         string kind,
-        [Description("AccessRequest database id. Required for every access-request-* kind.")]
-        int? accessRequestId = null,
+        [Description("AccessRequest database id. Required for every access-request-* kind. "
+            + "Note: Safeguard access-request ids are opaque dashed strings "
+            + "(e.g. '3-4-6-8951-1-d7c2dff871514f669a61163dbd8548fa-0003'), not integers.")]
+        string accessRequestId = null,
         [Description("Account database id. Required for personal-account-* kinds and "
             + "asset-account-api-secret-history.")]
         int? accountId = null,
@@ -91,17 +93,17 @@ internal sealed class SafeguardRetrieveCredentialTool
                 $"Unknown credential kind '{kind}'. See the tool description for valid kinds.");
         }
 
-        var args = new Dictionary<string, int?>(System.StringComparer.OrdinalIgnoreCase)
+        var providedArgs = new Dictionary<string, bool>(System.StringComparer.OrdinalIgnoreCase)
         {
-            ["accessRequestId"] = accessRequestId,
-            ["accountId"] = accountId,
-            ["apiKeyId"] = apiKeyId,
+            ["accessRequestId"] = !string.IsNullOrWhiteSpace(accessRequestId),
+            ["accountId"] = accountId.HasValue,
+            ["apiKeyId"] = apiKeyId.HasValue,
         };
 
         var missing = new List<string>();
         foreach (var required in entry.Requires)
         {
-            if (!args.TryGetValue(required, out var v) || !v.HasValue)
+            if (!providedArgs.TryGetValue(required, out var present) || !present)
                 missing.Add(required);
         }
         if (missing.Count > 0)
@@ -114,9 +116,9 @@ internal sealed class SafeguardRetrieveCredentialTool
         // Reject extraneous ids that the kind doesn't expect — keeps callers honest
         // and protects against ambiguous arg sets (e.g., apiKeyId passed to a
         // non-asset-account kind).
-        foreach (var (name, value) in args)
+        foreach (var (name, present) in providedArgs)
         {
-            if (value.HasValue && !ContainsIgnoreCase(entry.Requires, name))
+            if (present && !ContainsIgnoreCase(entry.Requires, name))
             {
                 throw new McpException(
                     $"kind '{kind}' does not accept '{name}'. Required args: "
@@ -151,7 +153,7 @@ internal sealed class SafeguardRetrieveCredentialTool
 
         // Audit log: never plaintext. Subject ids only.
         var subjectIds = new List<string>();
-        if (accessRequestId.HasValue) subjectIds.Add($"accessRequestId={accessRequestId.Value}");
+        if (!string.IsNullOrEmpty(accessRequestId)) subjectIds.Add($"accessRequestId={accessRequestId}");
         if (accountId.HasValue) subjectIds.Add($"accountId={accountId.Value}");
         if (apiKeyId.HasValue) subjectIds.Add($"apiKeyId={apiKeyId.Value}");
         _logger.LogInformation(
@@ -190,7 +192,7 @@ internal sealed class SafeguardRetrieveCredentialTool
     private static (string Method, string Path) ResolvePath(
         SensitiveCredentialEndpoints.KindEntry entry,
         SensitiveCredentialEndpoints.EndpointBinding endpoint,
-        int? accessRequestId,
+        string accessRequestId,
         int? accountId,
         int? apiKeyId)
     {
@@ -234,7 +236,7 @@ internal sealed class SafeguardRetrieveCredentialTool
 
     internal static string BuildAssistantMetadataBlock(
         string kind,
-        int? accessRequestId,
+        string accessRequestId,
         int? accountId,
         int? apiKeyId,
         System.DateTimeOffset retrievedAtUtc)
@@ -249,7 +251,7 @@ internal sealed class SafeguardRetrieveCredentialTool
 
             writer.WritePropertyName("subject");
             writer.WriteStartObject();
-            if (accessRequestId.HasValue) writer.WriteNumber("accessRequestId", accessRequestId.Value);
+            if (!string.IsNullOrEmpty(accessRequestId)) writer.WriteString("accessRequestId", accessRequestId);
             if (accountId.HasValue) writer.WriteNumber("accountId", accountId.Value);
             if (apiKeyId.HasValue) writer.WriteNumber("apiKeyId", apiKeyId.Value);
             writer.WriteEndObject();
@@ -279,7 +281,7 @@ internal sealed class SafeguardRetrieveCredentialTool
     internal static string BuildUserAudienceBlock(
         string kind,
         string body,
-        int? accessRequestId,
+        string accessRequestId,
         int? accountId,
         int? apiKeyId)
     {
@@ -339,7 +341,7 @@ internal sealed class SafeguardRetrieveCredentialTool
         return sb.ToString().TrimEnd();
     }
 
-    private static void AppendAccessRequestHeader(StringBuilder sb, string label, int? accessRequestId)
+    private static void AppendAccessRequestHeader(StringBuilder sb, string label, string accessRequestId)
     {
         sb.Append(label).Append(" for access request ").Append(accessRequestId).AppendLine(".");
     }

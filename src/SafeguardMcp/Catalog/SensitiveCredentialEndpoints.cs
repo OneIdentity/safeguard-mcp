@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -72,33 +71,26 @@ internal static class SensitiveCredentialEndpoints
                 if (!m.Success)
                     continue;
 
-                // Extract integer ids from the matched path segments in order.
-                // The path patterns capture ids implicitly via \d+; we re-scan
-                // the literal path here to populate the named args slot-wise
-                // because the JSON catalog is the source of truth for argument
-                // names, not the regex group names.
-                var ids = ExtractIntIds(path);
+                // Argument values come from the regex capture groups in the
+                // declared order from the catalog. Group 0 is the full match;
+                // groups 1..N are the parameters in path order. Access-request
+                // ids are opaque dashed strings (not integers), so we pass
+                // captures through verbatim and let downstream callers decide
+                // whether to coerce to a number.
                 var args = new List<KeyValuePair<string, string>>();
-                for (int i = 0; i < endpoint.Args.Count && i < ids.Count; i++)
+                for (int i = 0; i < endpoint.Args.Count; i++)
                 {
-                    args.Add(new KeyValuePair<string, string>(endpoint.Args[i], ids[i]));
+                    var groupIndex = i + 1;
+                    if (groupIndex < m.Groups.Count && m.Groups[groupIndex].Success)
+                    {
+                        args.Add(new KeyValuePair<string, string>(
+                            endpoint.Args[i], m.Groups[groupIndex].Value));
+                    }
                 }
                 return new Match(entry, endpoint, args);
             }
         }
         return null;
-    }
-
-    private static List<string> ExtractIntIds(string path)
-    {
-        var ids = new List<string>();
-        var segments = path.Trim('/').Split('/', System.StringSplitOptions.RemoveEmptyEntries);
-        foreach (var seg in segments)
-        {
-            if (int.TryParse(seg, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
-                ids.Add(seg);
-        }
-        return ids;
     }
 
     private static IReadOnlyList<KindEntry> Load()
