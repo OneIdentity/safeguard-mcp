@@ -13,6 +13,8 @@ public class SensitiveCredentialEndpointsTests
     [InlineData("POST", "/v4/AccessRequests/42/CheckOutApiKeys", "access-request-api-key", "accessRequestId", "42")]
     [InlineData("POST", "/v4/AccessRequests/77/CheckOutTotp", "access-request-totp", "accessRequestId", "77")]
     [InlineData("POST", "/v4/AccessRequests/12/CheckOutFile", "access-request-file", "accessRequestId", "12")]
+    [InlineData("POST", "/v4/AccessRequests/3-4-6-8951-1-d7c2dff871514f669a61163dbd8548fa-0003/CheckOutPassword",
+        "access-request-password", "accessRequestId", "3-4-6-8951-1-d7c2dff871514f669a61163dbd8548fa-0003")]
     [InlineData("GET", "/v4/Me/EnterpriseAccounts/614/Password", "personal-account-password", "accountId", "614")]
     [InlineData("GET", "/v4/Me/EnterpriseAccounts/614/Passwords", "personal-account-password-history", "accountId", "614")]
     [InlineData("GET", "/v4/Me/EnterpriseAccounts/614/TotpAuthenticator/Values", "personal-account-totp", "accountId", "614")]
@@ -106,5 +108,20 @@ public class SensitiveCredentialEndpointsTests
         Assert.Equal("asset-account-api-secret-history", args.GetProperty("kind").GetString());
         Assert.Equal(881, args.GetProperty("accountId").GetInt32());
         Assert.Equal(5, args.GetProperty("apiKeyId").GetInt32());
+    }
+
+    [Fact]
+    public void RedirectEnvelope_AccessRequestPassword_PassesDashedIdAsString()
+    {
+        const string requestId = "3-4-6-8951-1-d7c2dff871514f669a61163dbd8548fa-0003";
+        var path = "/v4/AccessRequests/" + requestId + "/CheckOutPassword";
+        var match = SensitiveCredentialEndpoints.TryMatch("POST", path);
+        Assert.NotNull(match);
+        var json = SafeguardApiTool.BuildSensitiveEndpointRedirectEnvelope("POST", path, match);
+
+        using var doc = JsonDocument.Parse(json);
+        var args = doc.RootElement.GetProperty("data").GetProperty("next_call").GetProperty("arguments");
+        Assert.Equal("access-request-password", args.GetProperty("kind").GetString());
+        Assert.Equal(requestId, args.GetProperty("accessRequestId").GetString());
     }
 }
