@@ -252,12 +252,16 @@ The HTTP relay was designed around a few hard invariants worth stating explicitl
 - **Single appliance per process.** A given server process is bound to one
   appliance via `SAFEGUARD_HOST`. Cross-appliance token confusion is not possible
   in HTTP mode because no process serves more than one appliance.
-- **Plaintext credentials never share an audience with the bearer.** Account
+- **Plaintext credentials are tagged for an audience-aware future.** Account
   passwords, SSH private keys, API client secrets, TOTP codes, and secure-file
   contents are returned only through `Safeguard_RetrieveCredential`, in a
-  two-block response that puts the plaintext under `audience=["user"]` so
-  spec-honoring hosts can route it to a secure pane without it entering the
-  LLM's context. `Safeguard_Execute` refuses every sensitive path and
+  two-block response that puts the plaintext under `audience=["user"]` so a
+  host that filters on the MCP `audience` annotation could route it to a
+  secure pane without it entering the LLM's context. The annotation is an
+  optional hint the spec does not require hosts to honor, so treat block 2 as
+  potentially visible to the model unless you have verified your host filters
+  on it; the separation is in place so any host that adds the filter gets the
+  routing automatically. `Safeguard_Execute` refuses every sensitive path and
   redirects the caller to the matching `Safeguard_RetrieveCredential` kind.
   See [Sensitive credential delivery](#sensitive-credential-delivery) below.
 - **Forwarded-headers trust is bounded.** The bridge derives its public URL from
@@ -394,15 +398,20 @@ credential material. Every call returns a two-block MCP response:
   (`PlatformAccount password = …`, `BEGIN OPENSSH PRIVATE KEY …`, the
   TOTP code with its validity window, etc.).
 
-The MCP spec says hosts SHOULD render `audience=["user"]` content
-directly to the human — secure pane, copy-to-clipboard, confirmation
-dialog — **without including it in the assistant's transcript**. Hosts
-that honor the annotation keep the plaintext out of the model's context
-entirely; the LLM only ever sees the metadata in block 1. Hosts that
-ignore audience annotations will surface the plaintext to the LLM as
-well; this is documented degrade-gracefully behavior rather than a
-refusal, because Safeguard credentials can be rotated if a host turns
-out not to honor the hint and the operator wants a stronger separation.
+The MCP spec (2025-06-18) defines `audience` as an optional annotation a
+host MAY use to route content — for example, rendering `audience=["user"]`
+content in a secure pane separate from the assistant's transcript. The
+spec does not require hosts to filter on it, and host support varies; do
+not assume block 2 is hidden from the model unless you have verified your
+host filters tool-result content blocks by audience. The two-block split
+is in place so that any host that does honor the annotation will keep the
+plaintext out of the model's context automatically, and so that operators
+who want stronger separation have a clear contract to write a custom
+filter against. Because hosts may not honor the hint, Safeguard's own
+controls — auditability and rotation on the appliance — are the
+authoritative defense against accidental disclosure: every retrieval is
+logged, and credentials can be rotated if a host's handling is wrong for
+your environment.
 
 The `audience` annotation is defined in the MCP specification:
 [*Resources → Annotations*](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations)

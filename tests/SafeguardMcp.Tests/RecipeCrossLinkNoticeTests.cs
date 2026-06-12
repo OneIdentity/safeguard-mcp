@@ -12,9 +12,10 @@ namespace SafeguardMcp.Tests;
 ///
 /// The notice intentionally does NOT fire on the four credential-checkout
 /// leaves (CheckOutPassword / CheckOutSshKey / CheckOutApiKeys / CheckOutFile);
-/// those flow through Safeguard_RetrieveCredential, which routes plaintext to
-/// a user-audience block — the agent never has the credential in context and
-/// therefore cannot "launch" with it, so the offer pattern would be wrong.
+/// those flow through Safeguard_RetrieveCredential, which tags the plaintext
+/// for the user audience and is meant to be handed to the human rather than
+/// re-used as input to a connection step, so the offer pattern would be
+/// wrong on those paths regardless of how the host renders the user block.
 /// </summary>
 public class RecipeCrossLinkNoticeTests
 {
