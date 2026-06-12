@@ -628,8 +628,11 @@ internal sealed class SafeguardApiTool
             .AppendLine("  structured sensitive_endpoint_redirected envelope naming the matching Safeguard_RetrieveCredential")
             .AppendLine("  kind and arguments — lift data.next_call into a follow-up tool invocation.")
             .AppendLine("  Safeguard_RetrieveCredential emits a two-block MCP response: block 1 (audience=assistant) is")
-            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. Hosts that honor audience")
-            .AppendLine("  annotations route the user block to a secure pane without exposing it to the LLM.")
+            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. The audience annotation is a")
+            .AppendLine("  forward-looking hint — hosts MAY use it to route the user block to a secure pane separate")
+            .AppendLine("  from the assistant's transcript, but the spec does not require it; treat block 2 as")
+            .AppendLine("  potentially visible to the model and rely on appliance audit + rotation as the authoritative")
+            .AppendLine("  controls.")
             .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
             .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
             .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
@@ -1056,9 +1059,10 @@ internal sealed class SafeguardApiTool
     /// "present + offer + ask, never auto-launch" convention so the agent renders
     /// the SessionsLaunchData block consistently. Credential-checkout leaves
     /// (CheckOutPassword / CheckOutSshKey / CheckOutApiKeys / CheckOutFile) flow
-    /// through Safeguard_RetrieveCredential, which routes secrets to a user-audience
-    /// block — the agent does not have plaintext to "launch" with there, so this
-    /// notice intentionally does NOT fire on those paths.
+    /// through Safeguard_RetrieveCredential, which tags the plaintext for the
+    /// user audience and is meant to be handed to the human rather than re-used
+    /// as input to a connection step, so this notice intentionally does NOT fire
+    /// on those paths.
     /// </summary>
     internal static Notice BuildSessionLaunchOfferNotice(string method, string path)
     {

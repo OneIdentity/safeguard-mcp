@@ -21,12 +21,14 @@ namespace SafeguardMcp.Tools;
 ///     kind, subject ids, delivery flags, notices. No secret value.
 ///
 ///   block 2 (audience=["user"]): human-formatted plaintext.
-///     The MCP spec says hosts SHOULD render user-audience content
-///     directly to the human (e.g., secure pane / copy-to-clipboard)
-///     without including it in the assistant's context. Hosts that
-///     ignore audience annotations will surface the plaintext to the
-///     LLM as well — degrade-gracefully is preferable to refusing to
-///     run, since credentials can be rotated.
+///     The MCP spec (2025-06-18) defines the `audience` annotation
+///     as an optional hint a host MAY use to route content — it does
+///     not require hosts to filter on it. Hosts that honor the hint
+///     can render this block directly to the human (secure pane,
+///     copy-to-clipboard) without feeding it to the model; hosts that
+///     ignore it will surface the plaintext to the LLM. Degrade-
+///     gracefully is preferable to refusing to run, since credentials
+///     can be rotated if the host failed to split audiences.
 ///
 /// The companion to <see cref="SafeguardApiTool.Safeguard_Execute"/>'s
 /// refuse-and-redirect guard: anything Execute refuses lives here.
@@ -53,11 +55,13 @@ internal sealed class SafeguardRetrieveCredentialTool
         + "The user-audience block (block 2) contains the human-formatted plaintext (password / "
         + "SSH key PEM / API client secret / API secret history / TOTP code window with validity / "
         + "personal-account password). "
-        + "MCP hosts that honor `audience` annotations should render the user block directly to "
-        + "the human (copy-to-clipboard, secure pane, confirmation dialog) WITHOUT including it in "
-        + "the assistant's transcript. Hosts that ignore audience annotations will surface the "
-        + "plaintext in the transcript — degrade-gracefully is preferable to refusing to run; "
-        + "credentials can be rotated if the host failed to honor the audience hint. "
+        + "The two blocks carry MCP `audience` annotations (assistant / user). The annotation is an "
+        + "optional hint a host MAY use to route content (e.g., render the user block in a secure "
+        + "pane separate from the assistant's transcript). The spec does not require hosts to filter "
+        + "on it, so treat block 2 as potentially visible to the model unless your host is known to "
+        + "filter tool-result blocks by audience; the split is in place so any audience-aware host "
+        + "gets the separation automatically. Credentials can be rotated on the appliance if a "
+        + "host's behavior is wrong for your environment. "
         + "Supported kinds: access-request-password, access-request-ssh-key, access-request-api-key, "
         + "access-request-totp, access-request-file (requires accessRequestId); "
         + "personal-account-password, personal-account-password-history, personal-account-totp "
