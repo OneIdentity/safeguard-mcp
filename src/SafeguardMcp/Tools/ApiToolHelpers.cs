@@ -351,8 +351,55 @@ internal static class ApiToolHelpers
         string apiMessage,
         bool hasModelState,
         ErrorContext ctx,
-        ApiSchemaPropertyPath[] paths)
+        ApiSchemaPropertyPath[] paths,
+        string requestPath = null,
+        bool templateMatched = true,
+        string[] pathSuggestions = null,
+        string[] supportedMethods = null)
     {
+        if (statusCode == 404 && !templateMatched && !string.IsNullOrWhiteSpace(requestPath))
+        {
+            var sb404 = new StringBuilder();
+            sb404.Append("No endpoint at ").Append(requestPath).Append('.');
+            if (pathSuggestions != null && pathSuggestions.Length > 0)
+            {
+                sb404.Append(" Did you mean ");
+                for (int i = 0; i < pathSuggestions.Length; i++)
+                {
+                    if (i > 0) sb404.Append(", ");
+                    sb404.Append('`').Append(pathSuggestions[i]).Append('`');
+                }
+                sb404.Append("? Use Safeguard_Discover to browse other endpoints.");
+            }
+            else
+            {
+                sb404.Append(" Use Safeguard_Discover to find the right path.");
+            }
+            return sb404.ToString();
+        }
+
+        if (statusCode == 405 && !string.IsNullOrWhiteSpace(requestPath))
+        {
+            var sb405 = new StringBuilder();
+            sb405.Append("Method ").Append(ctx.Method).Append(" not supported at ")
+                 .Append(requestPath).Append('.');
+            if (supportedMethods != null && supportedMethods.Length > 0)
+            {
+                sb405.Append(" Supported: ");
+                for (int i = 0; i < supportedMethods.Length; i++)
+                {
+                    if (i > 0) sb405.Append(", ");
+                    sb405.Append(supportedMethods[i]);
+                }
+                sb405.Append('.');
+            }
+            else
+            {
+                sb405.Append(" Use Safeguard_Discover for endpoints that accept this method.");
+            }
+            return sb405.ToString();
+        }
+
         if (statusCode == 400 && !string.IsNullOrWhiteSpace(apiMessage))
         {
             if (apiMessage.Contains("Invalid order by property", StringComparison.OrdinalIgnoreCase))
@@ -380,7 +427,95 @@ internal static class ApiToolHelpers
                 + "which performs this pre-flight check automatically.";
         }
 
+        // Dependency-blocked delete (50104): "This object is referenced by ...". When the
+        // blocker is an active AccessRequest, the wire message embeds the request id and state
+        // (verified at PangaeaAppliance/src/Data/Middleware/Core/V4/System/AssetLogic.cs and
+        // /Accounts/AssetAccountLogic.cs). Surface the id so the agent can close it via
+        // Safeguard_CloseAccessRequest, and nudge the multi-row case toward BatchDelete to
+        // avoid a second N-call fan-out.
+        if (!string.IsNullOrWhiteSpace(apiMessage)
+            && apiMessage.Contains("This object is referenced by AccessRequest", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestId = ExtractAccessRequestId(apiMessage);
+            var sb50104 = new StringBuilder();
+            sb50104.Append("Appliance error 50104: this object is referenced by ");
+            if (!string.IsNullOrWhiteSpace(requestId))
+            {
+                sb50104.Append("AccessRequest ").Append(requestId).Append(". Close (or wait for) the access request first ")
+                    .Append("(Safeguard_CloseAccessRequest requestId=").Append(requestId).Append("), then retry. ");
+            }
+            else
+            {
+                sb50104.Append("an active AccessRequest. Close (or wait for) the named access request first ")
+                    .Append("(Safeguard_CloseAccessRequest requestId=<id>), then retry. ");
+            }
+            sb50104.Append("For multi-row cleanups, batch the unblocked ids via POST /v4/")
+                .Append(GetBulkResourceFromContext(ctx))
+                .Append("/BatchDelete to avoid a second N-call fan-out.");
+            return sb50104.ToString();
+        }
+
         return GetErrorHint(statusCode, apiMessage, hasModelState);
+    }
+
+    /// <summary>
+    /// Pulls the AccessRequest id out of a 50104 wire message of the form
+    /// "This object is referenced by AccessRequest &lt;id&gt;  (&lt;State&gt;)." The id is
+    /// the request's GUID-ish identifier (digits and dashes); the trailing state in
+    /// parens is dropped. Returns null if no id can be located.
+    /// </summary>
+    internal static string ExtractAccessRequestId(string apiMessage)
+    {
+        if (string.IsNullOrWhiteSpace(apiMessage))
+            return null;
+
+        const string marker = "AccessRequest";
+        var idx = apiMessage.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+            return null;
+
+        var cursor = idx + marker.Length;
+        while (cursor < apiMessage.Length && char.IsWhiteSpace(apiMessage[cursor]))
+            cursor++;
+
+        var start = cursor;
+        while (cursor < apiMessage.Length)
+        {
+            var ch = apiMessage[cursor];
+            if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_')
+            {
+                cursor++;
+                continue;
+            }
+            break;
+        }
+
+        if (cursor == start)
+            return null;
+
+        return apiMessage[start..cursor];
+    }
+
+    /// <summary>
+    /// Maps the request endpoint context to the bulk-delete resource segment used in
+    /// the 50104 hint. Falls back to a generic placeholder when the request path doesn't
+    /// match a known Batch*-bearing collection so the hint still reads cleanly.
+    /// </summary>
+    private static string GetBulkResourceFromContext(ErrorContext ctx)
+    {
+        if (string.IsNullOrWhiteSpace(ctx.Path))
+            return "<Resource>";
+
+        var segments = ctx.Path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+            return "<Resource>";
+
+        var resource = segments[1];
+        return resource switch
+        {
+            "Assets" or "AssetAccounts" or "Users" or "UserGroups" or "AccountGroups" or "AssetGroups" => resource,
+            _ => "<Resource>",
+        };
     }
 
     private static string BuildPropertyHint(

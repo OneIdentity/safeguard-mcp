@@ -108,10 +108,14 @@ internal static class SessionHelpers
 
         try
         {
-            using var token = connection.GetAccessToken();
-            if (token == null)
+            // NOTE: ISafeguardConnection.GetAccessToken() returns the
+            // SDK's internal bearer SecureString BY REFERENCE — disposing
+            // it zeroes the SDK's own copy and the next SDK call throws
+            // ObjectDisposedException. Read it without taking ownership.
+            var token = connection.GetAccessToken();
+            var raw = SecureStringExtensions.ReadInsecure(token);
+            if (string.IsNullOrEmpty(raw))
                 return;
-            var raw = new NetworkCredential(string.Empty, token).Password;
             var exp = TryReadJwtExp(raw);
             if (exp.HasValue)
                 info.TokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(exp.Value);

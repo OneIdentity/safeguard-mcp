@@ -86,6 +86,12 @@ internal static class LoginCommand
             }
             catch (SafeguardDotNetException ex)
             {
+                if (SafeguardDotNetExceptionClassifier.TryGetSpecificMessage(ex, host, out var specific))
+                {
+                    Console.Error.WriteLine(specific);
+                    return 1;
+                }
+
                 Console.Error.WriteLine(
                     $"Authentication against '{host}' failed: {ex.Message}. "
                     + "If your administrator has not enabled the Device Authorization Grant, "
@@ -94,8 +100,12 @@ internal static class LoginCommand
             }
 
             string token;
-            using (var secureToken = connection.GetAccessToken())
+            // NOTE: GetAccessToken() returns the SDK's internal bearer
+            // SecureString by reference. Do NOT wrap in `using`; the
+            // SDK owns the lifetime and disposes it when the connection
+            // is disposed at command exit.
             {
+                var secureToken = connection.GetAccessToken();
                 if (secureToken == null || secureToken.Length == 0)
                 {
                     Console.Error.WriteLine(
@@ -104,7 +114,7 @@ internal static class LoginCommand
                         + "and verify the appliance is healthy.");
                     return 1;
                 }
-                token = new NetworkCredential(string.Empty, secureToken).Password;
+                token = SecureStringExtensions.ReadInsecure(secureToken) ?? string.Empty;
             }
 
             PrincipalInfo principal = null;

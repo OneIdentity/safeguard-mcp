@@ -57,35 +57,6 @@ internal sealed class SafeguardApiTool
         return FormatPrincipal(info, "Connected and authenticated");
     }
 
-    [McpServerTool(Name = "Safeguard_Status", Title = "Safeguard Connection Status",
-        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Report the current Safeguard authentication state. In stdio mode reports the cached "
-        + "connection's token lifetime. In HTTP mode inspects the request bearer (decoding the JWT body "
-        + "WITHOUT signature verification, display only) and reports the principal and expiry; the "
-        + "Safeguard appliance is the authority on token validity.")]
-    public async Task<string> Safeguard_Status(McpServer server, CancellationToken ct = default)
-    {
-        if (!session.HasCredentials)
-        {
-            return string.IsNullOrWhiteSpace(session.Host)
-                ? "No Safeguard appliance is configured. Set SAFEGUARD_HOST and restart the MCP server."
-                : "Not authenticated against Safeguard. Acquire a Safeguard user token (e.g., "
-                    + "`safeguard-mcp login`) and configure your client to send `Authorization: Bearer <token>`.";
-        }
-
-        try
-        {
-            await session.EnsureReadyAsync(server, ct);
-            var info = await session.GetPrincipalInfoAsync(ct);
-            return FormatPrincipal(info, "Authenticated")
-                + "\nNote: The Safeguard appliance is the authority on token validity; this output is display-only.";
-        }
-        catch (McpException ex)
-        {
-            return ex.Message;
-        }
-    }
-
     [McpServerTool(Name = "Safeguard_Disconnect", Title = "Disconnect from Safeguard",
         ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = true)]
     [Description("Log out of the current Safeguard session. In stdio mode drops the cached connection. "
@@ -129,25 +100,46 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Discover", Title = "Discover Safeguard API Endpoints",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Search the Safeguard API catalog to find available endpoints. "
-        + "Returns matching endpoints with their HTTP method, path, summary, query parameters, and whether they accept a request body. "
-        + "When the search matches a workflow recipe, the recipe is listed first so multi-step operations don't get bypassed in favor of a single endpoint. "
-        + "Use this to find the right endpoint before calling Safeguard_Execute.")]
+    [Description("Search the Safeguard API catalog. Default emits one line per endpoint (method/path/summary). "
+        + "Set verbose=true after narrowing to inspect query-parameter details. "
+        + "Recipe matches are listed first. Batch* endpoints are returned next to their per-id siblings; "
+        + "consider both before fan-firing. Use this to find the right endpoint before calling Safeguard_Execute.")]
     public string Safeguard_Discover(
         [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all services.")] string service = null,
         [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
-        [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null)
-        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method);
+        [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null,
+        [Description("Include per-endpoint query parameter details (defaults, accepted values). "
+            + "Default false returns one line per endpoint; set true after narrowing the search to inspect parameter details.")] bool verbose = false)
+        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method, verbose);
+
+    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
+        => FormatDiscovery(results, service, search, method, verbose: false);
 
     /// <summary>
     /// Pure formatter for <c>Safeguard_Discover</c>; isolated so unit tests can
     /// exercise the recipe-ranking and synonym-expansion behavior without
     /// having to construct the full DI graph.
     /// </summary>
-    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
+    /// <remarks>
+    /// Two listing modes:
+    ///   - <c>verbose=false</c> (default): one line per endpoint, cap
+    ///     <see cref="MaxRowsCompact"/>. Designed to fit the host render
+    ///     budget for typical broad searches (e.g. "audit log" GET).
+    ///   - <c>verbose=true</c>: emits per-endpoint parameter details, cap
+    ///     <see cref="MaxRowsVerbose"/>; if matches exceed the cap the
+    ///     output short-circuits to a paths-only listing prompting the
+    ///     caller to narrow further before requesting details.
+    /// A producer-side size guard (<see cref="MaxBytes"/>) trims trailing
+    /// rows and prepends a notice naming the available narrowers, so
+    /// pathological catalogs can't blow the host render budget.
+    /// </remarks>
+    internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method, bool verbose)
     {
+        const int MaxRowsCompact = 200;
+        const int MaxRowsVerbose = 20;
+        const int MaxBytes = 18 * 1024;
+
         var sb = new StringBuilder();
-        const int limit = 80;
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
 
         // Collect matching endpoints with relevance scores so that exact path-segment
@@ -230,26 +222,143 @@ internal sealed class SafeguardApiTool
         // Sort by descending relevance; ties keep catalog order (stable sort).
         matches.Sort((a, b) => b.Score != a.Score ? b.Score.CompareTo(a.Score) : a.Index.CompareTo(b.Index));
 
+        // verbose=true with a wide match set: short-circuit to paths-only
+        // and prompt the caller to narrow further. Per-param detail blocks
+        // are the dominant byte source on broad searches.
+        if (verbose && matches.Count > MaxRowsVerbose)
+        {
+            sb.Append("Too many matches (").Append(matches.Count)
+                .Append(") for verbose=true (cap ").Append(MaxRowsVerbose)
+                .AppendLine("). Listing paths only — narrow further before requesting details.");
+            int pathsShown = 0;
+            foreach (var (_, idx) in matches)
+            {
+                if (pathsShown >= MaxRowsCompact) break;
+                ref readonly var ep = ref results[idx];
+                sb.Append(ep.Method.PadRight(7));
+                sb.Append(ep.Service.PadRight(13));
+                sb.AppendLine(ep.Path);
+                pathsShown++;
+            }
+            if (matches.Count > pathsShown)
+                sb.AppendLine().Append("... and ").Append(matches.Count - pathsShown).Append(" more.");
+            sb.AppendLine();
+            sb.Append("Narrow with service=, method=, or a more specific search= term, then re-run with verbose=true.");
+            return ApplySizeGuard(sb, matches.Count, MaxBytes);
+        }
+
+        // Shape hint for wide compact results: list the most common 2-segment
+        // path prefixes so the agent has a vocabulary for narrowing.
+        if (!verbose && matches.Count > 60)
+        {
+            var prefixes = TopPathPrefixes(results, matches, max: 4);
+            if (prefixes.Count > 0)
+            {
+                sb.Append("Matched ").Append(matches.Count).Append(" endpoints across the {")
+                    .Append(string.Join(", ", prefixes))
+                    .AppendLine("} path prefixes. Common narrowers: service=Core, method=GET, search='<refined-term>'.");
+            }
+        }
+
+        int effectiveLimit = verbose ? MaxRowsVerbose : MaxRowsCompact;
         int shown = 0;
+        int truncatedAtBytes = -1;
         foreach (var (_, idx) in matches)
         {
-            if (shown >= limit) break;
+            if (shown >= effectiveLimit) break;
+
+            int rowStart = sb.Length;
             ref readonly var ep = ref results[idx];
             sb.Append(ep.Method.PadRight(7));
             sb.Append(ep.Service.PadRight(13));
             sb.Append(ep.Path);
             if (ep.HasBody) sb.Append("  [body]");
             sb.Append("  -- ").AppendLine(ep.Summary);
-            AppendParameterDetails(sb, ep);
+            if (verbose)
+                AppendParameterDetails(sb, ep);
+
+            if (sb.Length > MaxBytes)
+            {
+                // Roll back the row that pushed us over the budget.
+                sb.Length = rowStart;
+                truncatedAtBytes = shown;
+                break;
+            }
             shown++;
         }
 
-        if (matches.Count > limit)
-            sb.AppendLine().Append("... and ").Append(matches.Count - limit).Append(" more. Narrow your search with service, method, or more specific search text.");
+        if (truncatedAtBytes < 0 && matches.Count > shown)
+            sb.AppendLine().Append("... and ").Append(matches.Count - shown).Append(" more. Narrow your search with service, method, or more specific search text.");
 
         sb.AppendLine();
         sb.Append("Tip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.");
+
+        return ApplySizeGuard(sb, matches.Count, MaxBytes, truncatedAtBytes);
+    }
+
+    /// <summary>
+    /// Defense-in-depth size guard: if the rendered buffer still exceeds
+    /// <paramref name="maxBytes"/> after the row loop's per-row check
+    /// (e.g. the recipe + shape-hint preamble alone is large), trim from
+    /// the tail and prepend a single notice naming the available
+    /// Safeguard_Discover narrowers.
+    /// </summary>
+    private static string ApplySizeGuard(StringBuilder sb, int totalMatches, int maxBytes, int truncatedAt = -1)
+    {
+        bool overBudget = sb.Length > maxBytes;
+        if (!overBudget && truncatedAt < 0)
+            return sb.ToString();
+
+        if (overBudget)
+        {
+            // Trim hard to the budget, then back off to the previous line break
+            // so the output ends cleanly.
+            sb.Length = maxBytes;
+            for (int i = sb.Length - 1; i > 0; i--)
+            {
+                if (sb[i] == '\n')
+                {
+                    sb.Length = i;
+                    break;
+                }
+            }
+        }
+
+        var notice = new StringBuilder();
+        notice.Append("Output truncated to fit host render limit. Showing top results of ")
+            .Append(totalMatches).AppendLine(" matches.")
+            .AppendLine("Narrow with Safeguard_Discover narrowers: search=, method=, or service=. Set verbose=false for the compact one-line-per-endpoint view.")
+            .AppendLine();
+        sb.Insert(0, notice.ToString());
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Returns up to <paramref name="max"/> most-common 2-segment path
+    /// prefixes (e.g. "/v4/Users") across the matched endpoints, ranked
+    /// by frequency.
+    /// </summary>
+    private static List<string> TopPathPrefixes(ApiEndpoint[] results, List<(int Score, int Index)> matches, int max)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (_, idx) in matches)
+        {
+            var path = results[idx].Path;
+            if (string.IsNullOrEmpty(path)) continue;
+            // Path looks like "/v4/Users/{id}" — take the first two non-empty segments.
+            int first = path.IndexOf('/', 1);
+            if (first <= 0) continue;
+            int second = path.IndexOf('/', first + 1);
+            string prefix = second < 0 ? path : path.Substring(0, second);
+            counts.TryGetValue(prefix, out var c);
+            counts[prefix] = c + 1;
+        }
+        return counts
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Take(max)
+            .Select(kv => kv.Key)
+            .ToList();
     }
 
     private static void AppendRecipeBlock(StringBuilder sb, IReadOnlyList<RecipeMatch> matches, bool includeStrongCallout)
@@ -294,7 +403,14 @@ internal sealed class SafeguardApiTool
         + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
         + "always read the data field for the actual API payload, and meta.notices for applied auto-limit / paging hints / truncation events. "
         + "Responses are capped at ~30 KB; for fat endpoints (audit logs, Assets, AssetAccounts) "
-        + "use fields= to project, or follow meta.paging.next to fetch the next page.")]
+        + "use fields= to project, or follow meta.paging.next to fetch the next page. "
+        + "Bulk reflex: before issuing DELETE / POST / PUT against the same top-level collection more "
+        + "than ~5 times in a row, check for a Batch* sibling. POST /v4/{Resource}/BatchCreate, "
+        + "/BatchUpdate, /BatchDelete take a JSON-array body. The appliance currently exposes Batch* on "
+        + "/v4/Assets, /v4/AssetAccounts, /v4/Users, /v4/UserGroups, /v4/AccountGroups, /v4/AssetGroups. "
+        + "Use Safeguard_Discover with search='Batch' to see all Batch* endpoints. The bulk path also "
+        + "returns per-row failure detail in one response, which is faster to triage than N parallel "
+        + "error envelopes.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). The correct service is auto-detected from the path.")] string path,
@@ -512,8 +628,11 @@ internal sealed class SafeguardApiTool
             .AppendLine("  structured sensitive_endpoint_redirected envelope naming the matching Safeguard_RetrieveCredential")
             .AppendLine("  kind and arguments — lift data.next_call into a follow-up tool invocation.")
             .AppendLine("  Safeguard_RetrieveCredential emits a two-block MCP response: block 1 (audience=assistant) is")
-            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. Hosts that honor audience")
-            .AppendLine("  annotations route the user block to a secure pane without exposing it to the LLM.")
+            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. The audience annotation is a")
+            .AppendLine("  forward-looking hint — hosts MAY use it to route the user block to a secure pane separate")
+            .AppendLine("  from the assistant's transcript, but the spec does not require it; treat block 2 as")
+            .AppendLine("  potentially visible to the model and rely on appliance audit + rotation as the authoritative")
+            .AppendLine("  controls.")
             .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
             .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
             .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
@@ -735,6 +854,10 @@ internal sealed class SafeguardApiTool
         if (recipeNotice != null)
             notices.Add(recipeNotice);
 
+        var offerNotice = BuildSessionLaunchOfferNotice(method, path);
+        if (offerNotice != null)
+            notices.Add(offerNotice);
+
         // Heuristic backstop: a path NOT in the sensitive-credential catalog
         // that returns a top-level (or first-array-element) field literally
         // named Password / PrivateKey / ClientSecret / Secret / ApiKey /
@@ -930,6 +1053,56 @@ internal sealed class SafeguardApiTool
             suggestion);
     }
 
+    /// <summary>
+    /// Emits the session_token_issued_offer_to_launch notice ONLY when the caller
+    /// hits POST /v4/AccessRequests/{id}/InitializeSession. The notice names the
+    /// "present + offer + ask, never auto-launch" convention so the agent renders
+    /// the SessionsLaunchData block consistently. Credential-checkout leaves
+    /// (CheckOutPassword / CheckOutSshKey / CheckOutApiKeys / CheckOutFile) flow
+    /// through Safeguard_RetrieveCredential, which tags the plaintext for the
+    /// user audience and is meant to be handed to the human rather than re-used
+    /// as input to a connection step, so this notice intentionally does NOT fire
+    /// on those paths.
+    /// </summary>
+    internal static Notice BuildSessionLaunchOfferNotice(string method, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var verb = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+        if (verb != "POST")
+            return null;
+
+        var segments = GetPathSegments(path);
+        if (segments.Length < 4)
+            return null;
+
+        if (!segments.Any(s => s.Equals("AccessRequests", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        if (!segments[^1].Equals("InitializeSession", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var requestId = segments[^2];
+
+        var message =
+            "Session token issued for request " + requestId + ". The credential never enters this "
+            + "agent context — Safeguard injects it at the proxy. Present the user BOTH the manual "
+            + "launch command (and/or ConnectionUri) AND an explicit offer to launch the session on "
+            + "their behalf. Do not auto-launch without explicit consent. Use "
+            + "Safeguard_CloseAccessRequest requestId=" + requestId + " when the user is done (or "
+            + "accept the policy-driven idle timeout).";
+
+        var suggestion =
+            "Format: short connection block + \"Want me to launch it for you?\" + the request id ("
+            + requestId + ") for later check-in. On Windows use Start-Process ssh / mstsc; on POSIX "
+            + "use ssh / open / xfreerdp / Microsoft Remote Desktop / the SCALUS handler. RDP types: "
+            + "save RdpConnectionFile to disk and run mstsc against the saved file — do not hand-build "
+            + "the .rdp file.";
+
+        return new Notice(NoticeKinds.SessionTokenIssuedOfferToLaunch, message, suggestion);
+    }
+
     // Field names whose presence in a top-level response body or first-array-element
     // commonly indicates credential material. Match is literal and case-insensitive
     // on the JSON property name; value must be a non-empty string. Numeric / null /
@@ -1093,7 +1266,7 @@ internal sealed class SafeguardApiTool
         return string.Join("\n", lines);
     }
 
-    private (string TemplatePath, ApiSchemaPropertyPath[] Paths) ResolveErrorContext(
+    private (string TemplatePath, bool TemplateMatched, ApiSchemaPropertyPath[] Paths) ResolveErrorContext(
         string method, string serviceName, string requestPath)
     {
         var endpoints = catalogProvider.GetEndpoints();
@@ -1115,6 +1288,7 @@ internal sealed class SafeguardApiTool
             templatePath ??= endpoint.Path;
         }
 
+        var matched = templatePath != null;
         templatePath ??= requestPath;
 
         var response = catalogProvider.GetResponseSchema(method, serviceName, templatePath)
@@ -1127,7 +1301,7 @@ internal sealed class SafeguardApiTool
         else if (request != null && request.Value.Paths != null && request.Value.Paths.Length > 0)
             paths = request.Value.Paths;
 
-        return (templatePath, paths ?? Array.Empty<ApiSchemaPropertyPath>());
+        return (templatePath, matched, paths ?? Array.Empty<ApiSchemaPropertyPath>());
     }
 
     private static int ExtractStatusCode(string message)
@@ -1151,18 +1325,30 @@ internal sealed class SafeguardApiTool
         return separatorIndex >= 0 ? message[(separatorIndex + 2)..].Trim() : message.Trim();
     }
 
-    private static bool TryParseErrorBody(string message, out string apiMessage, out string apiCode, out string innerError)
+    internal static bool TryParseErrorBody(string message, out string apiMessage, out string apiCode, out string innerError)
     {
         apiMessage = null;
         apiCode = null;
         innerError = null;
 
-        if (string.IsNullOrWhiteSpace(message) || !message.TrimStart().StartsWith('{'))
+        if (string.IsNullOrWhiteSpace(message))
             return false;
+
+        // Belt-and-suspenders: SafeguardInvoker now prefers
+        // SafeguardDotNetException.Response so the body usually
+        // arrives bare. If a future SDK (or a code path we missed)
+        // hands us wrapper prose like "Error returned from Safeguard
+        // API, Error: BadRequest {…}", scan to the first '{' instead
+        // of giving up because position 0 isn't JSON.
+        var braceIndex = message.IndexOf('{');
+        if (braceIndex < 0)
+            return false;
+
+        var jsonCandidate = braceIndex == 0 ? message : message[braceIndex..];
 
         try
         {
-            using var document = JsonDocument.Parse(message);
+            using var document = JsonDocument.Parse(jsonCandidate);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
 
@@ -1217,10 +1403,23 @@ internal sealed class SafeguardApiTool
         string serviceName,
         string requestPath)
     {
-        var (templatePath, paths) = ResolveErrorContext(method, serviceName, requestPath);
+        var (templatePath, templateMatched, paths) = ResolveErrorContext(method, serviceName, requestPath);
         var ctx = new ErrorContext(serviceName, method, templatePath);
 
-        var hint = ApiToolHelpers.GetErrorHint(statusCode, apiMessage, hasModelState, ctx, paths);
+        string[] pathSuggestions = Array.Empty<string>();
+        string[] supportedMethods = Array.Empty<string>();
+        if (statusCode == 404 && !templateMatched)
+        {
+            pathSuggestions = EndpointPathSuggester.Suggest(method, requestPath, catalogProvider.GetEndpoints());
+        }
+        else if (statusCode == 405 && templateMatched)
+        {
+            supportedMethods = CollectSupportedMethods(serviceName, templatePath);
+        }
+
+        var hint = ApiToolHelpers.GetErrorHint(
+            statusCode, apiMessage, hasModelState, ctx, paths,
+            requestPath, templateMatched, pathSuggestions, supportedMethods);
         if (!string.IsNullOrWhiteSpace(hint))
             return hint;
 
@@ -1231,6 +1430,25 @@ internal sealed class SafeguardApiTool
         }
 
         return null;
+    }
+
+    private string[] CollectSupportedMethods(string serviceName, string templatePath)
+    {
+        var endpoints = catalogProvider.GetEndpoints();
+        var methods = new List<string>(4);
+        for (int i = 0; i < endpoints.Length; i++)
+        {
+            ref readonly var endpoint = ref endpoints[i];
+            if (!endpoint.Service.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!endpoint.Path.Equals(templatePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var upper = endpoint.Method.ToUpperInvariant();
+            if (!methods.Contains(upper))
+                methods.Add(upper);
+        }
+        methods.Sort(StringComparer.Ordinal);
+        return methods.ToArray();
     }
 
     private static IDictionary<string, string> MaybeInjectDefaultFields(
