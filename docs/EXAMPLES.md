@@ -86,12 +86,16 @@ The agent calls `Safeguard_RetrieveCredential` (kind
 `access-request-password` or `access-request-ssh-key`). The response is
 split into two MCP blocks: an assistant-audience metadata block
 (kind, subject ids, notices) and a user-audience block carrying the
-plaintext. Hosts that honor MCP
-[`audience` annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations)
-render the plaintext directly to a secure pane without exposing it to
-the model; hosts that don't will surface it in the transcript, and
-rotation remains an option if the host's behavior is wrong for your
-environment.
+plaintext. The MCP `audience`
+[annotation](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations)
+is an optional hint a host MAY use to route the user block to a secure
+pane separate from the assistant's transcript; the spec does not require
+hosts to filter on it, and not every host does, so treat block 2 as
+potentially visible to the model unless you have verified your host
+filters tool-result blocks by audience. The two-block shape is in place
+so that any audience-aware host gets the separation automatically; rely
+on the appliance's audit trail and Safeguard's rotation flow as the
+authoritative protection.
 
 `Safeguard_Execute` against the underlying credential paths is refused
 with a structured `sensitive_endpoint_redirected` envelope naming the

@@ -94,4 +94,34 @@ public class WorkflowRecipeTests
                 $"Recipe '{recipe.Id}' has no tags. Tags are required for verb-intent discovery.");
         }
     }
+
+    [Theory]
+    [InlineData("delete")]
+    [InlineData("remove")]
+    [InlineData("cleanup")]
+    [InlineData("batchdelete")]
+    [InlineData("update")]
+    [InlineData("modify")]
+    public void RecipeIndex_BulkAssetOperations_ReturnsStrongMatchForCleanupVerbs(string term)
+    {
+        var matches = SafeguardMcp.Catalog.RecipeIndex.Score(new[] { term });
+
+        var hit = matches.FirstOrDefault(m => m.Recipe.Id == "bulk-asset-operations");
+        Assert.NotNull(hit);
+        Assert.True(hit.Score > 0, $"Expected term '{term}' to score > 0 against bulk-asset-operations.");
+        Assert.True(hit.Strong, $"Expected term '{term}' to be a strong match against bulk-asset-operations.");
+    }
+
+    [Fact]
+    public void RecipeIndex_BulkAssetOperations_DoesNotMatchUnrelatedSubstring_Move()
+    {
+        // Regression guard against substring noise (RecipeIndex.cs:69-71): a search for "move"
+        // must NOT promote bulk-asset-operations via the "remove" tag.
+        var matches = SafeguardMcp.Catalog.RecipeIndex.Score(new[] { "move" });
+        var hit = matches.FirstOrDefault(m => m.Recipe.Id == "bulk-asset-operations");
+        if (hit is not null)
+        {
+            Assert.False(hit.Strong, "'move' must not be a strong match against bulk-asset-operations.");
+        }
+    }
 }

@@ -113,24 +113,61 @@ internal static class CloseAccessRequestPlanner
             return plan;
         }
 
-        // PolicyAdmin acting on someone else's request: only Close from
-        // PendingReview is supported. This diverges from safeguard-ps
-        // (which sends Close unconditionally) in favour of the V4
-        // controller's documented contract.
+        // PolicyAdmin acting on someone else's request. The V4
+        // controller's CloseAsync (PangaeaAppliance
+        // src\Service\Core\Controllers\V4\Requests\AccessRequestsController.cs:478-499)
+        // is gated only by [UserAuthorization(PolicyAdmin)] and the
+        // cluster-state [AllowIfState(WithQuorum)] -- there is NO
+        // workflow-state filter at the controller layer
+        // (AllowIfStateAttribute carries appliance/cluster states like
+        // Online/WithQuorum, NOT AccessRequest workflow states). The
+        // workflow itself permits Close from PendingReview,
+        // PendingPasswordReset (State.PendingPasswordReset.cs:73,86),
+        // PendingAccountDemoted (State.PendingAccountDemoted.cs:43),
+        // PendingAccountSuspended (State.PendingAccountSuspended.cs:43),
+        // and PendingAcknowledgement (State.PendingAcknowledgement.cs:20)
+        // via .Permit(CloseRequest, ...) entries. safeguard-ps
+        // (requests.psm1:1841-1899) dispatches Close unconditionally
+        // for the admin branch and has done so in production for
+        // years. Defer to the state-map's AdminAction column rather
+        // than gating on a single PendingReview state here.
         if (callerIsPolicyAdmin && !callerIsRequester)
         {
-            if (string.Equals(state, "PendingReview", StringComparison.OrdinalIgnoreCase))
+            var adminRow = CloseAccessRequestStateMap.Find(state);
+            if (adminRow == null)
             {
-                plan.Action = "Close";
-                plan.Body = BuildCommentBody(truncatedComment);
+                plan.Refusal = $"Unknown access-request state '{state}'. The planner does not pick a fallback action; "
+                    + "re-fetch GET /v4/AccessRequests/{id} to confirm the state, or run "
+                    + "Safeguard_Enum name=\"AccessRequestState\" to see the recognised values.";
                 return plan;
             }
 
-            plan.Refusal = $"Close requires the request to be in PendingReview state. "
-                + $"Current state is '{state}'. Only the requester can act on this state "
-                + "(via Cancel/CheckIn/Acknowledge as appropriate); have them run "
-                + "Safeguard_CloseAccessRequest, or wait for the appliance's expiry/reclaim sweep.";
-            return plan;
+            var ar = adminRow.Value;
+            if (ar.Status == VerificationStatus.Inferred)
+            {
+                plan.Notices.Add(new Notice(
+                    "inferred-not-verified-on-this-appliance",
+                    $"State '{ar.State}' admin-side dispatch '{ActionName(ar.AdminAction)}' is inherited from "
+                    + "safeguard-ps and the state machine's .Permit entries; it has not been verified against "
+                    + "this appliance by the close-action verification harness. "
+                    + (string.IsNullOrEmpty(ar.Note) ? string.Empty : ar.Note),
+                    "Run CloseAccessRequestVerificationTests against this appliance to upgrade the row to Verified."));
+            }
+
+            switch (ar.AdminAction)
+            {
+                case CloseAction.Close:
+                    plan.Action = "Close";
+                    plan.Body = BuildCommentBody(truncatedComment);
+                    return plan;
+                case CloseAction.None:
+                    plan.Action = "None";
+                    return plan;
+                default:
+                    plan.Refusal = $"State '{state}' has no admin-side dispatch mapped. This is a planner bug; "
+                        + "file an issue with the state name and the appliance version.";
+                    return plan;
+            }
         }
 
         // Requester path (possibly also PolicyAdmin acting on own request).
@@ -186,20 +223,19 @@ internal static class CloseAccessRequestPlanner
             case CloseAction.NeedsAdmin:
                 if (callerIsPolicyAdmin) // requester AND PolicyAdmin
                 {
-                    if (string.Equals(state, "PendingReview", StringComparison.OrdinalIgnoreCase))
-                    {
-                        plan.Action = "Close";
-                        plan.Body = BuildCommentBody(truncatedComment);
-                        return plan;
-                    }
-                    plan.Refusal = $"State '{state}' has no requester-callable sub-endpoint (Cancel/CheckIn/Acknowledge "
-                        + "return 4xx here per the controller's AllowIfState attribute), and Close requires PendingReview. "
-                        + "Wait for the appliance to transition the request (typically to PendingReview or Closed) and retry.";
+                    // Requester is also PolicyAdmin: dispatch Close.
+                    // Same source-of-truth as the admin-on-other branch
+                    // above (controller has no workflow-state filter;
+                    // state machine .Permit entries cover the
+                    // NeedsAdmin states; safeguard-ps dispatches Close
+                    // unconditionally for admin callers).
+                    plan.Action = "Close";
+                    plan.Body = BuildCommentBody(truncatedComment);
                     return plan;
                 }
                 plan.Refusal = $"State '{state}' has no sub-endpoint the requester can call: "
-                    + "Cancel/CheckIn/Acknowledge return 4xx here per the controller's AllowIfState attribute, "
-                    + "and Close requires PolicyAdmin. Wait for the appliance's expiry/reclaim sweep, "
+                    + "Cancel/CheckIn/Acknowledge return 4xx here per the controller's per-action AllowIfState "
+                    + "filters, and Close requires PolicyAdmin. Wait for the appliance's expiry/reclaim sweep, "
                     + "or ask a PolicyAdmin to run Safeguard_CloseAccessRequest.";
                 return plan;
 

@@ -34,6 +34,12 @@ internal static class NoticeKinds
     internal const string PendingScheduled = "pending_scheduled";
     internal const string PendingAccountAction = "pending_account_action";
     internal const string TerminatedBeforeReady = "terminated_before_ready";
+
+    // Attached to successful POST .../InitializeSession responses. Tells the agent to
+    // present BOTH the manual launch command (and/or ConnectionUri) AND an explicit
+    // offer to launch the session on the user's behalf — never auto-launching. The
+    // credential is injected by Safeguard at the proxy and never enters agent context.
+    internal const string SessionTokenIssuedOfferToLaunch = "session_token_issued_offer_to_launch";
 }
 
 internal sealed class Notice

@@ -82,10 +82,7 @@ internal sealed class HttpRelaySafeguardSession : ISafeguardSession, IDisposable
 
         if (!TryGetBearer(out _))
         {
-            throw new McpException(
-                "Not authenticated against Safeguard. Acquire a Safeguard user token "
-                + "(e.g., `safeguard-mcp login`) and configure your client to send "
-                + "`Authorization: Bearer <token>`.");
+            throw new McpException(HttpModeMessages.NotAuthenticated);
         }
 
         return Task.CompletedTask;
@@ -104,9 +101,7 @@ internal sealed class HttpRelaySafeguardSession : ISafeguardSession, IDisposable
         {
             // Pure relay: there is nothing to refresh — the bearer
             // belongs to the caller. Surface a hint to re-acquire.
-            throw new McpException(
-                "Safeguard token has expired or been revoked. Re-acquire "
-                + "(`safeguard-mcp login` or your MCP client's OAuth flow) and retry.");
+            throw new McpException(HttpModeMessages.TokenExpired);
         }
     }
 
@@ -146,10 +141,7 @@ internal sealed class HttpRelaySafeguardSession : ISafeguardSession, IDisposable
 
             if (!TryGetBearer(out var bearer))
             {
-                throw new McpException(
-                    "Not authenticated against Safeguard. Acquire a Safeguard user token "
-                    + "(e.g., `safeguard-mcp login`) and configure your client to send "
-                    + "`Authorization: Bearer <token>`.");
+                throw new McpException(HttpModeMessages.NotAuthenticated);
             }
 
             // The SecureString here lives only as long as the SDK

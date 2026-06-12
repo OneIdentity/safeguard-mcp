@@ -21,12 +21,14 @@ namespace SafeguardMcp.Tools;
 ///     kind, subject ids, delivery flags, notices. No secret value.
 ///
 ///   block 2 (audience=["user"]): human-formatted plaintext.
-///     The MCP spec says hosts SHOULD render user-audience content
-///     directly to the human (e.g., secure pane / copy-to-clipboard)
-///     without including it in the assistant's context. Hosts that
-///     ignore audience annotations will surface the plaintext to the
-///     LLM as well — degrade-gracefully is preferable to refusing to
-///     run, since credentials can be rotated.
+///     The MCP spec (2025-06-18) defines the `audience` annotation
+///     as an optional hint a host MAY use to route content — it does
+///     not require hosts to filter on it. Hosts that honor the hint
+///     can render this block directly to the human (secure pane,
+///     copy-to-clipboard) without feeding it to the model; hosts that
+///     ignore it will surface the plaintext to the LLM. Degrade-
+///     gracefully is preferable to refusing to run, since credentials
+///     can be rotated if the host failed to split audiences.
 ///
 /// The companion to <see cref="SafeguardApiTool.Safeguard_Execute"/>'s
 /// refuse-and-redirect guard: anything Execute refuses lives here.
@@ -53,11 +55,13 @@ internal sealed class SafeguardRetrieveCredentialTool
         + "The user-audience block (block 2) contains the human-formatted plaintext (password / "
         + "SSH key PEM / API client secret / API secret history / TOTP code window with validity / "
         + "personal-account password). "
-        + "MCP hosts that honor `audience` annotations should render the user block directly to "
-        + "the human (copy-to-clipboard, secure pane, confirmation dialog) WITHOUT including it in "
-        + "the assistant's transcript. Hosts that ignore audience annotations will surface the "
-        + "plaintext in the transcript — degrade-gracefully is preferable to refusing to run; "
-        + "credentials can be rotated if the host failed to honor the audience hint. "
+        + "The two blocks carry MCP `audience` annotations (assistant / user). The annotation is an "
+        + "optional hint a host MAY use to route content (e.g., render the user block in a secure "
+        + "pane separate from the assistant's transcript). The spec does not require hosts to filter "
+        + "on it, so treat block 2 as potentially visible to the model unless your host is known to "
+        + "filter tool-result blocks by audience; the split is in place so any audience-aware host "
+        + "gets the separation automatically. Credentials can be rotated on the appliance if a "
+        + "host's behavior is wrong for your environment. "
         + "Supported kinds: access-request-password, access-request-ssh-key, access-request-api-key, "
         + "access-request-totp, access-request-file (requires accessRequestId); "
         + "personal-account-password, personal-account-password-history, personal-account-totp "
@@ -72,8 +76,10 @@ internal sealed class SafeguardRetrieveCredentialTool
             + "personal-account-password, personal-account-password-history, personal-account-totp, "
             + "generated-password, asset-account-api-secret-history.")]
         string kind,
-        [Description("AccessRequest database id. Required for every access-request-* kind.")]
-        int? accessRequestId = null,
+        [Description("AccessRequest database id. Required for every access-request-* kind. "
+            + "Note: Safeguard access-request ids are opaque dashed strings "
+            + "(e.g. '3-4-6-8951-1-d7c2dff871514f669a61163dbd8548fa-0003'), not integers.")]
+        string accessRequestId = null,
         [Description("Account database id. Required for personal-account-* kinds and "
             + "asset-account-api-secret-history.")]
         int? accountId = null,
@@ -91,17 +97,17 @@ internal sealed class SafeguardRetrieveCredentialTool
                 $"Unknown credential kind '{kind}'. See the tool description for valid kinds.");
         }
 
-        var args = new Dictionary<string, int?>(System.StringComparer.OrdinalIgnoreCase)
+        var providedArgs = new Dictionary<string, bool>(System.StringComparer.OrdinalIgnoreCase)
         {
-            ["accessRequestId"] = accessRequestId,
-            ["accountId"] = accountId,
-            ["apiKeyId"] = apiKeyId,
+            ["accessRequestId"] = !string.IsNullOrWhiteSpace(accessRequestId),
+            ["accountId"] = accountId.HasValue,
+            ["apiKeyId"] = apiKeyId.HasValue,
         };
 
         var missing = new List<string>();
         foreach (var required in entry.Requires)
         {
-            if (!args.TryGetValue(required, out var v) || !v.HasValue)
+            if (!providedArgs.TryGetValue(required, out var present) || !present)
                 missing.Add(required);
         }
         if (missing.Count > 0)
@@ -114,9 +120,9 @@ internal sealed class SafeguardRetrieveCredentialTool
         // Reject extraneous ids that the kind doesn't expect — keeps callers honest
         // and protects against ambiguous arg sets (e.g., apiKeyId passed to a
         // non-asset-account kind).
-        foreach (var (name, value) in args)
+        foreach (var (name, present) in providedArgs)
         {
-            if (value.HasValue && !ContainsIgnoreCase(entry.Requires, name))
+            if (present && !ContainsIgnoreCase(entry.Requires, name))
             {
                 throw new McpException(
                     $"kind '{kind}' does not accept '{name}'. Required args: "
@@ -151,7 +157,7 @@ internal sealed class SafeguardRetrieveCredentialTool
 
         // Audit log: never plaintext. Subject ids only.
         var subjectIds = new List<string>();
-        if (accessRequestId.HasValue) subjectIds.Add($"accessRequestId={accessRequestId.Value}");
+        if (!string.IsNullOrEmpty(accessRequestId)) subjectIds.Add($"accessRequestId={accessRequestId}");
         if (accountId.HasValue) subjectIds.Add($"accountId={accountId.Value}");
         if (apiKeyId.HasValue) subjectIds.Add($"apiKeyId={apiKeyId.Value}");
         _logger.LogInformation(
@@ -190,7 +196,7 @@ internal sealed class SafeguardRetrieveCredentialTool
     private static (string Method, string Path) ResolvePath(
         SensitiveCredentialEndpoints.KindEntry entry,
         SensitiveCredentialEndpoints.EndpointBinding endpoint,
-        int? accessRequestId,
+        string accessRequestId,
         int? accountId,
         int? apiKeyId)
     {
@@ -234,7 +240,7 @@ internal sealed class SafeguardRetrieveCredentialTool
 
     internal static string BuildAssistantMetadataBlock(
         string kind,
-        int? accessRequestId,
+        string accessRequestId,
         int? accountId,
         int? apiKeyId,
         System.DateTimeOffset retrievedAtUtc)
@@ -249,7 +255,7 @@ internal sealed class SafeguardRetrieveCredentialTool
 
             writer.WritePropertyName("subject");
             writer.WriteStartObject();
-            if (accessRequestId.HasValue) writer.WriteNumber("accessRequestId", accessRequestId.Value);
+            if (!string.IsNullOrEmpty(accessRequestId)) writer.WriteString("accessRequestId", accessRequestId);
             if (accountId.HasValue) writer.WriteNumber("accountId", accountId.Value);
             if (apiKeyId.HasValue) writer.WriteNumber("apiKeyId", apiKeyId.Value);
             writer.WriteEndObject();
@@ -279,7 +285,7 @@ internal sealed class SafeguardRetrieveCredentialTool
     internal static string BuildUserAudienceBlock(
         string kind,
         string body,
-        int? accessRequestId,
+        string accessRequestId,
         int? accountId,
         int? apiKeyId)
     {
@@ -339,7 +345,7 @@ internal sealed class SafeguardRetrieveCredentialTool
         return sb.ToString().TrimEnd();
     }
 
-    private static void AppendAccessRequestHeader(StringBuilder sb, string label, int? accessRequestId)
+    private static void AppendAccessRequestHeader(StringBuilder sb, string label, string accessRequestId)
     {
         sb.Append(label).Append(" for access request ").Append(accessRequestId).AppendLine(".");
     }

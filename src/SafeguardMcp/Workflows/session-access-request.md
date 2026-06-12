@@ -53,10 +53,28 @@ Steps:
      - Ssh: SshConnectionString in the form
        vaultaddress=...@token=...@user@host:port@scbHost; ConnectionUri is the ssh:// SCALUS handler form.
      - Telnet: TelnetConnectionString and ConnectionUri.
-5. Launch the session:
-   - RDP: mstsc <saved.rdp>, or open the ConnectionUri with the SCALUS handler.
-   - SSH/Telnet: use the connection string or ConnectionUri.
-   - Credentials are injected by Safeguard — the user never sees the password.
+5. Launch the session — OFFER, do not auto-launch:
+   - Convention: present the user BOTH the manual launch command (and/or ConnectionUri) AND
+     an explicit offer to launch on their behalf. Ask "Want me to launch it for you?" and
+     wait for explicit consent. Always include the request id in the offer so a later
+     Safeguard_CloseAccessRequest call can be wired up. The credential never enters agent
+     context — Safeguard injects it at the proxy — so showing the launch command does not
+     leak a secret.
+   - SSH / Telnet:
+     - POSIX: ssh "<SshConnectionString>"  (or open the ConnectionUri with the SCALUS handler).
+     - Windows: Start-Process ssh -ArgumentList "<SshConnectionString>"  (or invoke the
+       SCALUS-registered ssh:// / telnet:// handler against ConnectionUri).
+   - RDP / RemoteDesktopApplication:
+     - The appliance returns RdpConnectionFile as the literal .rdp file content (gateway
+       hostname, certificate, token, RDP display settings). SAVE THAT STRING TO DISK FIRST,
+       then run mstsc against the saved file. Do NOT hand-build a .rdp file — any server-side
+       RDP setting change (gateway, display, certificate) would silently drift.
+     - Windows: write RdpConnectionFile to e.g. $env:TEMP\sg-<requestId>.rdp, then
+       Start-Process mstsc -ArgumentList $rdpPath.
+     - POSIX (xfreerdp): write to /tmp/sg-<requestId>.rdp, then xfreerdp /load:<path>; or
+       use Microsoft Remote Desktop / the SCALUS handler against ConnectionUri.
+   - Credentials are injected by Safeguard — the user never sees the password — but consent
+     to launch must still come from the user, not the agent.
 6. Check in when done:
    - POST /v4/AccessRequests/{requestId}/CheckIn
    - Or the session expires automatically based on policy duration.

@@ -72,7 +72,7 @@ internal static class SafeguardInvoker
         catch (SafeguardDotNetException ex)
         {
             throw new McpException(
-                $"Safeguard API error (HTTP {(int?)ex.HttpStatusCode ?? 0}): {ex.Message}");
+                $"Safeguard API error (HTTP {(int?)ex.HttpStatusCode ?? 0}): {GetErrorBody(ex)}");
         }
     }
 
@@ -92,9 +92,23 @@ internal static class SafeguardInvoker
         catch (SafeguardDotNetException ex)
         {
             throw new McpException(
-                $"Safeguard API error (HTTP {(int?)ex.HttpStatusCode ?? 0}): {ex.Message}");
+                $"Safeguard API error (HTTP {(int?)ex.HttpStatusCode ?? 0}): {GetErrorBody(ex)}");
         }
     }
+
+    /// <summary>
+    /// Prefer the raw response body the SDK captured on the exception
+    /// over <see cref="Exception.Message"/>. The SDK wraps response
+    /// bodies in prose like "Error returned from Safeguard API,
+    /// Error: BadRequest {…}" — that wrapper trips the JSON parser
+    /// downstream and silently disables every smart-hint branch.
+    /// <see cref="SafeguardDotNetException.Response"/> carries the
+    /// bare body straight from the appliance, which is what the hint
+    /// pipeline actually wants. Fall back to the wrapped message only
+    /// when the SDK didn't capture a body (e.g. transport failures).
+    /// </summary>
+    private static string GetErrorBody(SafeguardDotNetException ex)
+        => !string.IsNullOrWhiteSpace(ex.Response) ? ex.Response : ex.Message;
 
     /// <summary>
     /// Unauthenticated raw call (used for anonymous Notification
@@ -143,9 +157,7 @@ internal static class SafeguardInvoker
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
-            throw new McpException(
-                "Safeguard token has expired or been revoked. Re-acquire "
-                + "(`safeguard-mcp login` or your MCP client's OAuth flow) and retry.");
+            throw new McpException(HttpModeMessages.TokenExpired);
         }
 
         if (!response.IsSuccessStatusCode)
@@ -192,7 +204,11 @@ internal static class SafeguardInvoker
 
     private static string GetBearerToken(ISafeguardConnection connection)
     {
-        using var token = connection.GetAccessToken();
-        return new NetworkCredential(string.Empty, token).Password;
+        // NOTE: GetAccessToken() hands back the SDK's internal bearer
+        // SecureString by reference. Do NOT wrap in `using` — disposing
+        // it zeroes the SDK's own copy and forces a re-login on the
+        // next call.
+        var token = connection.GetAccessToken();
+        return SecureStringExtensions.ReadInsecure(token) ?? string.Empty;
     }
 }
