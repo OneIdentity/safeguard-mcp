@@ -4,6 +4,15 @@ Safeguard exposes three services, each with its own base URL path.
 The Safeguard_Execute tool auto-routes to the correct service, but understanding
 the split helps when browsing the catalog or diagnosing routing issues.
 
+## Path format
+
+Pass bare `/v4/...` paths to `Safeguard_Execute` and `Safeguard_Schema`.
+The appliance's actual URLs are `https://{host}/service/{Name}/v4/...`,
+but the tool prepends `/service/{Name}/` for you based on the path.
+Calls that include `/service/{name}/` themselves are rejected with a
+directive — they would otherwise hit the wire as
+`/service/{name}/service/{name}/v4/...` and 404.
+
 ## Core Service (requires authentication)
 
 The primary service — contains all business objects and policy.

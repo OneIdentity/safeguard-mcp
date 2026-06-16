@@ -769,6 +769,17 @@ families. Agents and users often don't know — or shouldn't need to know — wh
 a given endpoint. The unified `Safeguard_Execute` tool resolves the correct service
 automatically by looking up the path in the API catalog. One tool handles everything.
 
+#### Path format contract
+
+Callers pass bare `/v4/...` paths. The appliance's real URL for any endpoint is
+`https://{host}/service/{Name}/v4/...` (Core/Appliance/Notification), and the
+dispatcher prepends `/service/{Name}/` for you. Paths that already include the
+`/service/{name}/` prefix are rejected at pre-flight with a directive that
+names the corrected `/v4/...` form — they would otherwise hit the wire as
+`/service/{name}/service/{name}/v4/...` and 404. This contract applies to
+`Safeguard_Execute` and `Safeguard_Schema`; `Safeguard_QueryHelp` surfaces
+the same directive as a notice but still returns the general syntax help.
+
 #### Service resolution
 
 When you call `Safeguard_Execute` with a path like `/v4/AssetAccounts`, the dispatcher:
