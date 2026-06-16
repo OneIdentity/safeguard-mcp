@@ -400,6 +400,9 @@ internal static class ApiToolHelpers
     {
         if (statusCode == 404 && !templateMatched && !string.IsNullOrWhiteSpace(requestPath))
         {
+            if (TryDetectServicePrefix(requestPath, out var stripped, out var detectedService))
+                return BuildServicePrefixDirective(requestPath, stripped, detectedService);
+
             var sb404 = new StringBuilder();
             sb404.Append("No endpoint at ").Append(requestPath).Append('.');
             if (pathSuggestions != null && pathSuggestions.Length > 0)
