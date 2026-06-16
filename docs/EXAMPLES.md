@@ -28,6 +28,12 @@ The server maintains multiple connections simultaneously, enabling cross-server 
 
 > Show me what I can do with asset partitions
 
+`Safeguard_Discover` requires at least one narrower (`service=`, `search=`/`query=`, or
+`method=`) — a bare call returns a directive instead of dumping the ~1000-endpoint
+catalog. For "tell me about this appliance" style questions, start with
+`service="Appliance"`; vague status words (`uptime`, `boot`, `system time`,
+`health`, `version`) expand via the synonym map onto the right Appliance endpoints.
+
 ### Learn about request/response format
 
 > What fields are required to create a new asset account?
