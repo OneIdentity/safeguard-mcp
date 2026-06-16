@@ -497,7 +497,7 @@ The complete tool surface is **11 tools**:
 | `Safeguard_Enum` | List the valid values for any enum type referenced in a schema |
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
 | `Safeguard_Workflows` | Get step-by-step recipes for common multi-step operations |
-| `Safeguard_Execute` | Call any endpoint on any service (auto-routes to the correct service) |
+| `Safeguard_Execute` | Call any endpoint on any service (auto-routes from the bare /v4/... path) |
 | `Safeguard_OpenAccessRequest` | One-call composite that pre-checks entitlements and submits an access request |
 | `Safeguard_CloseAccessRequest` | State-aware close: dispatches to Cancel / CheckIn / Close / Acknowledge based on the request's current state |
 | `Safeguard_RetrieveCredential` | Returns plaintext credential material (passwords, SSH keys, API secrets, TOTP codes, files) in a two-block response that splits metadata from plaintext by MCP audience — see [Sensitive credential delivery](#sensitive-credential-delivery) |

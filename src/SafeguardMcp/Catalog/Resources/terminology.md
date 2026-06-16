@@ -14,6 +14,7 @@ When a user asks about a concept, use this mapping to find the correct API endpo
 | Platform, Connection Template | /v4/Platforms | Defines how Safeguard connects to a type of system |
 | Linked Account, Personal Account | /v4/PersonalAccounts | Accounts linked to a user for personal credential access |
 | Session Recording | /v4/Sessions | Recorded privileged sessions (RDP, SSH, etc.) |
+| Uptime, Boot time, System time | /v4/ApplianceStatus, /v4/ApplianceStatus/Health, /v4/SystemTime, /v4/Version | Appliance status/health endpoints; uptime is derived from these |
 
 ## Tips
 
