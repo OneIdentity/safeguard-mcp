@@ -40,6 +40,47 @@ internal static class ApiToolHelpers
         return normalized;
     }
 
+    /// <summary>Detects a leading /service/{name}/ prefix and returns the bare /v4/... form.</summary>
+    internal static bool TryDetectServicePrefix(string rawPath, out string strippedPath, out string serviceName)
+    {
+        strippedPath = null;
+        serviceName = null;
+        if (string.IsNullOrWhiteSpace(rawPath))
+            return false;
+
+        var p = rawPath.Trim();
+        var qIdx = p.IndexOf('?');
+        if (qIdx >= 0)
+            p = p[..qIdx];
+
+        var segs = p.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segs.Length < 2 || !segs[0].Equals("service", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var canonical = segs[1].ToLowerInvariant() switch
+        {
+            "core" => "Core",
+            "appliance" => "Appliance",
+            "notification" => "Notification",
+            "a2a" => "A2A",
+            "rsts" => "Rsts",
+            _ => null
+        };
+        if (canonical is null)
+            return false;
+
+        serviceName = canonical;
+        strippedPath = segs.Length > 2 ? "/" + string.Join('/', segs[2..]) : "/";
+        return true;
+    }
+
+    /// <summary>Directive shown when a request includes a /service/{name}/ prefix.</summary>
+    internal static string BuildServicePrefixDirective(string rawPath, string strippedPath, string serviceName)
+        => $"Path '{rawPath}' includes a '/service/{{name}}/' prefix. "
+         + $"Use path=\"{strippedPath}\" instead — Safeguard_Execute auto-routes to the correct service "
+         + $"(here: {serviceName}) from the bare /v4/... path. Appliance URLs include /service/{{Name}}/v4/, "
+         + "but the tool prepends that for you.";
+
     internal static string[] GetPathSegments(string path) => NormalizePath(path)
         .Trim('/')
         .Split('/', StringSplitOptions.RemoveEmptyEntries);

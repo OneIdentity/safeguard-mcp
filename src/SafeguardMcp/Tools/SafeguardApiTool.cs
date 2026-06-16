@@ -448,6 +448,7 @@ internal sealed class SafeguardApiTool
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("Execute any Safeguard API endpoint. The service (Core, Appliance, Notification) "
         + "is automatically determined from the endpoint path. "
+        + "Paths must start with /v4/...; do not include a /service/{name}/ prefix — the tool prepends that for you. "
         + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format. "
         + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json. "
         + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
@@ -463,7 +464,7 @@ internal sealed class SafeguardApiTool
         + "error envelopes.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
-        [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). The correct service is auto-detected from the path.")] string path,
+        [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). Must start with /v4/...; do not include a /service/{name}/ prefix. The correct service is auto-detected from the path.")] string path,
         [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
         [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets). GET-only — non-GET methods must use 'json'.")]
@@ -478,12 +479,15 @@ internal sealed class SafeguardApiTool
         + "Use this before POST or PUT calls to understand the JSON body format. "
         + "Set depth>1 (max 3) to expand nested object/array properties one or more levels.")]
     public string Safeguard_Schema(
-        [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users').")] string path,
+        [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users'). Must start with /v4/...; do not include a /service/{name}/ prefix.")] string path,
         [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST",
         [Description("How many levels deep to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/AssetAccounts').");
+
+        if (ApiToolHelpers.TryDetectServicePrefix(path, out var strippedPath, out var detectedService))
+            throw new McpException(ApiToolHelpers.BuildServicePrefixDirective(path, strippedPath, detectedService));
 
         var normalizedPath = NormalizePath(path);
         var normalizedMethod = ParseMethod(method);
@@ -704,6 +708,12 @@ internal sealed class SafeguardApiTool
         if (string.IsNullOrWhiteSpace(path))
             return sb.ToString().TrimEnd();
 
+        if (ApiToolHelpers.TryDetectServicePrefix(path, out var strippedPath, out var detectedService))
+        {
+            return ApiToolHelpers.BuildServicePrefixDirective(path, strippedPath, detectedService)
+                + "\n\n" + sb.ToString().TrimEnd();
+        }
+
         var normalizedPath = NormalizePath(path);
         var service = ResolveService(normalizedPath);
         var serviceName = GetServiceName(service);
@@ -805,6 +815,9 @@ internal sealed class SafeguardApiTool
             throw new McpException("The 'method' parameter is required (GET, POST, PUT, PATCH, or DELETE).");
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/Users').");
+
+        if (ApiToolHelpers.TryDetectServicePrefix(path, out var strippedPath, out var detectedService))
+            throw new McpException(ApiToolHelpers.BuildServicePrefixDirective(path, strippedPath, detectedService));
 
         var normalizedMethod = ParseMethod(method);
         var normalizedPath = NormalizePath(path);
