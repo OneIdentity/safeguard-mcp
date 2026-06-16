@@ -101,16 +101,38 @@ internal sealed class SafeguardApiTool
     [McpServerTool(Name = "Safeguard_Discover", Title = "Discover Safeguard API Endpoints",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Search the Safeguard API catalog. Default emits one line per endpoint (method/path/summary). "
+        + "At least one narrower is required — pass service=, search= (or its query= alias), or method=. "
+        + "A bare call with no narrowers returns a directive listing examples instead of dumping the full ~1000-endpoint catalog. "
         + "Set verbose=true after narrowing to inspect query-parameter details. "
         + "Recipe matches are listed first. Batch* endpoints are returned next to their per-id siblings; "
         + "consider both before fan-firing. Use this to find the right endpoint before calling Safeguard_Execute.")]
     public string Safeguard_Discover(
-        [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all services.")] string service = null,
-        [Description("Text to search for in endpoint paths and summaries (case-insensitive).")] string search = null,
+        [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. "
+            + "Use 'Appliance' for status, time, version, and health endpoints. Omit to search all services.")] string service = null,
+        [Description("Text to search for in endpoint paths and summaries (case-insensitive). "
+            + "Synonyms expand the search — e.g. 'uptime' also matches 'ApplianceStatus' and 'SystemTime'.")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null,
+        [Description("Alias for search=. Some clients call this parameter 'query'; both map to the same behavior.")] string query = null,
         [Description("Include per-endpoint query parameter details (defaults, accepted values). "
             + "Default false returns one line per endpoint; set true after narrowing the search to inspect parameter details.")] bool verbose = false)
-        => FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, search, method, verbose);
+    {
+        var (effectiveSearch, aliasNotice) = ResolveDiscoverSearch(search, query);
+        var body = FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, effectiveSearch, method, verbose);
+        return aliasNotice is null ? body : aliasNotice + "\n\n" + body;
+    }
+
+    /// <summary>Reconciles search/query inputs; query= is an alias for search=.</summary>
+    internal static (string Search, string Notice) ResolveDiscoverSearch(string search, string query)
+    {
+        var s = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        var q = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        if (s is null && q is null) return (null, null);
+        if (s is null) return (q, null);
+        if (q is null) return (s, null);
+        if (s.Equals(q, StringComparison.OrdinalIgnoreCase)) return (s, null);
+        return (s, "Notice: both search= and query= were supplied with different values; using search=. "
+                 + "The 'query' alias maps to 'search' — pass only one.");
+    }
 
     internal static string FormatDiscovery(ApiEndpoint[] results, string service, string search, string method)
         => FormatDiscovery(results, service, search, method, verbose: false);
@@ -138,6 +160,14 @@ internal sealed class SafeguardApiTool
         const int MaxRowsCompact = 200;
         const int MaxRowsVerbose = 20;
         const int MaxBytes = 18 * 1024;
+
+        // No narrowers: dumping the ~1000-endpoint catalog is unactionable.
+        if (string.IsNullOrWhiteSpace(service)
+            && string.IsNullOrWhiteSpace(search)
+            && string.IsNullOrWhiteSpace(method))
+        {
+            return BuildNoNarrowerDirective(results.Length);
+        }
 
         var sb = new StringBuilder();
         var searchTerms = TerminologyMap.ExpandSearchTerms(search);
@@ -294,6 +324,26 @@ internal sealed class SafeguardApiTool
         sb.Append("Tip: Use Safeguard_Schema to see request/response body format for POST/PUT endpoints.");
 
         return ApplySizeGuard(sb, matches.Count, MaxBytes, truncatedAtBytes);
+    }
+
+    /// <summary>Directive returned when Safeguard_Discover is called with no narrowers.</summary>
+    internal static string BuildNoNarrowerDirective(int totalEndpoints)
+    {
+        var sb = new StringBuilder();
+        sb.Append("Safeguard_Discover requires at least one narrower (service, search/query, or method). ")
+          .Append("The catalog has ").Append(totalEndpoints)
+          .AppendLine(" endpoints across the Core, Appliance, and Notification services.")
+          .AppendLine()
+          .AppendLine("Examples:")
+          .AppendLine("  Safeguard_Discover service=\"Appliance\"             — appliance-level endpoints (status, time, version, health)")
+          .AppendLine("  Safeguard_Discover search=\"users\"                  — user, group, and identity-provider endpoints")
+          .AppendLine("  Safeguard_Discover service=\"Core\" method=\"POST\"    — write endpoints in Core")
+          .AppendLine("  Safeguard_Discover search=\"audit log\"              — audit log endpoints")
+          .AppendLine("  Safeguard_Discover search=\"uptime\"                 — appliance status / time / version / health")
+          .AppendLine()
+          .AppendLine("For 'tell me about this appliance' style questions, start with service=\"Appliance\".")
+          .Append("Tip: query= is accepted as an alias for search=.");
+        return sb.ToString();
     }
 
     /// <summary>

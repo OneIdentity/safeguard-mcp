@@ -492,7 +492,7 @@ The complete tool surface is **11 tools**:
 |------|---------|
 | `Safeguard_Connect` | Authenticate to one or more appliances via device code |
 | `Safeguard_Disconnect` | Revoke the active Safeguard token and drop the cached connection |
-| `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method |
+| `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method (at least one narrower required) |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
 | `Safeguard_Enum` | List the valid values for any enum type referenced in a schema |
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
@@ -584,9 +584,10 @@ The server addresses this with two layers:
 Current mappings include Entitlement→Roles, Managed Account→AssetAccounts,
 Partition→AssetPartitions, Platform→Platforms, and others. The map has grown beyond
 simple noun-to-noun aliases to cover **verbs** an agent will reach for
-(`move`/`transfer`/`migrate` → partition reassignment) and **umbrella concepts** that
-have no literal API endpoint (`privileged access`, `pam` → access requests). It's
-designed to grow as real-world usage reveals additional gaps.
+(`move`/`transfer`/`migrate` → partition reassignment), **umbrella concepts** that
+have no literal API endpoint (`privileged access`, `pam` → access requests), and
+**vague status questions** (`uptime`/`boot`/`system time` → ApplianceStatus / SystemTime
+/ Version / Health). It's designed to grow as real-world usage reveals additional gaps.
 
 ### Workflow Recipes: Domain Expertise for Agents
 

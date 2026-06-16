@@ -31,6 +31,7 @@ Hardware/infrastructure management for the appliance itself.
 | Category | Key Endpoints | Purpose |
 |----------|--------------|---------|
 | Health | /v4/ApplianceStatus, /v4/ApplianceStatus/Health | CPU, memory, disk, overall state |
+| Identity | /v4/Version, /v4/SystemTime | Software version and current appliance time (uptime is derived from these) |
 | Backup & Restore | /v4/Backups, /v4/BackupSettings | Create, schedule, restore backups |
 | Networking | /v4/NetworkInterfaces, /v4/NetworkDiagnostics | Network configuration and diagnostics |
 | Patch | /v4/Patches | Upload, distribute, install patches |

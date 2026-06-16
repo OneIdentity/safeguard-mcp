@@ -77,6 +77,12 @@ public static class TerminologyMap
         // Cluster & appliance — infrastructure management terms
         ["cluster", "cluster members", "node", "nodes", "appliance", "appliances"],
 
+        // Appliance diagnostics — "uptime"/"boot"/"system time" map onto
+        // /v4/SystemTime, /v4/Version, /v4/ApplianceStatus, /v4/ApplianceStatus/Health.
+        ["uptime", "boot", "boot time", "system time", "appliance time",
+         "appliance status", "appliance health", "appliance version",
+         "systemtime", "appliancestatus", "health"],
+
         // Discovery — finding unmanaged assets/accounts
         ["discovery", "discover", "discoveredassets", "discoveredaccounts", "discovery job"],
 

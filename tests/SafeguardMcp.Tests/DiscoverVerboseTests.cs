@@ -74,12 +74,12 @@ public class DiscoverVerboseTests
     [Fact]
     public void Discover_DefaultMode_RaisesCapTo200()
     {
-        // 220 endpoints: only 200 should be shown; the rest report as "... and N more".
+        // Pass a method narrower so the no-narrower directive does not fire.
         var list = new List<ApiEndpoint>();
         for (int i = 0; i < 220; i++)
             list.Add(new ApiEndpoint("Core", "GET", $"/v4/Things/{i}", "thing", "", false));
 
-        var output = SafeguardApiTool.FormatDiscovery(list.ToArray(), null, null, null, verbose: false);
+        var output = SafeguardApiTool.FormatDiscovery(list.ToArray(), null, null, "GET", verbose: false);
 
         Assert.Contains("/v4/Things/199", output);
         Assert.DoesNotContain("/v4/Things/200", output);
