@@ -492,12 +492,12 @@ The complete tool surface is **11 tools**:
 |------|---------|
 | `Safeguard_Connect` | Authenticate to one or more appliances via device code |
 | `Safeguard_Disconnect` | Revoke the active Safeguard token and drop the cached connection |
-| `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method |
+| `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method (at least one narrower required) |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
 | `Safeguard_Enum` | List the valid values for any enum type referenced in a schema |
 | `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
 | `Safeguard_Workflows` | Get step-by-step recipes for common multi-step operations |
-| `Safeguard_Execute` | Call any endpoint on any service (auto-routes to the correct service) |
+| `Safeguard_Execute` | Call any endpoint on any service (auto-routes from the bare /v4/... path) |
 | `Safeguard_OpenAccessRequest` | One-call composite that pre-checks entitlements and submits an access request |
 | `Safeguard_CloseAccessRequest` | State-aware close: dispatches to Cancel / CheckIn / Close / Acknowledge based on the request's current state |
 | `Safeguard_RetrieveCredential` | Returns plaintext credential material (passwords, SSH keys, API secrets, TOTP codes, files) in a two-block response that splits metadata from plaintext by MCP audience — see [Sensitive credential delivery](#sensitive-credential-delivery) |
@@ -584,9 +584,10 @@ The server addresses this with two layers:
 Current mappings include Entitlement→Roles, Managed Account→AssetAccounts,
 Partition→AssetPartitions, Platform→Platforms, and others. The map has grown beyond
 simple noun-to-noun aliases to cover **verbs** an agent will reach for
-(`move`/`transfer`/`migrate` → partition reassignment) and **umbrella concepts** that
-have no literal API endpoint (`privileged access`, `pam` → access requests). It's
-designed to grow as real-world usage reveals additional gaps.
+(`move`/`transfer`/`migrate` → partition reassignment), **umbrella concepts** that
+have no literal API endpoint (`privileged access`, `pam` → access requests), and
+**vague status questions** (`uptime`/`boot`/`system time` → ApplianceStatus / SystemTime
+/ Version / Health). It's designed to grow as real-world usage reveals additional gaps.
 
 ### Workflow Recipes: Domain Expertise for Agents
 
@@ -767,6 +768,17 @@ Safeguard's three services (Core, Appliance, Notification) each handle different
 families. Agents and users often don't know — or shouldn't need to know — which service owns
 a given endpoint. The unified `Safeguard_Execute` tool resolves the correct service
 automatically by looking up the path in the API catalog. One tool handles everything.
+
+#### Path format contract
+
+Callers pass bare `/v4/...` paths. The appliance's real URL for any endpoint is
+`https://{host}/service/{Name}/v4/...` (Core/Appliance/Notification), and the
+dispatcher prepends `/service/{Name}/` for you. Paths that already include the
+`/service/{name}/` prefix are rejected at pre-flight with a directive that
+names the corrected `/v4/...` form — they would otherwise hit the wire as
+`/service/{name}/service/{name}/v4/...` and 404. This contract applies to
+`Safeguard_Execute` and `Safeguard_Schema`; `Safeguard_QueryHelp` surfaces
+the same directive as a notice but still returns the general syntax help.
 
 #### Service resolution
 

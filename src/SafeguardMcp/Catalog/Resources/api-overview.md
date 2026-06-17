@@ -4,6 +4,15 @@ Safeguard exposes three services, each with its own base URL path.
 The Safeguard_Execute tool auto-routes to the correct service, but understanding
 the split helps when browsing the catalog or diagnosing routing issues.
 
+## Path format
+
+Pass bare `/v4/...` paths to `Safeguard_Execute` and `Safeguard_Schema`.
+The appliance's actual URLs are `https://{host}/service/{Name}/v4/...`,
+but the tool prepends `/service/{Name}/` for you based on the path.
+Calls that include `/service/{name}/` themselves are rejected with a
+directive — they would otherwise hit the wire as
+`/service/{name}/service/{name}/v4/...` and 404.
+
 ## Core Service (requires authentication)
 
 The primary service — contains all business objects and policy.
@@ -31,6 +40,7 @@ Hardware/infrastructure management for the appliance itself.
 | Category | Key Endpoints | Purpose |
 |----------|--------------|---------|
 | Health | /v4/ApplianceStatus, /v4/ApplianceStatus/Health | CPU, memory, disk, overall state |
+| Identity | /v4/Version, /v4/SystemTime | Software version and current appliance time (uptime is derived from these) |
 | Backup & Restore | /v4/Backups, /v4/BackupSettings | Create, schedule, restore backups |
 | Networking | /v4/NetworkInterfaces, /v4/NetworkDiagnostics | Network configuration and diagnostics |
 | Patch | /v4/Patches | Upload, distribute, install patches |
