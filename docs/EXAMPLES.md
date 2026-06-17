@@ -28,6 +28,12 @@ The server maintains multiple connections simultaneously, enabling cross-server 
 
 > Show me what I can do with asset partitions
 
+`Safeguard_Discover` requires at least one narrower (`service=`, `search=`/`query=`, or
+`method=`) — a bare call returns a directive instead of dumping the ~1000-endpoint
+catalog. For "tell me about this appliance" style questions, start with
+`service="Appliance"`; vague status words (`uptime`, `boot`, `system time`,
+`health`, `version`) expand via the synonym map onto the right Appliance endpoints.
+
 ### Learn about request/response format
 
 > What fields are required to create a new asset account?
@@ -139,6 +145,15 @@ details, verify connectivity, and inspect profile configuration.
 > Set up SSH key rotation for the deploy account on all production Linux servers
 
 ## Health & Diagnostics
+
+### Tell me about this appliance
+
+> Tell me about the Safeguard instance I'm connected to — version, uptime, identities, systems
+
+The agent uses `Safeguard_Discover service="Appliance"` to find status/time/version/health
+endpoints, then `Safeguard_Execute` against `/v4/ApplianceStatus`, `/v4/ApplianceStatus/Health`,
+`/v4/Version`, and `/v4/SystemTime`. Vague words like "uptime" or "boot time" expand via
+the terminology map onto the same endpoints.
 
 ### Appliance health check
 

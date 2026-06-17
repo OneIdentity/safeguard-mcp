@@ -136,6 +136,26 @@ public class EndpointPathSuggesterTests
     }
 
     [Fact]
+    public void GetErrorHint_404_ServicePrefixPath_PrioritizesDirectiveOverSuggester()
+    {
+        var ctx = new ErrorContext("Appliance", "GET", "/service/appliance/v4/SystemTime");
+        var hint = ApiToolHelpers.GetErrorHint(
+            statusCode: 404,
+            apiMessage: null,
+            hasModelState: false,
+            ctx,
+            paths: Array.Empty<ApiSchemaPropertyPath>(),
+            requestPath: "/service/appliance/v4/SystemTime",
+            templateMatched: false,
+            pathSuggestions: new[] { "/v4/SystemTime" },
+            supportedMethods: null);
+
+        Assert.Contains("path=\"/v4/SystemTime\"", hint);
+        Assert.Contains("/service/{name}/", hint);
+        Assert.DoesNotContain("Did you mean", hint);
+    }
+
+    [Fact]
     public void GetErrorHint_404_IdNotFound_KeepsExistingWording()
     {
         var ctx = new ErrorContext("Core", "GET", "/v4/Assets/{id}");
