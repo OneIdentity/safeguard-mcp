@@ -32,7 +32,7 @@ public class ToolRegistrationTests
     }
 
     [Fact]
-    public void SafeguardExecute_Description_AdvertisesBulkReflexAndBatchSiblings()
+    public void SafeguardExecute_Description_PointsToBatchGuidance()
     {
         var method = typeof(SafeguardApiTool).GetMethod(
             "Safeguard_Execute",
@@ -40,15 +40,25 @@ public class ToolRegistrationTests
         var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
         Assert.NotNull(description);
-        Assert.Contains("Bulk reflex", description);
-        Assert.Contains("BatchDelete", description);
+        // Bulk/Batch lore was relocated to the common-patterns resource (Stage 2); the
+        // always-on description only points the agent at it via Discover search='Batch'.
+        Assert.Contains("Batch", description);
+        Assert.Contains("Discover", description);
+    }
+
+    [Fact]
+    public void CommonPatternsResource_DocumentsBatchEndpoints()
+    {
+        var content = SafeguardMcp.Catalog.EmbeddedResources.Load("common-patterns.md");
+
+        Assert.Contains("BatchDelete", content);
         // The six resources the appliance exposes Batch* on — confirmed against
         // pangaeaappliance/src/Service/Core/Controllers/**/*Controller_Batch.cs.
-        Assert.Contains("/v4/Assets", description);
-        Assert.Contains("/v4/AssetAccounts", description);
-        Assert.Contains("/v4/Users", description);
-        Assert.Contains("/v4/UserGroups", description);
-        Assert.Contains("/v4/AccountGroups", description);
-        Assert.Contains("/v4/AssetGroups", description);
+        Assert.Contains("Assets", content);
+        Assert.Contains("AssetAccounts", content);
+        Assert.Contains("Users", content);
+        Assert.Contains("UserGroups", content);
+        Assert.Contains("AccountGroups", content);
+        Assert.Contains("AssetGroups", content);
     }
 }

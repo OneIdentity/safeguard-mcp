@@ -25,7 +25,7 @@ internal sealed class SafeguardCloseAccessRequestTool(ISafeguardSession session)
         + "Terminal states (Closed/Complete/Reclaimed) no-op. comment is attached to Cancel/Close/Acknowledge "
         + "(ignored for CheckIn, truncated to 255 chars with a notice). "
         + "Returns { ok, action, request, notices }; allFields=true returns the appliance body verbatim, "
-        + "else a compact field set.")]
+        + "else a compact field set. See safeguard://common-patterns for the full state->action table.")]
     public async Task<string> Safeguard_CloseAccessRequest(
         McpServer server,
         [Description("Database id of the AccessRequest to close. Required. Use Safeguard_Execute "
