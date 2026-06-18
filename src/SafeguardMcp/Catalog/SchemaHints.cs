@@ -75,6 +75,15 @@ public static class SchemaHints
             "Body is a JSON array of account or asset group references: "
             + "[{\"Id\": <accountId>}] or [{\"Id\": <assetGroupId>}].",
 
+        // --- WinRM Transport ---
+        ["UseSslEncryption"] =
+            "WinRM transport selector. Prefer HTTP: set false and use Port 5985. "
+            + "WinRM already encrypts the payload at the message layer via Negotiate/Kerberos, "
+            + "so HTTP is secure for domain-authenticated connections. "
+            + "HTTPS (true, Port 5986) requires a TLS listener with a server certificate that "
+            + "Windows hosts do NOT configure by default, so it commonly fails TestConnection. "
+            + "Only set true when the target has an explicitly provisioned WinRM HTTPS listener.",
+
         // --- Misc ---
         ["NetworkAddress"] =
             "Hostname, IP address, or FQDN of the target system.",
