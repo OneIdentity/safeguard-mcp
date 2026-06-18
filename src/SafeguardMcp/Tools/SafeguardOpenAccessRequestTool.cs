@@ -27,7 +27,8 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
         + "Returns { data, meta }; meta.notices[0].kind names the next step (auto_approved_ready, "
         + "pending_approval_check_back, pending_scheduled, pending_account_action, terminated_before_ready). "
         + "Never auto-launches sessions or echoes credentials. "
-        + "Call GET /v4/Me/RequestEntitlements first to see what you can request.")]
+        + "Call GET /v4/Me/RequestEntitlements first to see what you can request. "
+        + "See safeguard://common-patterns for the notice-kind lifecycle and session-launch convention.")]
     public async Task<string> Safeguard_OpenAccessRequest(
         McpServer server,
         [Description("Database id of the account to request access to. Required. For domain-controller "

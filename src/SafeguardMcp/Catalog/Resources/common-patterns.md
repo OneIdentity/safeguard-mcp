@@ -102,3 +102,71 @@ GET /v4/Me/ActionableRequests     → requests waiting for this user's approval
 GET /v4/Me/AccessRequests         → this user's own access requests
 GET /v4/Me/PersonalPasswords      → personal vault entries
 ```
+
+## Response Envelope, Paging & Formats
+
+`Safeguard_Execute` returns JSON as a `{ data, meta }` envelope:
+
+- `data` — the actual API payload (read this, not the envelope root).
+- `meta.notices[]` — applied auto-limit, paging hints, truncation events, workflow suggestions.
+- `meta.paging` — `{ page, limit, returned, more, next }`; follow `meta.paging.next` for the next page.
+
+Responses are capped at ~30 KB. For fat endpoints (audit logs, Assets, AssetAccounts) project with
+`fields=` or page via `meta.paging.next` rather than fetching everything.
+
+`format=csv` is GET-only (tabular, smaller for large reads); non-GET methods must use `format=json`
+(the tool rejects `format=csv` on writes with an error).
+
+## Access Requests — Open Lifecycle
+
+`Safeguard_OpenAccessRequest` pre-validates the (account, asset, type) combo against
+`/v4/Me/RequestEntitlements`, then waits up to 5s for auto-approval. Exactly one `meta.notices[0].kind`
+names the next step (branch on this, not the raw `State`):
+
+| Notice kind | Meaning / next step |
+|---|---|
+| `auto_approved_ready` | Ready now — call Safeguard_RetrieveCredential, or POST .../InitializeSession |
+| `pending_approval_check_back` | Human approval needed (can take hours); poll GET /v4/AccessRequests/{id} |
+| `pending_scheduled` | Approved but waiting for the RequestedFor time |
+| `pending_account_action` | Appliance is elevating/restoring the account (usually < 1 min) |
+| `terminated_before_ready` | Terminated/Expired/Closed/Complete — submit a fresh request if still needed |
+
+After a successful POST .../InitializeSession the response carries a
+`session_token_issued_offer_to_launch` notice: **present** the manual launch command and ConnectionUri
+AND explicitly offer to launch on the user's behalf (with the request id for later check-in). Never
+auto-launch; never omit the offer. The credential is injected at the proxy and never enters agent context.
+
+## Access Requests — Close Dispatch
+
+`Safeguard_CloseAccessRequest` looks up the request first (a 404 means you neither own it nor are a
+policy admin), then dispatches automatically by `State`. Requester-path action per state:
+
+| State | Requester action |
+|---|---|
+| New, PendingApproval, Approved, PendingTimeRequested, RequestAvailable, PendingAccountRestored, PendingPasswordReset | Cancel |
+| PasswordCheckedOut, SshKeyCheckedOut, SessionInitialized | CheckIn |
+| Expired, PendingAcknowledgment | Acknowledge |
+| RequestCheckedIn, Terminated, PendingReview, PendingAccountSuspended, PendingAccountDemoted | needs PolicyAdmin (requester gets a diagnostic) |
+| Closed, Complete, Reclaimed | no-op (terminal) |
+
+A PolicyAdmin acting on someone else's request (or on a needs-admin row) dispatches **Close** from any
+non-terminal state. `comment` is attached to Cancel/Close/Acknowledge (ignored for CheckIn, truncated to
+255 chars with a notice). Response is `{ ok, action, request, notices }`; `allFields=true` returns the
+appliance body verbatim.
+
+## Sensitive Credential Material
+
+Passwords, SSH private keys, API client/secret history, TOTP codes, generated passwords,
+personal-account passwords/history, and secure-file content are **not** callable via `Safeguard_Execute`
+— it refuses and redirects (a `sensitive_endpoint_redirected` envelope naming the matching kind).
+Use `Safeguard_RetrieveCredential` (kinds: access-request-password, access-request-ssh-key,
+access-request-api-key, access-request-totp, access-request-file, personal-account-password,
+personal-account-password-history, personal-account-totp, generated-password,
+asset-account-api-secret-history). It returns a two-block response: block 1 (assistant) is metadata
+only; block 2 (user) carries the plaintext.
+
+For managed-account passwords without retrieving plaintext:
+- Rotate per partition rule and push to the asset: `POST /v4/AssetAccounts/{id}/ChangePassword` (no body).
+- Generate a rule-compliant value out of band: `POST /v4/AssetAccounts/{id}/GeneratePassword` (no body).
+- Set a known value: `PUT /v4/AssetAccounts/{id}/Password` (body = value).
+Never mint passwords client-side — it bypasses the password rule and leaks plaintext.
