@@ -308,7 +308,7 @@ internal static class EvalCases
             Description = "Workflow gap: 'recent activity / who used the appliance' has no recipe.",
             OwningArea = "discovery-terminology, open-access-request",
             Mode = ReproMode.Placeholder,
-            PlaceholderNote = "When the recipe lands, assert Safeguard_Workflows('recent activity') returns it.",
+            PlaceholderNote = "When the recipe lands, assert Safeguard_Reference topic=workflows search='recent activity' returns it.",
         },
         new EvalCase {
             Id = "E035",

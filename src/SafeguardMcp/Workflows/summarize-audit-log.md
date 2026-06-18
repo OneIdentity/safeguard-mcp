@@ -49,7 +49,7 @@ Steps:
      explicitly just to drop the heavy `OldValue` / `NewValue` snapshots --
      the list-style ObjectChanges routes already default-project them out
      (see the ObjectChanges default-projection note in
-     `Safeguard_QueryHelp`). Only override `fields=` if you want a
+     `Safeguard_Reference topic=query-syntax`). Only override `fields=` if you want a
      narrower or wider projection than that default.
 4. Page through the rows:
    - `page=0&limit=200`, then `page=1&limit=200`, etc., until a page comes

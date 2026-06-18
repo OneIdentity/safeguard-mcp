@@ -88,10 +88,13 @@
   ],
   "tools": [
     "Safeguard_Connect",
+    "Safeguard_Disconnect",
     "Safeguard_Discover",
     "Safeguard_Schema",
-    "Safeguard_QueryHelp",
-    "Safeguard_Workflows",
-    "Safeguard_Execute"
+    "Safeguard_Reference",
+    "Safeguard_Execute",
+    "Safeguard_OpenAccessRequest",
+    "Safeguard_CloseAccessRequest",
+    "Safeguard_RetrieveCredential"
   ]
 }

@@ -45,11 +45,9 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Connect", Title = "Connect to Safeguard",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Authenticate to the configured Safeguard appliance. "
-        + "In stdio mode this runs a device-code (or PKCE) login the first time and caches the connection. "
-        + "In HTTP mode this is OPTIONAL — every tool already executes against the appliance using the request "
-        + "`Authorization: Bearer` header; calling this tool just verifies the bearer and returns the principal "
-        + "(display name, identity provider, token expiry).")]
+    [Description("Authenticate to the Safeguard appliance and return the principal "
+        + "(name, identity provider, token expiry). Optional in HTTP mode, where every tool "
+        + "already executes against the appliance using the request bearer.")]
     public async Task<string> Safeguard_Connect(McpServer server, CancellationToken ct = default)
     {
         await session.EnsureReadyAsync(server, ct);
@@ -59,10 +57,8 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Disconnect", Title = "Disconnect from Safeguard",
         ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = true)]
-    [Description("Log out of the current Safeguard session. In stdio mode drops the cached connection. "
-        + "In HTTP mode posts to /service/core/v4/Token/Logout with the request bearer. "
-        + "WARNING: This invalidates the bearer for any client config still holding it; remove the token "
-        + "from your MCP client configuration after calling this.")]
+    [Description("Log out of the current Safeguard session and invalidate the bearer at the appliance. "
+        + "WARNING: any MCP client config still holding that bearer must drop it after this call.")]
     public async Task<string> Safeguard_Disconnect(CancellationToken ct = default)
     {
         if (!session.HasCredentials)
@@ -100,21 +96,16 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Discover", Title = "Discover Safeguard API Endpoints",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Search the Safeguard API catalog. Default emits one line per endpoint (method/path/summary). "
-        + "At least one narrower is required — pass service=, search= (or its query= alias), or method=. "
-        + "A bare call with no narrowers returns a directive listing examples instead of dumping the full ~1000-endpoint catalog. "
-        + "Set verbose=true after narrowing to inspect query-parameter details. "
-        + "Recipe matches are listed first. Batch* endpoints are returned next to their per-id siblings; "
-        + "consider both before fan-firing. Use this to find the right endpoint before calling Safeguard_Execute.")]
+    [Description("Find Safeguard API endpoints before calling Safeguard_Execute. Requires at least one "
+        + "narrower (service=, search=/query=, or method=); a bare call returns usage examples instead of "
+        + "the full catalog. Set verbose=true to include per-endpoint query-parameter detail. "
+        + "Recipe matches and Batch* siblings are listed alongside results.")]
     public string Safeguard_Discover(
-        [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. "
-            + "Use 'Appliance' for status, time, version, and health endpoints. Omit to search all services.")] string service = null,
-        [Description("Text to search for in endpoint paths and summaries (case-insensitive). "
-            + "Synonyms expand the search — e.g. 'uptime' also matches 'ApplianceStatus' and 'SystemTime'.")] string search = null,
+        [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all.")] string service = null,
+        [Description("Text to match in endpoint paths and summaries (case-insensitive; synonyms expand the search).")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null,
-        [Description("Alias for search=. Some clients call this parameter 'query'; both map to the same behavior.")] string query = null,
-        [Description("Include per-endpoint query parameter details (defaults, accepted values). "
-            + "Default false returns one line per endpoint; set true after narrowing the search to inspect parameter details.")] bool verbose = false)
+        [Description("Alias for search=.")] string query = null,
+        [Description("Include per-endpoint query-parameter detail. Default false; set true after narrowing.")] bool verbose = false)
     {
         var (effectiveSearch, aliasNotice) = ResolveDiscoverSearch(search, query);
         var body = FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, effectiveSearch, method, verbose);
@@ -418,7 +409,7 @@ internal sealed class SafeguardApiTool
         {
             sb.Append("Strong recipe match: ").Append(strong.Recipe.Id)
                 .Append(" -- ").AppendLine(strong.Recipe.Name);
-            sb.Append("  Call: Safeguard_Workflows id=\"").Append(strong.Recipe.Id).AppendLine("\"");
+            sb.Append("  Call: Safeguard_Reference topic=workflows id=\"").Append(strong.Recipe.Id).AppendLine("\"");
             if (!string.IsNullOrWhiteSpace(strong.Recipe.Tool))
             {
                 sb.Append("  Or call the composite tool directly: ")
@@ -427,7 +418,7 @@ internal sealed class SafeguardApiTool
             sb.AppendLine();
         }
 
-        sb.AppendLine("Recipes that match (call Safeguard_Workflows id=\"<id>\"):");
+        sb.AppendLine("Recipes that match (call Safeguard_Reference topic=workflows id=\"<id>\"):");
         foreach (var match in matches)
         {
             sb.Append("  ").Append(match.Recipe.Id.PadRight(28))
@@ -446,42 +437,32 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Execute", Title = "Execute Safeguard API",
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("Execute any Safeguard API endpoint. The service (Core, Appliance, Notification) "
-        + "is automatically determined from the endpoint path. "
-        + "Paths must start with /v4/...; do not include a /service/{name}/ prefix — the tool prepends that for you. "
-        + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format. "
-        + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json. "
-        + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
-        + "always read the data field for the actual API payload, and meta.notices for applied auto-limit / paging hints / truncation events. "
-        + "Responses are capped at ~30 KB; for fat endpoints (audit logs, Assets, AssetAccounts) "
-        + "use fields= to project, or follow meta.paging.next to fetch the next page. "
-        + "Bulk reflex: before issuing DELETE / POST / PUT against the same top-level collection more "
-        + "than ~5 times in a row, check for a Batch* sibling. POST /v4/{Resource}/BatchCreate, "
-        + "/BatchUpdate, /BatchDelete take a JSON-array body. The appliance currently exposes Batch* on "
-        + "/v4/Assets, /v4/AssetAccounts, /v4/Users, /v4/UserGroups, /v4/AccountGroups, /v4/AssetGroups. "
-        + "Use Safeguard_Discover with search='Batch' to see all Batch* endpoints. The bulk path also "
-        + "returns per-row failure detail in one response, which is faster to triage than N parallel "
-        + "error envelopes.")]
+    [Description("Call any Safeguard API endpoint. Path must start with /v4/...; the service "
+        + "(Core/Appliance/Notification) is auto-detected — do not add a /service/{name}/ prefix. "
+        + "Use Safeguard_Discover to find endpoints and Safeguard_Schema for request-body shape. "
+        + "JSON responses are a { data, meta } envelope (meta carries notices, paging, truncation); "
+        + "responses are capped (~30 KB), so project with fields= or page via meta.paging.next. "
+        + "For repeated writes to one collection, check for a Batch* sibling (Discover search='Batch'). "
+        + "Sensitive credential endpoints are not callable here — they refuse-and-redirect to "
+        + "Safeguard_RetrieveCredential.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
-        [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). Must start with /v4/...; do not include a /service/{name}/ prefix. The correct service is auto-detected from the path.")] string path,
+        [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
         [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
-        [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets). GET-only — non-GET methods must use 'json'.")]
+        [Description("Response format: 'json' (default) or 'csv' (GET-only, tabular).")]
         string format = "json",
         CancellationToken ct = default)
         => await DispatchAsync(server, method, path, query, body, format, ct);
 
     [McpServerTool(Name = "Safeguard_Schema", Title = "Get API Schema",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get the request body schema and response schema for a Safeguard API endpoint. "
-        + "Returns property names, types, required fields, and descriptions. "
-        + "Use this before POST or PUT calls to understand the JSON body format. "
-        + "Set depth>1 (max 3) to expand nested object/array properties one or more levels.")]
+    [Description("Get the request-body and response schema (property names, types, required fields) for an "
+        + "endpoint. Call before POST or PUT. Set depth (max 3) to expand nested object/array properties.")]
     public string Safeguard_Schema(
-        [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users'). Must start with /v4/...; do not include a /service/{name}/ prefix.")] string path,
+        [Description("API path, e.g. '/v4/AssetAccounts'. Must start with /v4/... (no /service/{name}/ prefix).")] string path,
         [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST",
-        [Description("How many levels deep to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
+        [Description("Levels to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/AssetAccounts').");
@@ -611,143 +592,94 @@ internal sealed class SafeguardApiTool
         return false;
     }
 
-    [McpServerTool(Name = "Safeguard_QueryHelp", Title = "Safeguard Query Syntax",
+    [McpServerTool(Name = "Safeguard_Reference", Title = "Safeguard Reference",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get help with Safeguard API query parameters: filter syntax, operators, "
-        + "field selection, ordering, and pagination.")]
-    public string Safeguard_QueryHelp(
-        [Description("Optional endpoint path to show filterable fields for.")] string path = null)
+    [Description("On-demand Safeguard reference. topic = query-syntax | workflows | enum | "
+        + "terminology | overview | common-patterns (omit to list them). For doc topics, pass "
+        + "search= to return only the matching section instead of the whole document.")]
+    public string Safeguard_Reference(
+        [Description("Reference source (see tool description). Omit to list topics.")]
+        string topic = null,
+        [Description("Keyword filter. Doc topics return just the matching section; workflows filters recipes.")]
+        string search = null,
+        [Description("workflows: exact recipe id (e.g. 'health-check').")]
+        string id = null,
+        [Description("enum: schema name (e.g. 'AccessRequestType'). Omit to list enum names.")]
+        string name = null,
+        [Description("enum: case-insensitive substring filter for long value lists.")]
+        string pattern = null,
+        [Description("query-syntax: endpoint path to list its live filterable fields.")]
+        string path = null,
+        [Description("enum: maximum values to return. Default 50.")]
+        int limit = 50)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("Safeguard query syntax:")
-            .AppendLine("  Filter operators: eq, ne, gt, ge, lt, le, contains, icontains, ieq, sw, isw, ew, iew, in [...]")
-            .AppendLine("  Operators are case-insensitive; string literals are case-sensitive (use ieq/icontains/isw/iew for case-insensitive text)")
-            .AppendLine("  String values use single quotes: filter=Name eq 'Admin'")
-            .AppendLine("  Null literal: filter=Description eq null  /  filter=Description ne null")
-            .AppendLine("  Combine expressions with and, or, not, and parentheses")
-            .AppendLine("  No 'not_in' / 'not in' operator: use filter=not (Id in [1,2,3])")
-            .AppendLine("  Collections expose synthetic .Count for filter/orderby: filter=ScopeItems.Count gt 0")
-            .AppendLine("  Nested properties: filter=TaskProperties.HasAccountTaskFailure eq true")
-            .AppendLine("  Relationships: parents are nested objects, NOT flat FK columns.")
-            .AppendLine("    To-one is dottable: fields=Asset.Id,Asset.Name (NOT AssetId/AssetName).")
-            .AppendLine("    To-many is NOT dottable: use child endpoint GET /v4/<parent>/{id}/<collection>")
-            .AppendLine("      (e.g. /v4/AssetPartitions/{id}/Profiles, NOT fields=Profiles.Id).")
-            .AppendLine("    Schema labels: object<Type> = to-one (dottable); array<Type> = to-many (use child path).")
-            .AppendLine("  Field selection: fields=Id,Name,Description")
-            .AppendLine("  Exclude fields: fields=-TaskProperties,-Platform")
-            .AppendLine("  ObjectChanges default: on /v4/AuditLog/ObjectChanges list-style routes "
-                + "(collection, by-type, by-type+by-id) fields= defaults to '-OldValue,-NewValue' so the "
-                + "full-entity JSON-string snapshots are dropped and the structured Changes[] diff is "
-                + "retained; add OldValue or NewValue to your own fields= list to include the snapshots, "
-                + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view.")
-            .AppendLine("  Ordering: orderby=Name or orderby=-CreatedDate")
-            .AppendLine("  Multiple order fields: orderby=Name,-CreatedDate")
-            .AppendLine("  NOTE: Not OData. Use -Field for descending; 'Name desc' or 'Name asc' returns HTTP 400.")
-            .AppendLine("  Pagination: page=0&limit=50 (page is 0-indexed)")
-            .AppendLine("  Quick search: q=searchterm")
-            .AppendLine("  Count only: count=true")
-            .AppendLine()
-            .AppendLine("Aggregation and summarization:")
-            .AppendLine("  count=true returns just the row count for any collection endpoint -- the response body")
-            .AppendLine("    is a bare JSON integer (e.g. 52), not an object or array. Pair with filter= for")
-            .AppendLine("    scoped counts (per partition, per requester, per time window). See workflow recipe:")
-            .AppendLine("    count-with-filter.")
-            .AppendLine("  Group-by / distinct-values has NO server-side aggregation: no groupBy=, no distinct=,")
-            .AppendLine("    no aggregate= parameter exists. For per-group counts, page filtered rows and tally")
-            .AppendLine("    in agent context (recipe: summarize-audit-log). For per-time-bucket counts, issue N")
-            .AppendLine("    count=true calls one per bucket (recipe: time-bucketed-counts).")
-            .AppendLine()
-            .AppendLine("Examples:")
-            .AppendLine("  fields=Id,Name&filter=Name icontains 'admin'&orderby=Name&page=0&limit=25")
-            .AppendLine("  filter=(Disabled eq false) and (Platform.DisplayName eq 'Windows')")
-            .AppendLine("  filter=Id in [1,2,3]")
-            .AppendLine()
-            .AppendLine("Reports vs direct queries:")
-            .AppendLine("  /v4/Reports/* aggregates across the whole estate and can be slow on large deployments.")
-            .AppendLine("  Prefer direct entity queries for narrow questions:")
-            .AppendLine("    Who is in role X?            -> GET /v4/Roles/{id}/Members")
-            .AppendLine("    What policies does role X have?-> GET /v4/Roles/{id}/Policies")
-            .AppendLine("    Which roles is user Y in?    -> GET /v4/Users/{id}/Roles")
-            .AppendLine("  Use Reports only for estate-wide aggregates (e.g. \"every user-account pair\").")
-            .AppendLine("  Reports endpoints have their own field schemas - call Safeguard_Schema on the report path first.")
-            .AppendLine()
-            .AppendLine("Sensitive credential material:")
-            .AppendLine("  Passwords, SSH private keys, A2A secrets, API client secrets, API key history, TOTP codes,")
-            .AppendLine("  generated passwords, personal-account password history, and secure-file content are all sensitive.")
-            .AppendLine("  These endpoints are NOT callable via Safeguard_Execute. Use Safeguard_RetrieveCredential")
-            .AppendLine("  (kinds: access-request-password, access-request-ssh-key, access-request-api-key,")
-            .AppendLine("  access-request-totp, access-request-file, personal-account-password,")
-            .AppendLine("  personal-account-password-history, personal-account-totp, generated-password,")
-            .AppendLine("  asset-account-api-secret-history). Calling those paths via Safeguard_Execute returns a")
-            .AppendLine("  structured sensitive_endpoint_redirected envelope naming the matching Safeguard_RetrieveCredential")
-            .AppendLine("  kind and arguments — lift data.next_call into a follow-up tool invocation.")
-            .AppendLine("  Safeguard_RetrieveCredential emits a two-block MCP response: block 1 (audience=assistant) is")
-            .AppendLine("  metadata only; block 2 (audience=user) carries the plaintext. The audience annotation is a")
-            .AppendLine("  forward-looking hint — hosts MAY use it to route the user block to a secure pane separate")
-            .AppendLine("  from the assistant's transcript, but the spec does not require it; treat block 2 as")
-            .AppendLine("  potentially visible to the model and rely on appliance audit + rotation as the authoritative")
-            .AppendLine("  controls.")
-            .AppendLine("  Setting/rotating a password on a managed account: POST /v4/AssetAccounts/{id}/ChangePassword (no body)")
-            .AppendLine("    -> Safeguard generates per partition rule, pushes to asset, NO plaintext returned. Parallelize by id.")
-            .AppendLine("  Generating a rule-compliant value out of band: POST /v4/AssetAccounts/{id}/GeneratePassword (no body)")
-            .AppendLine("  Setting a known value: PUT /v4/AssetAccounts/{id}/Password (body = value)")
-            .AppendLine("  Do NOT mint passwords client-side (Get-Random, pwgen, LLM) - bypasses the password rule and leaks plaintext.")
-            .AppendLine("  See workflow recipe: set-initial-account-password.")
-            .AppendLine()
-            .AppendLine("Access requests:")
-            .AppendLine("  Safeguard_OpenAccessRequest submits the request and briefly waits up to 5 seconds for auto-approval,")
-            .AppendLine("  then returns a structured envelope: data = the access-request JSON, meta.notices = exactly one notice")
-            .AppendLine("  describing the outcome. Notice kinds: auto_approved_ready (call Safeguard_RetrieveCredential or POST")
-            .AppendLine("  .../InitializeSession now), pending_approval_check_back (human approval needed; can take hours, check")
-            .AppendLine("  back via Safeguard_Execute GET /v4/AccessRequests/{id}), pending_scheduled (approved but waiting for")
-            .AppendLine("  RequestedFor), pending_account_action (appliance is elevating/restoring; usually under a minute),")
-            .AppendLine("  terminated_before_ready (Terminated/Expired/Closed/Complete — submit a fresh request if applicable).")
-            .AppendLine("  Read data.State directly; do not parse the notice text. The tool never waits longer than 5 seconds;")
-            .AppendLine("  for longer waits, the agent polls Safeguard_Execute GET /v4/AccessRequests/{id} itself.");
+        switch (topic?.Trim().ToLowerInvariant())
+        {
+            case null or "":
+                return ReferenceTopicIndex();
+            case "query-syntax" or "query" or "filter":
+                return QuerySyntaxReference(search, path);
+            case "workflows" or "workflow" or "recipes":
+                return SafeguardWorkflows.Lookup(search, id);
+            case "enum" or "enums":
+                return EnumLookup(name, pattern, limit);
+            case "terminology" or "terms":
+                return MarkdownSections.Select("terminology.md", "terminology", search);
+            case "overview" or "api-overview":
+                return MarkdownSections.Select("api-overview.md", "overview", search);
+            case "common-patterns" or "patterns":
+                return MarkdownSections.Select("common-patterns.md", "common-patterns", search);
+            default:
+                return $"Unknown topic '{topic}'.\n\n" + ReferenceTopicIndex();
+        }
+    }
 
+    private static string ReferenceTopicIndex() =>
+        "Safeguard_Reference topics (set topic=):\n"
+        + "  query-syntax     filter/field/order/paging rules (path= for an endpoint's live fields)\n"
+        + "  workflows        multi-step recipes (search= to find, id= for one)\n"
+        + "  enum             allowed values for an enum schema (name=, pattern=, limit=)\n"
+        + "  terminology      UI/product term -> API endpoint\n"
+        + "  overview         API surface overview\n"
+        + "  common-patterns  lookup-by-name, bulk ops, access-request lifecycle, sensitive material\n"
+        + "Pass search=\"<keyword>\" on a doc topic to get only the matching section.";
+
+    private string QuerySyntaxReference(string search, string path)
+    {
         if (string.IsNullOrWhiteSpace(path))
-            return sb.ToString().TrimEnd();
+            return MarkdownSections.Select("query-syntax.md", "query-syntax", search);
 
+        var sb = new StringBuilder();
         if (ApiToolHelpers.TryDetectServicePrefix(path, out var strippedPath, out var detectedService))
         {
-            return ApiToolHelpers.BuildServicePrefixDirective(path, strippedPath, detectedService)
-                + "\n\n" + sb.ToString().TrimEnd();
-        }
-
-        var normalizedPath = NormalizePath(path);
-        var service = ResolveService(normalizedPath);
-        var serviceName = GetServiceName(service);
-        var schema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath)
-            ?? catalogProvider.GetSchema("GET", serviceName, normalizedPath);
-
-        if (schema != null && schema.Value.Properties.Length > 0)
-        {
-            var propertyNames = schema.Value.Properties.Select(p => p.Name).ToArray();
-            sb.AppendLine()
-                .Append("Top-level fields for ").Append(normalizedPath).Append(" (").Append(serviceName).AppendLine("):")
-                .Append("  ").Append(string.Join(", ", propertyNames));
+            sb.AppendLine(ApiToolHelpers.BuildServicePrefixDirective(path, strippedPath, detectedService));
         }
         else
         {
-            sb.AppendLine()
-                .Append("No schema field list is available for ").Append(normalizedPath).Append('.');
+            var normalizedPath = NormalizePath(path);
+            var service = ResolveService(normalizedPath);
+            var serviceName = GetServiceName(service);
+            var schema = catalogProvider.GetResponseSchema("GET", serviceName, normalizedPath)
+                ?? catalogProvider.GetSchema("GET", serviceName, normalizedPath);
+
+            if (schema != null && schema.Value.Properties.Length > 0)
+            {
+                var propertyNames = schema.Value.Properties.Select(p => p.Name).ToArray();
+                sb.Append("Top-level fields for ").Append(normalizedPath).Append(" (").Append(serviceName).AppendLine("):")
+                    .Append("  ").AppendLine(string.Join(", ", propertyNames));
+            }
+            else
+            {
+                sb.Append("No schema field list is available for ").Append(normalizedPath).AppendLine(".");
+            }
         }
 
+        sb.AppendLine()
+            .Append("For filter/field/order/paging rules call Safeguard_Reference topic=query-syntax search=\"<keyword>\".");
         return sb.ToString().TrimEnd();
     }
 
-    [McpServerTool(Name = "Safeguard_Enum", Title = "Get Enum Values",
-        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("List the allowed values for a Safeguard enum schema (e.g. 'AccessRequestType', "
-        + "'EventName', 'ScheduleType'). Call without arguments to list all known enum names. "
-        + "Use this to resolve enum<...>-typed properties surfaced by Safeguard_Schema, especially "
-        + "for the high-cardinality ones (EventName has 600+ values) that are not inlined.")]
-    public string Safeguard_Enum(
-        [Description("Enum schema name (case-insensitive). Omit to list all known enum names.")]
-        string name = null,
-        [Description("Optional case-insensitive substring filter to narrow long lists.")]
-        string pattern = null,
-        [Description("Maximum values to return. Default 50.")] int limit = 50)
+    private string EnumLookup(string name, string pattern, int limit)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -761,7 +693,7 @@ internal sealed class SafeguardApiTool
             sb0.Append(names.Count).AppendLine(" enum(s) available:");
             foreach (var n in names)
                 sb0.Append("  ").AppendLine(n);
-            sb0.AppendLine().AppendLine("Call Safeguard_Enum name=\"<Name>\" to see allowed values.");
+            sb0.AppendLine().AppendLine("Call Safeguard_Reference topic=enum name=\"<Name>\" to see allowed values.");
             return sb0.ToString().TrimEnd();
         }
 
@@ -769,7 +701,7 @@ internal sealed class SafeguardApiTool
         if (values == null)
         {
             return $"No enum named '{name}' is available. "
-                + "Call Safeguard_Enum (no args) to list known enum names. "
+                + "Call Safeguard_Reference topic=enum (no name) to list known enum names. "
                 + "Names are case-insensitive but must match a swagger schema name exactly.";
         }
 
@@ -1107,7 +1039,7 @@ internal sealed class SafeguardApiTool
 
         var suggestion = verb == "POST" && segments.Length == 2
             ? "Safeguard_OpenAccessRequest performs the pre-flight entitlement check and submits the request in one call."
-            : "Use Safeguard_Workflows id=\"session-access-request\" for the full launch workflow.";
+            : "Use Safeguard_Reference topic=workflows id=\"session-access-request\" for the full launch workflow.";
 
         return new Notice(
             NoticeKinds.WorkflowRecipeSuggested,
@@ -1876,7 +1808,7 @@ internal sealed class SafeguardApiTool
     }
 
     // Inlines enum vocabularies up to this many values; beyond that, prints a pointer to
-    // Safeguard_Enum so the agent can fetch the full list explicitly. Matches the threshold
+    // Safeguard_Reference topic=enum so the agent can fetch the full list explicitly. Matches the threshold
     // recommended by the live-swagger inventory (134 enums; 8 exceed 30 values).
     private const int InlineEnumValueThreshold = 30;
 
@@ -1887,7 +1819,7 @@ internal sealed class SafeguardApiTool
             sb.Append(" - ").Append(property.Description.Trim());
         sb.AppendLine();
 
-        // Enum vocabularies: inline up to N values, otherwise point at Safeguard_Enum.
+        // Enum vocabularies: inline up to N values, otherwise point at Safeguard_Reference topic=enum.
         if (!string.IsNullOrEmpty(property.EnumName) && catalog != null)
         {
             var values = catalog.GetEnum(property.EnumName);
@@ -1901,7 +1833,7 @@ internal sealed class SafeguardApiTool
                 {
                     sb.Append(' ', indent + 2)
                         .Append("Allowed: ").Append(values.Length)
-                        .Append(" values — call Safeguard_Enum name=\"").Append(property.EnumName).AppendLine("\".");
+                        .Append(" values — call Safeguard_Reference topic=enum name=\"").Append(property.EnumName).AppendLine("\".");
                 }
             }
         }

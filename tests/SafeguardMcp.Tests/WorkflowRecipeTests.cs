@@ -7,8 +7,7 @@ public class WorkflowRecipeTests
     [Fact]
     public void Workflows_ListsAllRecipes()
     {
-        var tool = new SafeguardWorkflows();
-        var result = tool.Safeguard_Workflows();
+        var result = SafeguardWorkflows.Lookup(null, null);
 
         // Should contain the listing header
         Assert.Contains("Available Safeguard workflows", result);
@@ -30,8 +29,7 @@ public class WorkflowRecipeTests
     [InlineData("time-bucketed-counts")]
     public void Workflows_GetById_ReturnsContent(string id)
     {
-        var tool = new SafeguardWorkflows();
-        var result = tool.Safeguard_Workflows(id: id);
+        var result = SafeguardWorkflows.Lookup(null, id);
 
         // Should NOT contain the "not found" message
         Assert.DoesNotContain("was not found", result);
@@ -42,8 +40,7 @@ public class WorkflowRecipeTests
     [Fact]
     public void Workflows_GetById_NotFound_ReturnsHelpfulMessage()
     {
-        var tool = new SafeguardWorkflows();
-        var result = tool.Safeguard_Workflows(id: "nonexistent-workflow-xyz");
+        var result = SafeguardWorkflows.Lookup(null, "nonexistent-workflow-xyz");
 
         Assert.Contains("was not found", result);
         Assert.Contains("list available workflow IDs", result);
@@ -66,8 +63,7 @@ public class WorkflowRecipeTests
     [InlineData("trend", "time-bucketed-counts")]
     public void Workflows_Search_FindsMatchingRecipes(string search, string expectedInResult)
     {
-        var tool = new SafeguardWorkflows();
-        var result = tool.Safeguard_Workflows(search: search);
+        var result = SafeguardWorkflows.Lookup(search, null);
 
         Assert.Contains(expectedInResult, result, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("No workflows matched", result);
@@ -76,8 +72,7 @@ public class WorkflowRecipeTests
     [Fact]
     public void Workflows_Search_NoMatch_ReturnsHelpfulMessage()
     {
-        var tool = new SafeguardWorkflows();
-        var result = tool.Safeguard_Workflows(search: "zzz_nonexistent_topic_zzz");
+        var result = SafeguardWorkflows.Lookup("zzz_nonexistent_topic_zzz", null);
 
         Assert.Contains("No workflows matched", result);
     }

@@ -65,7 +65,7 @@ internal static class OpenAccessRequestPlanner
     /// Closed set of <c>AccessRequestType</c> values the appliance accepts
     /// on <c>POST /v4/AccessRequests</c>. Mirrors the
     /// <c>AccessRequestType</c> enum on PangaeaAppliance; kept in lock-step
-    /// with <c>Safeguard_Enum name="AccessRequestType"</c>.
+    /// with <c>Safeguard_Reference topic=enum name="AccessRequestType"</c>.
     /// </summary>
     internal static readonly string[] KnownAccessRequestTypes =
     [
@@ -101,7 +101,7 @@ internal static class OpenAccessRequestPlanner
         if (string.IsNullOrWhiteSpace(inputs.AccessRequestType))
         {
             errors.Add("accessRequestType is required (e.g. 'Password', 'RemoteDesktop', 'Ssh'). "
-                + "Use Safeguard_Enum name=\"AccessRequestType\" to list valid values.");
+                + "Use Safeguard_Reference topic=enum name=\"AccessRequestType\" to list valid values.");
         }
         else if (!IsKnownAccessRequestType(inputs.AccessRequestType))
         {

@@ -20,25 +20,15 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
 {
     [McpServerTool(Name = "Safeguard_OpenAccessRequest", Title = "Open Safeguard Access Request",
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("Submit a Safeguard access request after pre-validating the (account, asset, type) "
-        + "combination against /v4/Me/RequestEntitlements. Catches the wrong-asset / wrong-type case "
-        + "(appliance error 90408 'not authorized to use this request type') before any write hits the "
-        + "appliance, so the agent never sees the misleading 'not authorized' message when the real "
-        + "fault is that the policy is scoped to a different asset. "
-        + "After submission, this tool briefly waits up to 5 seconds for auto-approval so the common "
-        + "case (single-approver-self, no-approval, emergency) returns a usable request in one call; "
-        + "for policies requiring human approval it returns immediately with guidance to check back "
-        + "later (human approval can take hours). "
-        + "Returns a structured envelope { data: <access-request JSON>, meta: { notices: [<one notice>] } }; "
-        + "the notice kind names the next call (auto_approved_ready, pending_approval_check_back, "
-        + "pending_scheduled, pending_account_action, or terminated_before_ready). "
-        + "Does NOT auto-launch sessions or echo credentials. "
-        + "On a successful POST .../InitializeSession the response carries a "
-        + "session_token_issued_offer_to_launch notice that names the present-with-offer convention "
-        + "(show the manual launch command and ConnectionUri AND ask 'Want me to launch it for you?' "
-        + "with the request id for later check-in). Honor it: never auto-launch and never omit the offer. "
-        + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to discover what you can "
-        + "request before calling this tool.")]
+    [Description("Submit a Safeguard access request, pre-validating the (account, asset, type) combination "
+        + "against /v4/Me/RequestEntitlements so a policy scoped to a different asset fails fast instead of "
+        + "returning the misleading 90408 'not authorized'. Waits up to 5s for auto-approval so common cases "
+        + "(self-approve, no-approval, emergency) return ready in one call; otherwise returns immediately. "
+        + "Returns { data, meta }; meta.notices[0].kind names the next step (auto_approved_ready, "
+        + "pending_approval_check_back, pending_scheduled, pending_account_action, terminated_before_ready). "
+        + "Never auto-launches sessions or echoes credentials. "
+        + "Call GET /v4/Me/RequestEntitlements first to see what you can request. "
+        + "See safeguard://common-patterns for the notice-kind lifecycle and session-launch convention.")]
     public async Task<string> Safeguard_OpenAccessRequest(
         McpServer server,
         [Description("Database id of the account to request access to. Required. For domain-controller "
@@ -46,7 +36,7 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
         int accountId,
         [Description("AccessRequestType: Password, RemoteDesktop, Ssh, Telnet, SshKey, "
             + "RemoteDesktopApplication, ApiKey, or File. Required. Case-insensitive; canonicalized "
-            + "before submission. Use Safeguard_Enum name=\"AccessRequestType\" to list values.")]
+            + "before submission. Use Safeguard_Reference topic=enum name=\"AccessRequestType\" to list values.")]
         string accessRequestType,
         [Description("Database id of the asset. Optional: when omitted and the (account, type) pair has "
             + "exactly one entitlement, the tool infers it; if there are multiple entitlements the tool "
