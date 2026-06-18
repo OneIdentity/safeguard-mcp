@@ -45,11 +45,9 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Connect", Title = "Connect to Safeguard",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("Authenticate to the configured Safeguard appliance. "
-        + "In stdio mode this runs a device-code (or PKCE) login the first time and caches the connection. "
-        + "In HTTP mode this is OPTIONAL — every tool already executes against the appliance using the request "
-        + "`Authorization: Bearer` header; calling this tool just verifies the bearer and returns the principal "
-        + "(display name, identity provider, token expiry).")]
+    [Description("Authenticate to the Safeguard appliance and return the principal "
+        + "(name, identity provider, token expiry). Optional in HTTP mode, where every tool "
+        + "already executes against the appliance using the request bearer.")]
     public async Task<string> Safeguard_Connect(McpServer server, CancellationToken ct = default)
     {
         await session.EnsureReadyAsync(server, ct);
@@ -59,10 +57,8 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Disconnect", Title = "Disconnect from Safeguard",
         ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = true)]
-    [Description("Log out of the current Safeguard session. In stdio mode drops the cached connection. "
-        + "In HTTP mode posts to /service/core/v4/Token/Logout with the request bearer. "
-        + "WARNING: This invalidates the bearer for any client config still holding it; remove the token "
-        + "from your MCP client configuration after calling this.")]
+    [Description("Log out of the current Safeguard session and invalidate the bearer at the appliance. "
+        + "WARNING: any MCP client config still holding that bearer must drop it after this call.")]
     public async Task<string> Safeguard_Disconnect(CancellationToken ct = default)
     {
         if (!session.HasCredentials)
@@ -100,21 +96,16 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Discover", Title = "Discover Safeguard API Endpoints",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Search the Safeguard API catalog. Default emits one line per endpoint (method/path/summary). "
-        + "At least one narrower is required — pass service=, search= (or its query= alias), or method=. "
-        + "A bare call with no narrowers returns a directive listing examples instead of dumping the full ~1000-endpoint catalog. "
-        + "Set verbose=true after narrowing to inspect query-parameter details. "
-        + "Recipe matches are listed first. Batch* endpoints are returned next to their per-id siblings; "
-        + "consider both before fan-firing. Use this to find the right endpoint before calling Safeguard_Execute.")]
+    [Description("Find Safeguard API endpoints before calling Safeguard_Execute. Requires at least one "
+        + "narrower (service=, search=/query=, or method=); a bare call returns usage examples instead of "
+        + "the full catalog. Set verbose=true to include per-endpoint query-parameter detail. "
+        + "Recipe matches and Batch* siblings are listed alongside results.")]
     public string Safeguard_Discover(
-        [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. "
-            + "Use 'Appliance' for status, time, version, and health endpoints. Omit to search all services.")] string service = null,
-        [Description("Text to search for in endpoint paths and summaries (case-insensitive). "
-            + "Synonyms expand the search — e.g. 'uptime' also matches 'ApplianceStatus' and 'SystemTime'.")] string search = null,
+        [Description("Filter by service: 'Appliance', 'Core', or 'Notification'. Omit to search all.")] string service = null,
+        [Description("Text to match in endpoint paths and summaries (case-insensitive; synonyms expand the search).")] string search = null,
         [Description("Filter by HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method = null,
-        [Description("Alias for search=. Some clients call this parameter 'query'; both map to the same behavior.")] string query = null,
-        [Description("Include per-endpoint query parameter details (defaults, accepted values). "
-            + "Default false returns one line per endpoint; set true after narrowing the search to inspect parameter details.")] bool verbose = false)
+        [Description("Alias for search=.")] string query = null,
+        [Description("Include per-endpoint query-parameter detail. Default false; set true after narrowing.")] bool verbose = false)
     {
         var (effectiveSearch, aliasNotice) = ResolveDiscoverSearch(search, query);
         var body = FormatDiscovery(catalogProvider.GetEndpoints().ToArray(), service, effectiveSearch, method, verbose);
@@ -446,42 +437,32 @@ internal sealed class SafeguardApiTool
 
     [McpServerTool(Name = "Safeguard_Execute", Title = "Execute Safeguard API",
         ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("Execute any Safeguard API endpoint. The service (Core, Appliance, Notification) "
-        + "is automatically determined from the endpoint path. "
-        + "Paths must start with /v4/...; do not include a /service/{name}/ prefix — the tool prepends that for you. "
-        + "Use Safeguard_Discover to find endpoints, Safeguard_Schema for request body format. "
-        + "Note: format=csv is only valid for GET requests; POST/PUT/PATCH/DELETE must use format=json. "
-        + "JSON responses are returned as a structured envelope: { data: <body>, meta: { notices: [...], paging?: { page, limit, returned, more, next }, truncation?: {...} } } — "
-        + "always read the data field for the actual API payload, and meta.notices for applied auto-limit / paging hints / truncation events. "
-        + "Responses are capped at ~30 KB; for fat endpoints (audit logs, Assets, AssetAccounts) "
-        + "use fields= to project, or follow meta.paging.next to fetch the next page. "
-        + "Bulk reflex: before issuing DELETE / POST / PUT against the same top-level collection more "
-        + "than ~5 times in a row, check for a Batch* sibling. POST /v4/{Resource}/BatchCreate, "
-        + "/BatchUpdate, /BatchDelete take a JSON-array body. The appliance currently exposes Batch* on "
-        + "/v4/Assets, /v4/AssetAccounts, /v4/Users, /v4/UserGroups, /v4/AccountGroups, /v4/AssetGroups. "
-        + "Use Safeguard_Discover with search='Batch' to see all Batch* endpoints. The bulk path also "
-        + "returns per-row failure detail in one response, which is faster to triage than N parallel "
-        + "error envelopes.")]
+    [Description("Call any Safeguard API endpoint. Path must start with /v4/...; the service "
+        + "(Core/Appliance/Notification) is auto-detected — do not add a /service/{name}/ prefix. "
+        + "Use Safeguard_Discover to find endpoints and Safeguard_Schema for request-body shape. "
+        + "JSON responses are a { data, meta } envelope (meta carries notices, paging, truncation); "
+        + "responses are capped (~30 KB), so project with fields= or page via meta.paging.next. "
+        + "For repeated writes to one collection, check for a Batch* sibling (Discover search='Batch'). "
+        + "Sensitive credential endpoints are not callable here — they refuse-and-redirect to "
+        + "Safeguard_RetrieveCredential.")]
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
-        [Description("API path (e.g. '/v4/Users', '/v4/ApplianceStatus/Health'). Must start with /v4/...; do not include a /service/{name}/ prefix. The correct service is auto-detected from the path.")] string path,
+        [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
         [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
-        [Description("Response format: 'json' (default) or 'csv' (tabular, smaller for large datasets). GET-only — non-GET methods must use 'json'.")]
+        [Description("Response format: 'json' (default) or 'csv' (GET-only, tabular).")]
         string format = "json",
         CancellationToken ct = default)
         => await DispatchAsync(server, method, path, query, body, format, ct);
 
     [McpServerTool(Name = "Safeguard_Schema", Title = "Get API Schema",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get the request body schema and response schema for a Safeguard API endpoint. "
-        + "Returns property names, types, required fields, and descriptions. "
-        + "Use this before POST or PUT calls to understand the JSON body format. "
-        + "Set depth>1 (max 3) to expand nested object/array properties one or more levels.")]
+    [Description("Get the request-body and response schema (property names, types, required fields) for an "
+        + "endpoint. Call before POST or PUT. Set depth (max 3) to expand nested object/array properties.")]
     public string Safeguard_Schema(
-        [Description("The API path (e.g. '/v4/AssetAccounts', '/v4/Users'). Must start with /v4/...; do not include a /service/{name}/ prefix.")] string path,
+        [Description("API path, e.g. '/v4/AssetAccounts'. Must start with /v4/... (no /service/{name}/ prefix).")] string path,
         [Description("HTTP method: POST, PUT, or GET (for response schema). Default: POST")] string method = "POST",
-        [Description("How many levels deep to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
+        [Description("Levels to expand nested object/array properties. Default 1, max 3.")] int depth = 1)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new McpException("The 'path' parameter is required (e.g. '/v4/AssetAccounts').");

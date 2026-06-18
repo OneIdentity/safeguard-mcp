@@ -49,26 +49,17 @@ internal sealed class SafeguardRetrieveCredentialTool
 
     [McpServerTool(Name = "Safeguard_RetrieveCredential", Title = "Retrieve Safeguard Credential",
         ReadOnly = true, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("Returns Safeguard credential material in a two-block MCP response. "
-        + "The assistant-audience block (block 1) contains metadata only — kind, subject ids, "
-        + "delivery flags, notices — and never the plaintext value. "
-        + "The user-audience block (block 2) contains the human-formatted plaintext (password / "
-        + "SSH key PEM / API client secret / API secret history / TOTP code window with validity / "
-        + "personal-account password). "
-        + "The two blocks carry MCP `audience` annotations (assistant / user). The annotation is an "
-        + "optional hint a host MAY use to route content (e.g., render the user block in a secure "
-        + "pane separate from the assistant's transcript). The spec does not require hosts to filter "
-        + "on it, so treat block 2 as potentially visible to the model unless your host is known to "
-        + "filter tool-result blocks by audience; the split is in place so any audience-aware host "
-        + "gets the separation automatically. Credentials can be rotated on the appliance if a "
-        + "host's behavior is wrong for your environment. "
+    [Description("Retrieve sensitive Safeguard credential material in a two-block MCP response: "
+        + "block 1 (assistant audience) is metadata only and never the plaintext; "
+        + "block 2 (user audience) carries the plaintext value (password / SSH key PEM / API secret / "
+        + "TOTP code / personal-account password). The audience annotation is an optional host hint — "
+        + "treat block 2 as potentially model-visible unless your host filters by audience, and rely on "
+        + "appliance audit + rotation as the authoritative control. "
         + "Supported kinds: access-request-password, access-request-ssh-key, access-request-api-key, "
-        + "access-request-totp, access-request-file (requires accessRequestId); "
-        + "personal-account-password, personal-account-password-history, personal-account-totp "
-        + "(requires accountId); generated-password (no extra args); "
+        + "access-request-totp, access-request-file (require accessRequestId); personal-account-password, "
+        + "personal-account-password-history, personal-account-totp (require accountId); generated-password; "
         + "asset-account-api-secret-history (requires accountId AND apiKeyId). "
-        + "These endpoints are NOT callable via Safeguard_Execute — that tool will refuse-and-redirect "
-        + "any matching method+path back to this tool with a structured next_call envelope.")]
+        + "These endpoints are NOT callable via Safeguard_Execute.")]
     public async Task<IList<ContentBlock>> Safeguard_RetrieveCredential(
         McpServer server,
         [Description("Typed credential kind. One of: access-request-password, access-request-ssh-key, "
