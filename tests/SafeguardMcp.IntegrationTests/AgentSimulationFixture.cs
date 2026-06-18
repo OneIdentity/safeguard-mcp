@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -31,6 +32,7 @@ public class AgentSimulationFixture : IAsyncLifetime
     internal TestConnectionManager ConnectionManager { get; private set; }
     public CatalogProvider CatalogProvider { get; private set; }
     internal SafeguardApiTool ApiTool { get; private set; }
+    internal SafeguardRetrieveCredentialTool RetrieveCredentialTool { get; private set; }
     public string Host { get; private set; }
     public bool Available { get; private set; }
     public string UnavailableReason { get; private set; }
@@ -102,6 +104,8 @@ public class AgentSimulationFixture : IAsyncLifetime
         await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
         ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
+        RetrieveCredentialTool = new SafeguardRetrieveCredentialTool(
+            ConnectionManager, new NullLogger<SafeguardRetrieveCredentialTool>());
         Available = true;
     }
 
@@ -182,6 +186,21 @@ public class AgentSimulationFixture : IAsyncLifetime
     {
         var raw = await ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
         return EnvelopeTestHelpers.UnwrapData(raw);
+    }
+
+    /// <summary>
+    /// Retrieves an access-request password via Safeguard_RetrieveCredential
+    /// (the only path that performs the password checkout — Safeguard_Execute
+    /// refuses CheckOutPassword as a sensitive endpoint). Returns the
+    /// user-audience plaintext block text.
+    /// </summary>
+    public async Task<string> RetrieveAccessRequestPasswordAsync(string accessRequestId)
+    {
+        var blocks = await RetrieveCredentialTool.Safeguard_RetrieveCredential(
+            null, kind: "access-request-password", accessRequestId: accessRequestId);
+        var userBlock = blocks.OfType<ModelContextProtocol.Protocol.TextContentBlock>()
+            .LastOrDefault();
+        return userBlock?.Text;
     }
 
     /// <summary>Calls Safeguard_Reference topic=query-syntax — gets query syntax help.</summary>
