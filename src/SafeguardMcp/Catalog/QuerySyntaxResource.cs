@@ -5,7 +5,7 @@ namespace SafeguardMcp.Catalog;
 
 /// <summary>
 /// MCP Resource providing comprehensive Safeguard API query syntax reference.
-/// Clients can preload this into context to avoid repeated Safeguard_QueryHelp calls.
+/// Clients can preload this into context to avoid repeated Safeguard_Reference topic=query-syntax calls.
 /// </summary>
 [McpServerResourceType]
 internal sealed class QuerySyntaxResource

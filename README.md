@@ -494,9 +494,7 @@ The complete tool surface is **11 tools**:
 | `Safeguard_Disconnect` | Revoke the active Safeguard token and drop the cached connection |
 | `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method (at least one narrower required) |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
-| `Safeguard_Enum` | List the valid values for any enum type referenced in a schema |
-| `Safeguard_QueryHelp` | Learn Safeguard's filter, field selection, and pagination syntax |
-| `Safeguard_Workflows` | Get step-by-step recipes for common multi-step operations |
+| `Safeguard_Reference` | On-demand reference: query syntax, workflow recipes, enum values, terminology, overview, and common patterns (`topic=` selects the source; `search=` returns just one section) |
 | `Safeguard_Execute` | Call any endpoint on any service (auto-routes from the bare /v4/... path) |
 | `Safeguard_OpenAccessRequest` | One-call composite that pre-checks entitlements and submits an access request |
 | `Safeguard_CloseAccessRequest` | State-aware close: dispatches to Cancel / CheckIn / Close / Acknowledge based on the request's current state |
@@ -555,7 +553,7 @@ required fields, types, descriptions, nested object shapes, and a minimal workin
 An agent can call `Safeguard_Schema` for `POST /v4/AssetAccounts`, learn that `Name` and
 `Asset.Id` are required, and construct a valid request body without trial and error.
 
-For fields whose type is an enumeration, `Safeguard_Enum` returns the valid values by name —
+For fields whose type is an enumeration, `Safeguard_Reference topic=enum` returns the valid values by name —
 so the agent never has to guess whether the API expects `"RemoteDesktop"` or `"Rdp"`, or
 whether casing matters.
 
@@ -614,7 +612,7 @@ parameters to use, how to interpret results, and what to do next. Pre-built reci
 - A2A credential retrieval setup
 - Personal password vault configuration
 
-Recipes are reachable directly via the `Safeguard_Workflows` tool, and also surface
+Recipes are reachable directly via `Safeguard_Reference topic=workflows`, and also surface
 inline whenever `Safeguard_Discover` or `Safeguard_Execute` touches an endpoint family
 a recipe covers — so an agent that started in the raw API can find the higher-level
 path mid-task without having to think to ask for it.
@@ -689,7 +687,7 @@ agent "day-one knowledge" of Safeguard's API without consuming tool-call round t
 | `safeguard://terminology` | Product UI terms → API endpoint name mappings |
 
 Clients that support MCP resource preloading can inject all four at session start. Clients that don't can still access the same content
-via tool calls (`Safeguard_QueryHelp`, `Safeguard_Discover`).
+via tool calls (`Safeguard_Reference`, `Safeguard_Discover`).
 
 ### One appliance per process
 
@@ -777,7 +775,7 @@ dispatcher prepends `/service/{Name}/` for you. Paths that already include the
 `/service/{name}/` prefix are rejected at pre-flight with a directive that
 names the corrected `/v4/...` form — they would otherwise hit the wire as
 `/service/{name}/service/{name}/v4/...` and 404. This contract applies to
-`Safeguard_Execute` and `Safeguard_Schema`; `Safeguard_QueryHelp` surfaces
+`Safeguard_Execute` and `Safeguard_Schema`; `Safeguard_Reference topic=query-syntax` surfaces
 the same directive as a notice but still returns the general syntax help.
 
 #### Service resolution

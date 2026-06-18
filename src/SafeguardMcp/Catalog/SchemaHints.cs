@@ -62,7 +62,7 @@ public static class SchemaHints
 
         ["AccessRequestProperties"] =
             "Nested object describing the type and constraints of access. Required properties: "
-            + "AccessRequestType (call Safeguard_Enum name=\"AccessRequestType\" for allowed values). "
+            + "AccessRequestType (call Safeguard_Reference topic=enum name=\"AccessRequestType\" for allowed values). "
             + "Optional: AllowSimultaneousAccess (bool), MaximumDurationDays (int), "
             + "MaximumDurationHours (int), ChangePasswordAfterCheckin (bool).",
 
