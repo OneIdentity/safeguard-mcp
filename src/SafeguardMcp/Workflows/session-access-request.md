@@ -37,7 +37,7 @@ Steps:
        "IsEmergency": false
      }
    - AccessRequestType values: "Password", "RemoteDesktop", "Ssh", "Telnet", "SshKey",
-     "RemoteDesktopApplication", "ApiKey", "File". Verified by Safeguard_Enum name="AccessRequestType".
+     "RemoteDesktopApplication", "ApiKey", "File". Verified by Safeguard_Reference topic=enum name="AccessRequestType".
      The API rejects shorthand like "RDP"/"SSH" and is case-sensitive — use the exact spelling.
 3. Check request status:
    - GET /v4/AccessRequests/{requestId} — watch the State field

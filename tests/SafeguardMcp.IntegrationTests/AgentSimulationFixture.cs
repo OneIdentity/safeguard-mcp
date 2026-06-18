@@ -12,7 +12,7 @@ namespace SafeguardMcp.IntegrationTests;
 /// Shared fixture for agent simulation tests. Extends ApplianceFixture by:
 /// - Creating a test admin user with all admin roles
 /// - Re-authenticating as that user
-/// - Providing Discover/Schema/Execute/QueryHelp/Workflows helper methods
+/// - Providing Discover/Schema/Execute/Reference helper methods
 /// - Managing LIFO cleanup of test objects
 /// - Pre-cleaning stale objects from prior failed runs
 /// </summary>
@@ -31,7 +31,6 @@ public class AgentSimulationFixture : IAsyncLifetime
     internal TestConnectionManager ConnectionManager { get; private set; }
     public CatalogProvider CatalogProvider { get; private set; }
     internal SafeguardApiTool ApiTool { get; private set; }
-    internal SafeguardWorkflows Workflows { get; private set; }
     public string Host { get; private set; }
     public bool Available { get; private set; }
     public string UnavailableReason { get; private set; }
@@ -103,7 +102,6 @@ public class AgentSimulationFixture : IAsyncLifetime
         await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
         ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
-        Workflows = new SafeguardWorkflows();
         Available = true;
     }
 
@@ -186,13 +184,13 @@ public class AgentSimulationFixture : IAsyncLifetime
         return EnvelopeTestHelpers.UnwrapData(raw);
     }
 
-    /// <summary>Calls Safeguard_QueryHelp — gets query syntax help.</summary>
+    /// <summary>Calls Safeguard_Reference topic=query-syntax — gets query syntax help.</summary>
     public string QueryHelp(string path = null)
-        => ApiTool.Safeguard_QueryHelp(path: path);
+        => ApiTool.Safeguard_Reference(topic: "query-syntax", path: path);
 
-    /// <summary>Calls Safeguard_Workflows — gets workflow recipes.</summary>
+    /// <summary>Calls Safeguard_Reference topic=workflows — gets workflow recipes.</summary>
     public string GetWorkflows(string search = null, string id = null)
-        => Workflows.Safeguard_Workflows(search: search, id: id);
+        => ApiTool.Safeguard_Reference(topic: "workflows", search: search, id: id);
 
     /// <summary>
     /// Registers a cleanup action to be executed in LIFO order during teardown.

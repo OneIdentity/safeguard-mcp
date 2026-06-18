@@ -1,35 +1,29 @@
-using System.ComponentModel;
 using System.Text;
-using ModelContextProtocol.Server;
 using SafeguardMcp.Catalog;
 
 namespace SafeguardMcp.Tools;
 
-[McpServerToolType]
-internal sealed class SafeguardWorkflows
+/// <summary>
+/// Workflow-recipe lookup behind <c>Safeguard_Reference topic=workflows</c>. Formerly the standalone
+/// Safeguard_Workflows tool; kept as a helper so the recipe search/listing logic stays in one place.
+/// </summary>
+internal static class SafeguardWorkflows
 {
     private static IReadOnlyList<WorkflowRecipe> Recipes => RecipeIndex.Recipes;
 
-    [McpServerTool(Name = "Safeguard_Workflows", Title = "Safeguard Workflow Recipes",
-        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get step-by-step workflow recipes for common Safeguard operations. "
-        + "Each recipe describes the sequence of API calls needed to accomplish a goal. "
-        + "Use this when you need to perform a multi-step operation and want guidance on the correct approach.")]
-    public string Safeguard_Workflows(
-        [Description("Search for workflows by keyword (e.g. 'health', 'password failure', 'bulk import', 'access request').")] string search = null,
-        [Description("Get a specific workflow by ID (e.g. 'task-triage', 'health-check', 'bulk-asset-operations').")] string id = null)
+    public static string Lookup(string search, string id)
     {
         if (!string.IsNullOrWhiteSpace(id))
         {
             var recipe = Recipes.FirstOrDefault(r => r.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
             return recipe is null
-                ? $"Workflow '{id}' was not found. Use Safeguard_Workflows with no arguments to list available workflow IDs."
+                ? $"Workflow '{id}' was not found. Use Safeguard_Reference topic=workflows with no search to list available workflow IDs."
                 : recipe.Content;
         }
 
         var matches = FilterRecipes(search);
         if (matches.Length == 0)
-            return $"No workflows matched '{search}'. Use Safeguard_Workflows with no arguments to list available workflow IDs.";
+            return $"No workflows matched '{search}'. Use Safeguard_Reference topic=workflows with no search to list available workflow IDs.";
 
         return BuildListing(matches, search);
     }

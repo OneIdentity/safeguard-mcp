@@ -25,7 +25,7 @@ internal sealed record WorkflowRecipe(
 internal sealed record RecipeMatch(WorkflowRecipe Recipe, int Score, bool Strong);
 
 /// <summary>
-/// Shared, lazily-loaded index of workflow recipes. Both Safeguard_Workflows
+/// Shared, lazily-loaded index of workflow recipes. Both Safeguard_Reference topic=workflows
 /// and Safeguard_Discover read from this so the recipe set is loaded once
 /// per process. Scoring is term-driven (operates on the same expanded term
 /// list that ScoreMatch uses for endpoints) so the two views stay in sync.

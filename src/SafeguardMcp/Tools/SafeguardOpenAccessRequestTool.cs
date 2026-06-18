@@ -36,7 +36,7 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
         int accountId,
         [Description("AccessRequestType: Password, RemoteDesktop, Ssh, Telnet, SshKey, "
             + "RemoteDesktopApplication, ApiKey, or File. Required. Case-insensitive; canonicalized "
-            + "before submission. Use Safeguard_Enum name=\"AccessRequestType\" to list values.")]
+            + "before submission. Use Safeguard_Reference topic=enum name=\"AccessRequestType\" to list values.")]
         string accessRequestType,
         [Description("Database id of the asset. Optional: when omitted and the (account, type) pair has "
             + "exactly one entitlement, the tool infers it; if there are multiple entitlements the tool "

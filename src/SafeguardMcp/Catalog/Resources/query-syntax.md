@@ -25,7 +25,7 @@ All GET collection endpoints support these query parameters passed via the `quer
 > `filter=AccessRequestType eq 'RemoteDesktop'` matches; `'remotedesktop'` does not. For case-insensitive
 > string matching use `ieq` / `icontains` / `isw` / `iew`.
 >
-> See `Safeguard_Enum` for the exact spelling of enum-typed values used with `eq` / `ne` / `in`.
+> See `Safeguard_Reference topic=enum` for the exact spelling of enum-typed values used with `eq` / `ne` / `in`.
 
 ## Logical Operators
 
@@ -107,6 +107,16 @@ Rule of thumb: if the schema shows a property as `array<Type>` it's to-many — 
 
 - `q=searchterm` — searches across multiple text fields (like a global search)
 - Simpler than filter but less precise
+
+## Aggregation and Summarization
+
+- `count=true` returns just the row count for any collection endpoint — the response body is a bare
+  JSON integer (e.g. `52`), not an object or array. Pair with `filter=` for scoped counts (per
+  partition, per requester, per time window). See workflow recipe `count-with-filter`.
+- There is **no server-side group-by / distinct**: no `groupBy=`, no `distinct=`, no `aggregate=`
+  parameter exists. For per-group counts, page filtered rows and tally in agent context (recipe
+  `summarize-audit-log`). For per-time-bucket counts, issue N `count=true` calls, one per bucket
+  (recipe `time-bucketed-counts`).
 
 ## Combined Examples
 

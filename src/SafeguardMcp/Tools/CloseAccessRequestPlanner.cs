@@ -138,7 +138,7 @@ internal static class CloseAccessRequestPlanner
             {
                 plan.Refusal = $"Unknown access-request state '{state}'. The planner does not pick a fallback action; "
                     + "re-fetch GET /v4/AccessRequests/{id} to confirm the state, or run "
-                    + "Safeguard_Enum name=\"AccessRequestState\" to see the recognised values.";
+                    + "Safeguard_Reference topic=enum name=\"AccessRequestState\" to see the recognised values.";
                 return plan;
             }
 
@@ -176,7 +176,7 @@ internal static class CloseAccessRequestPlanner
         {
             plan.Refusal = $"Unknown access-request state '{state}'. The planner does not pick a fallback action; "
                 + "re-fetch GET /v4/AccessRequests/{id} to confirm the state, or run "
-                + "Safeguard_Enum name=\"AccessRequestState\" to see the recognised values.";
+                + "Safeguard_Reference topic=enum name=\"AccessRequestState\" to see the recognised values.";
             return plan;
         }
 

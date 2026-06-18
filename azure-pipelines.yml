@@ -152,11 +152,14 @@ jobs:
           ACTUAL=$(echo "$SMOKE_OUT" | jq -r 'select(.id==2) | .result.tools[].name' | sort -u)
           EXPECTED=$(printf '%s\n' \
             Safeguard_Connect \
+            Safeguard_Disconnect \
             Safeguard_Discover \
             Safeguard_Execute \
-            Safeguard_QueryHelp \
+            Safeguard_Reference \
             Safeguard_Schema \
-            Safeguard_Workflows | sort -u)
+            Safeguard_OpenAccessRequest \
+            Safeguard_CloseAccessRequest \
+            Safeguard_RetrieveCredential | sort -u)
 
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "ERROR: tools/list did not return the expected set."
