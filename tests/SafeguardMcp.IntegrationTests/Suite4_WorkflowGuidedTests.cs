@@ -262,8 +262,21 @@ public class Suite4_WorkflowGuidedTests
             || string.Equals(availableState, "PasswordCheckedOut", StringComparison.OrdinalIgnoreCase),
             $"Expected access request {requestId} to become RequestAvailable, got: {availableState ?? "<unknown>"}");
 
-        var credential = await _fixture.ExecuteAsync("POST", $"/v4/AccessRequests/{requestId}/CheckOutPassword");
-        Assert.False(string.IsNullOrWhiteSpace(ExtractTextValue(credential)));
+        // Safeguard_Execute refuses CheckOutPassword as a sensitive endpoint and redirects to
+        // Safeguard_RetrieveCredential, which is the only path that actually performs the password
+        // checkout. Using it both retrieves the plaintext and transitions the request to
+        // PasswordCheckedOut, which is required before CheckIn (otherwise the appliance returns
+        // error 90114, E90114_InvalidStateAction_CheckInRequest_RequestAvailable).
+        var credential = await _fixture.RetrieveAccessRequestPasswordAsync(requestId);
+        Assert.False(string.IsNullOrWhiteSpace(credential));
+
+        // The transition to PasswordCheckedOut is not synchronously reflected in the read model,
+        // so wait until the password is actually in use before checking in.
+        var checkedOutState = await WaitForAccessRequestStateAsync(requestId, 15, "PasswordCheckedOut", "CheckedOut");
+        Assert.True(
+            string.Equals(checkedOutState, "PasswordCheckedOut", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(checkedOutState, "CheckedOut", StringComparison.OrdinalIgnoreCase),
+            $"Expected access request {requestId} to reach PasswordCheckedOut before check-in, got: {checkedOutState ?? "<unknown>"}");
 
         await _fixture.ExecuteAsync("POST", $"/v4/AccessRequests/{requestId}/CheckIn");
 

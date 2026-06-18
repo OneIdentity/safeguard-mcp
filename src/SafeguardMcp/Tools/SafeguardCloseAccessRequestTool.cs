@@ -19,26 +19,13 @@ internal sealed class SafeguardCloseAccessRequestTool(ISafeguardSession session)
 {
     [McpServerTool(Name = "Safeguard_CloseAccessRequest", Title = "Close Safeguard Access Request",
         ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = true)]
-    [Description("Close a Safeguard access request by dispatching to the correct sub-endpoint "
-        + "(Cancel / CheckIn / Close / Acknowledge) based on its current State and the caller's role. "
-        + "The first GET /v4/AccessRequests/{id} is the permission gate: a 404 maps to "
-        + "\"you didn't request '<id>' and you are not a policy admin\" (same semantics as "
-        + "safeguard-ps's Close-SafeguardAccessRequest). "
-        + "Requester path mirrors safeguard-ps's state -> action map EXCEPT for the four states "
-        + "RequestCheckedIn / Terminated / PendingReview / PendingAccountSuspended (plus "
-        + "PendingAccountDemoted), where the V4 controller's Close attribute is PolicyAdmin-only; "
-        + "for those a non-admin requester gets a diagnostic naming the state rather than a 403. "
-        + "PolicyAdmin (acting on someone else's request, or as the requester on a NeedsAdmin row) "
-        + "dispatches Close from any non-terminal state -- the V4 controller's CloseAsync gates only "
-        + "on PolicyAdmin role and cluster-state WithQuorum, with NO workflow-state filter; the "
-        + "state machine's .Permit(CloseRequest, ...) entries cover PendingReview, "
-        + "PendingPasswordReset, PendingAccountDemoted, PendingAccountSuspended, and "
-        + "PendingAcknowledgement. Matches safeguard-ps's admin behavior. Terminal states "
-        + "(Closed/Complete/Reclaimed) no-op for both axes. "
-        + "comment is echoed for Cancel / Close / Acknowledge, ignored for CheckIn, and truncated to "
-        + "255 characters (with a notice) when longer. "
-        + "Response: { ok, action, request, notices }. allFields=false projects to the same field set "
-        + "safeguard-ps's $SgAccessRequestFields uses; allFields=true returns the appliance body verbatim.")]
+    [Description("Close a Safeguard access request, automatically dispatching to the correct action "
+        + "(Cancel / CheckIn / Close / Acknowledge) based on the request's current State and the caller's role. "
+        + "A 404 on the initial lookup means you neither own the request nor are a policy admin. "
+        + "Terminal states (Closed/Complete/Reclaimed) no-op. comment is attached to Cancel/Close/Acknowledge "
+        + "(ignored for CheckIn, truncated to 255 chars with a notice). "
+        + "Returns { ok, action, request, notices }; allFields=true returns the appliance body verbatim, "
+        + "else a compact field set. See safeguard://common-patterns for the full state->action table.")]
     public async Task<string> Safeguard_CloseAccessRequest(
         McpServer server,
         [Description("Database id of the AccessRequest to close. Required. Use Safeguard_Execute "
