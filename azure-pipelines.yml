@@ -603,6 +603,63 @@ jobs:
         # refs/tags/v* publishes, selecting the release dist-tag.
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
+      # Post-publish guardrail: install the four packages we just published
+      # straight from the registry into a throwaway project and assert their
+      # npm registry signatures verify via `npm audit signatures`. Fails the
+      # release if any published package is unsigned or tampered with.
+      # Azure DevOps cannot generate provenance attestations (only GitHub
+      # Actions / GitLab CI/CD can), so registry-signature verification is the
+      # strongest npm supply-chain check available from this pipeline.
+      - script: |
+          set -euo pipefail
+          VER='$(PackageVersion)'
+          WORK=$(mktemp -d)
+          cd "$WORK"
+
+          # Plain dependencies (not optional) so cross-platform packages are
+          # part of the audited tree; --force tolerates the os/cpu mismatch on
+          # the Linux agent without running install scripts.
+          cat > package.json <<EOF
+          {
+            "name": "verify-npm-signatures",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@oneidentity/safeguard-mcp": "$VER",
+              "@oneidentity/safeguard-mcp-linux-x64": "$VER",
+              "@oneidentity/safeguard-mcp-win-x64": "$VER",
+              "@oneidentity/safeguard-mcp-darwin-arm64": "$VER"
+            }
+          }
+          EOF
+
+          # Retry to absorb registry signature propagation lag after publish.
+          attempt=1
+          max=6
+          until npm install --force --no-audit --ignore-scripts; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "ERROR: npm install of published packages failed after $max attempts."
+              exit 1
+            fi
+            echo "npm install attempt $attempt failed; retrying in 10s (registry propagation)..."
+            attempt=$((attempt + 1))
+            sleep 10
+          done
+
+          attempt=1
+          until npm audit signatures; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "ERROR: npm audit signatures failed after $max attempts; a published package is unsigned or tampered."
+              exit 1
+            fi
+            echo "npm audit signatures attempt $attempt failed; retrying in 10s (signature propagation)..."
+            attempt=$((attempt + 1))
+            sleep 10
+          done
+          echo "Verified: all published npm packages have valid registry signatures."
+        displayName: 'Verify npm registry signatures (post-publish)'
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+
       # Build & push the Docker image (linux/amd64) via buildx. The
       # Dockerfile consumes the pre-built AOT binary from the per-RID
       # publish job above (see Publish_linux_x64) — no in-image
