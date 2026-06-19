@@ -3,3 +3,10 @@
 # Windows checkout doesn't introduce phantom CRLF drift.
 deploy/helm/safeguard-mcp/golden/manifests.yaml text eol=lf
 deploy/helm/safeguard-mcp/golden/render.sh    text eol=lf
+
+# The chart templates must also be LF on every platform: the
+# `checksum/config` pod annotation is `sha256sum` of the raw
+# configmap template render, so a CRLF checkout produces a
+# different hash than the Linux CI runner and breaks the golden
+# drift check. Pin the whole chart to LF.
+deploy/helm/safeguard-mcp/** text eol=lf

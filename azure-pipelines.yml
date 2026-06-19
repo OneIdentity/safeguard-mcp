@@ -29,9 +29,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────
   # Deployment-manifest validation. Runs on every build (PR or
   # otherwise) — fast, no toolchain dependencies beyond helm and
-  # kubectl. Catches:
+  # kubeconform. Catches:
   #   * Schema regressions in the plain k8s manifests
-  #     (`kubectl apply --dry-run=client --validate=true`).
+  #     (`kubeconform -strict`, offline JSON-schema validation).
   #   * Helm chart issues (`helm lint`).
   #   * Unintended drift in the rendered chart output, by diffing
   #     a fresh render against the checked-in golden file at
@@ -45,11 +45,6 @@ jobs:
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-      - task: KubectlInstaller@0
-        displayName: 'Install kubectl'
-        inputs:
-          kubectlVersion: 'v1.27.0'
-
       - task: HelmInstaller@1
         displayName: 'Install helm'
         inputs:
@@ -57,8 +52,22 @@ jobs:
 
       - script: |
           set -euo pipefail
-          kubectl apply --dry-run=client --validate=true -f deploy/k8s/
-        displayName: 'kubectl --dry-run=client apply -f deploy/k8s/'
+          KUBECONFORM_VERSION=v0.6.7
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
+          sudo install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+        displayName: 'Install kubeconform'
+
+      - script: |
+          set -euo pipefail
+          # Offline schema validation against the Kubernetes JSON schemas.
+          # `kubectl apply --dry-run=client` needs a live API server for
+          # discovery/OpenAPI, which hosted agents do not have; kubeconform
+          # validates without a cluster.
+          kubeconform -strict -summary -verbose deploy/k8s/
+        displayName: 'kubeconform validate deploy/k8s/'
 
       - script: |
           set -euo pipefail
@@ -89,13 +98,10 @@ jobs:
       - script: |
           set -euo pipefail
           # Render the golden once more and pipe it through the same
-          # client-side schema validator we ran against deploy/k8s/.
-          # This catches issues that helm lint alone misses (e.g.,
-          # cross-resource references that only resolve at apply
-          # time).
+          # offline schema validator we ran against deploy/k8s/.
           deploy/helm/safeguard-mcp/golden/render.sh \
-            | kubectl apply --dry-run=client --validate=true -f -
-        displayName: 'kubectl --dry-run=client on rendered chart'
+            | kubeconform -strict -summary -
+        displayName: 'kubeconform validate rendered chart'
 
   # ──────────────────────────────────────────────────────────────
   # Per-RID AOT publish jobs (non-PR builds)
@@ -583,9 +589,11 @@ jobs:
           echo "Smoke OK: npm wrapper launches platform binary."
         displayName: 'Smoke: npm pack + global install + --version'
 
-      # Retrieve npm token from Key Vault
+      # Retrieve npm token from Key Vault. Gated on isRelease so non-release
+      # builds (e.g. manual feature-branch queues) never even fetch the token.
       - task: AzureKeyVault@2
         displayName: 'Get npm publish token'
+        condition: and(succeeded(), eq(variables.isRelease, true))
         inputs:
           azureSubscription: 'SafeguardOpenSource'
           KeyVaultName: 'SafeguardBuildSecrets'
@@ -604,7 +612,9 @@ jobs:
           # Publish root package
           cd npm/safeguard-mcp && npm publish --access public && cd ../..
         displayName: 'npm publish (release)'
-        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        # Gate on isRelease (mirrors the docker push) so only main/tag builds
+        # publish; a tag additionally selects the release dist-tag here.
+        condition: and(eq(variables.isRelease, true), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       - script: |
           npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
@@ -618,7 +628,9 @@ jobs:
           # Publish root package
           cd npm/safeguard-mcp && npm publish --access public --tag pre && cd ../..
         displayName: 'npm publish (pre-release)'
-        condition: not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+        # Gate on isRelease (mirrors the docker pre-release push) so feature-branch
+        # manual queues never publish; non-tag main builds get the pre dist-tag.
+        condition: and(eq(variables.isRelease, true), not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v')))
 
       # Build & push multi-arch Docker image (linux/amd64 + linux/arm64)
       # via buildx. The Dockerfile consumes pre-built AOT binaries from

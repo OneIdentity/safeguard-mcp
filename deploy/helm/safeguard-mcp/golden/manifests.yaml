@@ -96,7 +96,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: bridge
       annotations:
-        checksum/config: 47288407612cef4bf00eed04144bde05a350156fa9ad25829df3a98e36e0a8d1
+        checksum/config: 3ada7c2313b1e6d2eb648da60a1c83783920e803724c704b4089c2f65ae926d2
     spec:
       securityContext:
         runAsNonRoot: true
@@ -183,7 +183,7 @@ spec:
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: relay
       annotations:
-        checksum/config: 47288407612cef4bf00eed04144bde05a350156fa9ad25829df3a98e36e0a8d1
+        checksum/config: 3ada7c2313b1e6d2eb648da60a1c83783920e803724c704b4089c2f65ae926d2
     spec:
       securityContext:
         runAsNonRoot: true
