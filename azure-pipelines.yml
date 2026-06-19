@@ -133,13 +133,17 @@ jobs:
           chmod +x "$STAGE/SafeguardMcp"
 
           # Drive the published binary over stdio with initialize + tools/list.
+          # The stdio transport ties its output writer to stdin lifetime, so a
+          # plain `printf | binary` closes stdin and races the server into
+          # shutdown before it flushes responses (stdout comes back empty). The
+          # trailing `sleep` keeps stdin open long enough for stdout to flush.
           # Allowed exit codes: 0 (clean EOF) or 124 (timeout fired after we
           # already got the responses we need).
           set +e
-          SMOKE_OUT=$(printf '%s\n' \
+          SMOKE_OUT=$( { printf '%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; sleep 3; } \
             | timeout 10s "$STAGE/SafeguardMcp")
           RC=$?
           set -e
@@ -174,8 +178,8 @@ jobs:
             exit 1
           fi
 
-          echo "Smoke OK: all 6 expected tools present (exact match)."
-        displayName: 'Smoke: stdio tools/list returns 6 expected tools'
+          echo "Smoke OK: all 9 expected tools present (exact match)."
+        displayName: 'Smoke: stdio tools/list returns expected tools'
 
       - task: PublishPipelineArtifact@1
         displayName: 'Publish linux-x64 artifact'
