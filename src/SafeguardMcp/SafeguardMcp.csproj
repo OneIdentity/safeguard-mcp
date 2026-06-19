@@ -12,7 +12,7 @@
       pipeline-templates/versionnumber.ps1; the drift guard there fails the
       build if this value diverges from npm/server.json versions.
     -->
-    <Version>1.0.0</Version>
+    <Version>0.1.0</Version>
 
     <!-- Native AOT publish settings -->
     <PublishAot>true</PublishAot>

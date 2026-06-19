@@ -1,6 +1,6 @@
 {
   "name": "@oneidentity/safeguard-mcp",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "Official One Identity Safeguard MCP server — AI-powered privileged access management with 1,000+ API endpoints",
   "keywords": ["mcp", "safeguard", "privileged-access", "ai", "one-identity", "pam"],
@@ -17,10 +17,10 @@
     "bin/"
   ],
   "optionalDependencies": {
-    "@oneidentity/safeguard-mcp-linux-x64": "1.0.0",
-    "@oneidentity/safeguard-mcp-linux-arm64": "1.0.0",
-    "@oneidentity/safeguard-mcp-win-x64": "1.0.0",
-    "@oneidentity/safeguard-mcp-darwin-arm64": "1.0.0"
+    "@oneidentity/safeguard-mcp-linux-x64": "0.1.0",
+    "@oneidentity/safeguard-mcp-linux-arm64": "0.1.0",
+    "@oneidentity/safeguard-mcp-win-x64": "0.1.0",
+    "@oneidentity/safeguard-mcp-darwin-arm64": "0.1.0"
   },
   "engines": {
     "node": ">=18"

@@ -1,6 +1,6 @@
 {
   "name": "@oneidentity/safeguard-mcp-darwin-arm64",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Safeguard MCP server binary for macOS Apple Silicon",
   "license": "Apache-2.0",
   "repository": {
