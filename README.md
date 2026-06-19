@@ -58,7 +58,7 @@ For production HTTP deployments, see the
 
 Self-contained binaries (no runtime needed) are available from
 [GitHub Releases](https://github.com/OneIdentity/safeguard-mcp/releases)
-for Linux x64, Linux arm64, Windows x64, and macOS ARM64.
+for Linux x64, Windows x64, and macOS ARM64.
 
 ### Verifying Downloads
 
@@ -73,10 +73,9 @@ sha256sum -c SHA256SUMS --ignore-missing
 ```
 
 The `SHA256SUMS` file covers the release archives, the per-platform SPDX
-SBOMs (`sbom-linux-amd64.spdx.json`, `sbom-linux-arm64.spdx.json`), and
-the `cosign.pub` key itself.
+SBOM (`sbom-linux-amd64.spdx.json`), and the `cosign.pub` key itself.
 
-**Container image signature** — the multi-arch image is signed with a key
+**Container image signature** — the image is signed with a key
 held in an Azure Key Vault HSM. Download `cosign.pub` from the Release
 assets and verify the image digest:
 

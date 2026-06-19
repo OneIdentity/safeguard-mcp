@@ -1,14 +1,11 @@
 # syntax=docker/dockerfile:1
 #
-# Single-stage runtime image. AOT binaries are built outside Docker
-# (in dedicated per-RID pipeline jobs) and copied in via buildx's
-# TARGETARCH so a single Dockerfile produces both linux/amd64 and
-# linux/arm64 variants. Cross-arch dotnet AOT inside `docker buildx`
-# is fragile, which is why we don't do it.
+# Single-stage runtime image. The AOT binary is built outside Docker
+# (in a dedicated per-RID pipeline job) and copied in via buildx's
+# TARGETARCH. The image ships linux/amd64 only.
 #
 # Build context layout produced by the Release job:
 #   binaries/amd64/SafeguardMcp   (from publish-linux-x64)
-#   binaries/arm64/SafeguardMcp   (from publish-linux-arm64)
 #
 # The chiseled base image already declares a built-in nonroot user
 # `app` at $APP_UID (= 1654 on `runtime-deps:10.0-noble-chiseled`,
