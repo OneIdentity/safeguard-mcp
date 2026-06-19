@@ -913,7 +913,7 @@ jobs:
         displayName: 'Create GitHub Release'
         condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
         inputs:
-          gitHubConnection: 'PangaeaBuild-GitHub'
+          gitHubConnection: 'OneIdentity'
           repositoryName: 'OneIdentity/safeguard-mcp'
           action: 'create'
           target: '$(Build.SourceVersion)'
