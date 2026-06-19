@@ -589,17 +589,17 @@ jobs:
           echo "Smoke OK: npm wrapper launches platform binary."
         displayName: 'Smoke: npm pack + global install + --version'
 
-      # Retrieve npm token from Key Vault. Gated on isRelease so non-release
-      # builds (e.g. manual feature-branch queues) never even fetch the token.
+      # Retrieve npm token from Key Vault. Tag-only: publishing happens only
+      # on refs/tags/v*, so non-tag builds never even fetch the token.
       - task: AzureKeyVault@2
         displayName: 'Get npm publish token'
-        condition: and(succeeded(), eq(variables.isRelease, true))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
         inputs:
           azureSubscription: 'SafeguardOpenSource'
           KeyVaultName: 'SafeguardBuildSecrets'
           SecretsFilter: 'NpmOrgApiKey'
 
-      # Publish npm packages (release on tag, pre-release otherwise)
+      # Publish npm packages. Tag-only: only refs/tags/v* publishes.
       - script: |
           npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
 
@@ -612,25 +612,9 @@ jobs:
           # Publish root package
           cd npm/safeguard-mcp && npm publish --access public && cd ../..
         displayName: 'npm publish (release)'
-        # Gate on isRelease (mirrors the docker push) so only main/tag builds
-        # publish; a tag additionally selects the release dist-tag here.
-        condition: and(eq(variables.isRelease, true), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
-
-      - script: |
-          npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
-
-          # Publish platform packages first
-          cd npm/safeguard-mcp-linux-x64 && npm publish --access public --tag pre && cd ../..
-          cd npm/safeguard-mcp-linux-arm64 && npm publish --access public --tag pre && cd ../..
-          cd npm/safeguard-mcp-win-x64 && npm publish --access public --tag pre && cd ../..
-          cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public --tag pre && cd ../..
-
-          # Publish root package
-          cd npm/safeguard-mcp && npm publish --access public --tag pre && cd ../..
-        displayName: 'npm publish (pre-release)'
-        # Gate on isRelease (mirrors the docker pre-release push) so feature-branch
-        # manual queues never publish; non-tag main builds get the pre dist-tag.
-        condition: and(eq(variables.isRelease, true), not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v')))
+        # Tag-only: a non-tag main build must never push to npm. Only
+        # refs/tags/v* publishes, selecting the release dist-tag.
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Build & push multi-arch Docker image (linux/amd64 + linux/arm64)
       # via buildx. The Dockerfile consumes pre-built AOT binaries from
@@ -638,6 +622,9 @@ jobs:
       # Publish_linux_arm64) — no in-image `dotnet publish`, no QEMU.
       - task: AzureKeyVault@2
         displayName: 'Get GHCR token'
+        # Tag-only: only a refs/tags/v* build pushes to GHCR, so non-tag
+        # builds neither fetch the token nor log in.
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
         inputs:
           azureSubscription: 'SafeguardOpenSource'
           KeyVaultName: 'SafeguardBuildSecrets'
@@ -657,6 +644,9 @@ jobs:
           docker buildx create --name multiarch --use 2>/dev/null || docker buildx use multiarch
           docker buildx inspect --bootstrap
         displayName: 'Set up buildx multi-arch builder'
+        # Tag-only: the multi-arch builder + GHCR login are only needed for
+        # the release push. The smoke build below uses the default builder.
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Smoke: build a single-arch image with the default (docker) builder
       # so we can --load it locally, run it with the default --http
@@ -728,25 +718,8 @@ jobs:
             --push .
           docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
         displayName: 'buildx build & push (release)'
-        # Gate on isRelease so feature-branch manual queues never push
-        # an unsigned image (cosign sign below requires SPPCodeSigning
-        # secrets, which are also gated on isRelease).
-        condition: and(eq(variables.isRelease, true), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
-
-      # Pre-release: push :version only.
-      - script: |
-          set -euo pipefail
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --tag $(containerRegistry)/$(imageName):$(PackageVersion) \
-            --build-arg IMAGE_VERSION=$(PackageVersion) \
-            --provenance=mode=max \
-            --sbom=true \
-            --metadata-file $(Build.ArtifactStagingDirectory)/docker-image-metadata.json \
-            --push .
-          docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
-        displayName: 'buildx build & push (pre-release)'
-        condition: and(eq(variables.isRelease, true), not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v')))
+        # Tag-only: only a refs/tags/v* build pushes an image to GHCR.
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Publish the buildx metadata (containing the manifest-list digest)
       # so the cosign sign step below can sign the immutable digest.
@@ -755,7 +728,7 @@ jobs:
         inputs:
           targetPath: $(Build.ArtifactStagingDirectory)/docker-image-metadata.json
           artifactName: 'docker-image-metadata'
-        condition: and(succeeded(), eq(variables.isRelease, true))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # ──────────────────────────────────────────────────────────────
       # Item 27: cosign sign the multi-arch manifest list and extract
@@ -776,11 +749,11 @@ jobs:
           sudo install -m 0755 /tmp/cosign /usr/local/bin/cosign
           cosign version
         displayName: 'Install pinned cosign'
-        condition: and(succeeded(), eq(variables.isRelease, true))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       - task: AzureCLI@2
         displayName: 'cosign sign manifest list (Azure Key Vault key)'
-        condition: and(succeeded(), eq(variables.isRelease, true))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
         inputs:
           azureSubscription: 'OneIdentity.Infrastructure.SPPCodeSigning'
           scriptType: bash
@@ -829,7 +802,7 @@ jobs:
             echo "Wrote $OUT/sbom-${slug}.spdx.json ($(wc -c < "$OUT/sbom-${slug}.spdx.json") bytes)"
           done
         displayName: 'Extract per-platform SBOMs from pushed image'
-        condition: and(succeeded(), eq(variables.isRelease, true))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Stage release artifacts
       - task: CopyFiles@2
@@ -863,7 +836,7 @@ jobs:
           cd $(Build.ArtifactStagingDirectory)/release
           # Sort for reproducibility; relative filenames so end users
           # can `sha256sum -c SHA256SUMS` from the download directory.
-          # SBOMs and cosign.pub are only present on isRelease builds;
+          # SBOMs and cosign.pub are only present on tag (release) builds;
           # use shell glob expansion plus `ls` so the step does not
           # fail when those optional files are absent.
           FILES=$(ls -1 \
