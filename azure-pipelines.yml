@@ -583,9 +583,11 @@ jobs:
           echo "Smoke OK: npm wrapper launches platform binary."
         displayName: 'Smoke: npm pack + global install + --version'
 
-      # Retrieve npm token from Key Vault
+      # Retrieve npm token from Key Vault. Gated on isRelease so non-release
+      # builds (e.g. manual feature-branch queues) never even fetch the token.
       - task: AzureKeyVault@2
         displayName: 'Get npm publish token'
+        condition: and(succeeded(), eq(variables.isRelease, true))
         inputs:
           azureSubscription: 'SafeguardOpenSource'
           KeyVaultName: 'SafeguardBuildSecrets'
@@ -604,7 +606,9 @@ jobs:
           # Publish root package
           cd npm/safeguard-mcp && npm publish --access public && cd ../..
         displayName: 'npm publish (release)'
-        condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/v')
+        # Gate on isRelease (mirrors the docker push) so only main/tag builds
+        # publish; a tag additionally selects the release dist-tag here.
+        condition: and(eq(variables.isRelease, true), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       - script: |
           npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
@@ -618,7 +622,9 @@ jobs:
           # Publish root package
           cd npm/safeguard-mcp && npm publish --access public --tag pre && cd ../..
         displayName: 'npm publish (pre-release)'
-        condition: not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
+        # Gate on isRelease (mirrors the docker pre-release push) so feature-branch
+        # manual queues never publish; non-tag main builds get the pre dist-tag.
+        condition: and(eq(variables.isRelease, true), not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v')))
 
       # Build & push multi-arch Docker image (linux/amd64 + linux/arm64)
       # via buildx. The Dockerfile consumes pre-built AOT binaries from
