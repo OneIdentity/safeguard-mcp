@@ -27,7 +27,7 @@
 
 services:
   safeguard-mcp:
-    image: ghcr.io/oneidentity/safeguard-mcp:latest
+    image: docker.io/oneidentity/safeguard-mcp:latest
     container_name: safeguard-mcp
     restart: unless-stopped
     # Bind to the host's loopback interface by default. Front this

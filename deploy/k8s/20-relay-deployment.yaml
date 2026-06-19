@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: safeguard-mcp
-          image: ghcr.io/oneidentity/safeguard-mcp:latest
+          image: docker.io/oneidentity/safeguard-mcp:latest
           imagePullPolicy: IfNotPresent
           args: ["--http"]
           ports:

@@ -608,14 +608,14 @@ jobs:
       # publish job above (see Publish_linux_x64) — no in-image
       # `dotnet publish`, no QEMU.
       - task: AzureKeyVault@2
-        displayName: 'Get GHCR token'
-        # Tag-only: only a refs/tags/v* build pushes to GHCR, so non-tag
+        displayName: 'Get Docker Hub token'
+        # Tag-only: only a refs/tags/v* build pushes to Docker Hub, so non-tag
         # builds neither fetch the token nor log in.
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
         inputs:
           azureSubscription: 'SafeguardOpenSource'
           KeyVaultName: 'SafeguardBuildSecrets'
-          SecretsFilter: 'GitHubContainerRegistryToken'
+          SecretsFilter: 'DockerHubAccessToken,DockerHubPassword'
 
       - script: |
           set -euo pipefail
@@ -626,18 +626,18 @@ jobs:
 
       - script: |
           set -euo pipefail
-          echo $(GitHubContainerRegistryToken) | docker login ghcr.io -u OneIdentity --password-stdin
+          docker login -u danpetersonoi --password-stdin <<<$(DockerHubAccessToken)
           docker buildx create --name multiarch --use 2>/dev/null || docker buildx use multiarch
           docker buildx inspect --bootstrap
         displayName: 'Set up buildx multi-arch builder'
-        # Tag-only: the multi-arch builder + GHCR login are only needed for
+        # Tag-only: the multi-arch builder + Docker Hub login are only needed for
         # the release push. The smoke build below uses the default builder.
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Smoke: build a single-arch image with the default (docker) builder
       # so we can --load it locally, run it with the default --http
       # ENTRYPOINT, and exercise the streamable-HTTP /mcp endpoint with a
-      # real JSON-RPC initialize before we push anything to GHCR.
+      # real JSON-RPC initialize before we push anything to Docker Hub.
       - script: |
           set -euo pipefail
           docker buildx build \
@@ -709,7 +709,7 @@ jobs:
             --push .
           docker buildx imagetools inspect $(containerRegistry)/$(imageName):$(PackageVersion)
         displayName: 'buildx build & push (release)'
-        # Tag-only: only a refs/tags/v* build pushes an image to GHCR.
+        # Tag-only: only a refs/tags/v* build pushes an image to Docker Hub.
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Publish the buildx metadata (containing the manifest-list digest)

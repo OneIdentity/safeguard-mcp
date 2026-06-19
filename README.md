@@ -1,3 +1,7 @@
+[![npm](https://img.shields.io/npm/v/@oneidentity/safeguard-mcp.svg)](https://www.npmjs.com/package/@oneidentity/safeguard-mcp)
+[![Docker Hub](https://img.shields.io/badge/docker-oneidentity%2Fsafeguard--mcp-blue.svg)](https://hub.docker.com/r/oneidentity/safeguard-mcp/)
+[![GitHub](https://img.shields.io/github/license/OneIdentity/safeguard-mcp.svg)](https://github.com/OneIdentity/safeguard-mcp/blob/main/LICENSE)
+
 # Safeguard MCP Server
 
 An [MCP](https://modelcontextprotocol.io/) server that enables AI agents to interact with
@@ -35,7 +39,7 @@ docker run -d --rm \
   -p 8080:8080 \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
   -e SAFEGUARD_IGNORE_SSL=true \
-  ghcr.io/oneidentity/safeguard-mcp
+  docker.io/oneidentity/safeguard-mcp
 ```
 
 The container's `ENTRYPOINT` is pinned to `--http`; to run it in
@@ -47,7 +51,7 @@ attached:
 docker run -i --rm \
   --entrypoint /app/SafeguardMcp \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
-  ghcr.io/oneidentity/safeguard-mcp
+  docker.io/oneidentity/safeguard-mcp
 ```
 
 The container runs as a built-in nonroot user (`app`, UID 1654).
@@ -80,7 +84,7 @@ held in an Azure Key Vault HSM. Download `cosign.pub` from the Release
 assets and verify the image digest:
 
 ```bash
-cosign verify --key cosign.pub ghcr.io/oneidentity/safeguard-mcp:<tag>
+cosign verify --key cosign.pub docker.io/oneidentity/safeguard-mcp:<tag>
 ```
 
 ## Quick Start
