@@ -89,7 +89,10 @@ public class AgentSimulationFixture : IAsyncLifetime
         // deterministically instead of racing a fixed Task.Delay.
         await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
 
-        await PreCleanStaleObjectsAsync();
+        // Sweep stale test users first, as the bootstrap admin: this must
+        // happen before CreateTestAdminAsync so a leftover McpTest_Admin from a
+        // crashed run doesn't collide on the unique-name constraint.
+        await PreCleanStaleUsersAsync();
         await CreateTestAdminAsync(password);
 
         ConnectionManager.Dispose();
@@ -102,6 +105,12 @@ public class AgentSimulationFixture : IAsyncLifetime
 
         await ConnectionManager.EnsureAuthenticatedAsync(null, Host, CancellationToken.None);
         await CatalogProvider.LoadCatalogAsync(Host, ignoreSsl);
+
+        // Sweep stale config objects (assets, accounts, roles, policies) as the
+        // freshly-created McpTest_Admin, which holds every admin role. The
+        // bootstrap admin often lacks AssetAdmin/PolicyAdmin and gets 403 on
+        // these collections, which is why they previously accumulated.
+        await PreCleanStaleConfigAsync();
 
         ApiTool = new SafeguardApiTool(ConnectionManager, CatalogProvider, config);
         RetrieveCredentialTool = new SafeguardRetrieveCredentialTool(
@@ -116,14 +125,7 @@ public class AgentSimulationFixture : IAsyncLifetime
             while (_cleanupStack.Count > 0)
             {
                 var (method, path) = _cleanupStack.Pop();
-                try
-                {
-                    await ConnectionManager.InvokeAsync(Host, Service.Core, method, path);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Cleanup] Failed {method} {path}: {ex.Message}");
-                }
+                await DeleteReleasingBlockingRequestAsync(method, path, logTag: "Cleanup");
             }
         }
 
@@ -218,7 +220,32 @@ public class AgentSimulationFixture : IAsyncLifetime
     public void RegisterCleanup(string method, string path)
         => _cleanupStack.Push((method, path));
 
-    private async Task PreCleanStaleObjectsAsync()
+    /// <summary>
+    /// Config collections swept for stale <see cref="TestPrefix"/> objects, in
+    /// dependency-safe deletion order: policies reference roles and accounts;
+    /// accounts reference assets; so the referencing objects are removed before
+    /// the objects they point at. Swept as the privileged McpTest_Admin so an
+    /// interrupted run never leaves residue behind for the next one. Users are
+    /// swept separately (see <see cref="PreCleanStaleUsersAsync"/>) because that
+    /// has to run earlier, before the test admin is created.
+    /// </summary>
+    private static readonly string[] ConfigSweepResources =
+    [
+        "AccessPolicies", "Roles", "AssetAccounts", "Assets"
+    ];
+
+    /// <summary>Removes stale test users (run as bootstrap admin, before the test admin exists).</summary>
+    private Task PreCleanStaleUsersAsync() => SweepStaleAsync("Users");
+
+    /// <summary>Removes stale test config objects (run as the all-roles McpTest_Admin).</summary>
+    private async Task PreCleanStaleConfigAsync()
+    {
+        foreach (var resource in ConfigSweepResources)
+            await SweepStaleAsync(resource);
+    }
+
+    /// <summary>Deletes every object in <paramref name="resource"/> whose Name starts with the test prefix.</summary>
+    private async Task SweepStaleAsync(string resource)
     {
         try
         {
@@ -226,7 +253,7 @@ public class AgentSimulationFixture : IAsyncLifetime
                 Host,
                 Service.Core,
                 "GET",
-                "Users",
+                resource,
                 parameters: new Dictionary<string, string>
                 {
                     ["filter"] = $"Name isw '{TestPrefix}'",
@@ -238,53 +265,85 @@ public class AgentSimulationFixture : IAsyncLifetime
             {
                 var id = element.GetProperty("Id").GetInt32();
                 var name = element.GetProperty("Name").GetString();
-                Console.WriteLine($"[PreClean] Removing stale test user: {name} (Id={id})");
-                try
-                {
-                    await ConnectionManager.InvokeAsync(Host, Service.Core, "DELETE", $"Users/{id}");
-                }
-                catch
-                {
-                }
+                Console.WriteLine($"[PreClean] Removing stale {resource}: {name} (Id={id})");
+                await DeleteReleasingBlockingRequestAsync("DELETE", $"{resource}/{id}", logTag: "PreClean");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PreClean] Warning: {ex.Message}");
+            Console.WriteLine($"[PreClean] Warning sweeping {resource}: {ex.Message}");
         }
+    }
 
+    /// <summary>
+    /// Deletes the object at <paramref name="path"/>. Assets and asset accounts can be
+    /// pinned by a lingering access request (e.g. left in PendingPasswordReset after a
+    /// check-in); the appliance reports this as error 50104 and names the blocking
+    /// request. When that happens we close the request (McpTest_Admin holds PolicyAdmin)
+    /// and retry, so the underlying object is reclaimable instead of leaking indefinitely.
+    /// </summary>
+    private async Task DeleteReleasingBlockingRequestAsync(string method, string path, string logTag)
+    {
         try
         {
-            var response = await ConnectionManager.InvokeAsync(
-                Host,
-                Service.Core,
-                "GET",
-                "Assets",
-                parameters: new Dictionary<string, string>
-                {
-                    ["filter"] = $"Name isw '{TestPrefix}'",
-                    ["fields"] = "Id,Name"
-                });
-
-            using var doc = JsonDocument.Parse(response.Body);
-            foreach (var element in doc.RootElement.EnumerateArray())
-            {
-                var id = element.GetProperty("Id").GetInt32();
-                var name = element.GetProperty("Name").GetString();
-                Console.WriteLine($"[PreClean] Removing stale test asset: {name} (Id={id})");
-                try
-                {
-                    await ConnectionManager.InvokeAsync(Host, Service.Core, "DELETE", $"Assets/{id}");
-                }
-                catch
-                {
-                }
-            }
+            await ConnectionManager.InvokeAsync(Host, Service.Core, method, path);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PreClean] Warning: {ex.Message}");
+            var requestId = ExtractBlockingAccessRequestId(ex.Message);
+            if (requestId == null)
+            {
+                Console.WriteLine($"[{logTag}] Failed {method} {path}: {ex.Message}");
+                return;
+            }
+
+            await CloseAccessRequestAsync(requestId, logTag);
+            try
+            {
+                await ConnectionManager.InvokeAsync(Host, Service.Core, method, path);
+            }
+            catch (Exception retryEx)
+            {
+                Console.WriteLine($"[{logTag}] Failed {method} {path} after closing request {requestId}: {retryEx.Message}");
+            }
         }
+    }
+
+    /// <summary>Closes a blocking access request so its referenced asset/account can be deleted.</summary>
+    private async Task CloseAccessRequestAsync(string requestId, string logTag)
+    {
+        Console.WriteLine($"[{logTag}] Closing blocking access request {requestId}");
+        try
+        {
+            await ConnectionManager.InvokeAsync(
+                Host, Service.Core, "POST", $"AccessRequests/{requestId}/Close",
+                body: "\"integration test cleanup\"");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{logTag}] Failed to close access request {requestId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Pulls the access-request id out of error 50104, e.g.
+    /// "This object is referenced by AccessRequest 1-1-1-... (PendingPasswordReset).",
+    /// returning null when the message is not that referenced-by-request error.
+    /// </summary>
+    private static string ExtractBlockingAccessRequestId(string message)
+    {
+        const string marker = "AccessRequest ";
+        if (string.IsNullOrEmpty(message))
+            return null;
+        var idx = message.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0)
+            return null;
+        var start = idx + marker.Length;
+        var end = start;
+        while (end < message.Length && !char.IsWhiteSpace(message[end]))
+            end++;
+        var id = message[start..end].Trim();
+        return string.IsNullOrWhiteSpace(id) ? null : id;
     }
 
     private async Task CreateTestAdminAsync(string password)
