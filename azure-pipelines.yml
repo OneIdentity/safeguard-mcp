@@ -247,29 +247,43 @@ jobs:
         condition: and(succeeded(), eq(variables.isRelease, true))
 
       - powershell: |
+          $ErrorActionPreference = "Stop"
           $exe = "$(Build.ArtifactStagingDirectory)\win-x64\SafeguardMcp.exe"
           if (-not (Test-Path $exe)) {
             Write-Host "Contents of $(Build.ArtifactStagingDirectory)\win-x64:"
             Get-ChildItem "$(Build.ArtifactStagingDirectory)\win-x64" -Recurse | ForEach-Object { Write-Host $_.FullName }
             throw "Expected AOT executable not found: $exe"
           }
-          # Resolve signtool from the Windows 10 SDK shipped on the
-          # windows-latest image. Pick the highest-version x64 build to
-          # avoid relying on PATH, which is not reliable in PowerShell
-          # task sessions.
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+          # Look up the eSignerCKA cert thumbprint and match it with /sha1.
+          # Subject matching (/n) is unreliable; thumbprint is exact.
+          $CodeSigningCert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
+          if (-not $CodeSigningCert) {
+            throw "No code signing certificate found in CurrentUser\My store"
+          }
+          Write-Host "Found code signing certificate:"
+          Write-Host "  Subject: $($CodeSigningCert.Subject)"
+          Write-Host "  Thumbprint: $($CodeSigningCert.Thumbprint)"
+          Write-Host "  Expires: $($CodeSigningCert.NotAfter)"
+          # Use the x86 Windows SDK signtool: eSignerCKA's PKCS#11 DLL is
+          # 32-bit only, so the x64 signtool cannot load the private key
+          # ("0 certs left after Private Key filter"). See safeguard-ps /
+          # SafeguardDotNet pipelines for the same workaround.
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\x86\\" } |
             Sort-Object FullName -Descending |
             Select-Object -First 1 -ExpandProperty FullName
           if (-not $signtool) {
-            throw "signtool.exe not found under Windows 10 SDK install path."
+            throw "x86 signtool.exe not found under Windows SDK install path."
           }
           Write-Host "Using signtool: $signtool"
-          # /n "One Identity LLC" matches by partial subject so cert
-          # renewal does not require pipeline edits (see SCALUS notes).
-          & $signtool sign /fd sha256 /tr http://ts.ssl.com /td sha256 /n "One Identity LLC" "$exe"
+          & $signtool sign /debug /fd sha256 /tr http://ts.ssl.com /td sha256 /sha1 $CodeSigningCert.Thumbprint "$exe"
           if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE" }
-          & $signtool verify /pa /v "$exe"
-          if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with exit code $LASTEXITCODE" }
+          $verify = Get-AuthenticodeSignature -FilePath $exe
+          Write-Host "Verification status: $($verify.Status)"
+          if ($verify.Status -ne "Valid") {
+            throw "Signature verification failed with status '$($verify.Status)': $($verify.StatusMessage)"
+          }
+          Write-Host "Executable signed and verified successfully"
         displayName: 'Authenticode-sign and verify SafeguardMcp.exe'
         condition: and(succeeded(), eq(variables.isRelease, true))
 
