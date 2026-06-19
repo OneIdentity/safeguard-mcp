@@ -114,8 +114,9 @@ public class DiscoverExecuteTests
         Assert.NotNull(schema);
 
         // Create a test asset — this may fail with 403 if the test user lacks
-        // AssetAdmin permissions, which is acceptable
-        var testName = $"IntegrationTest-{Guid.NewGuid().ToString("N")[..8]}";
+        // AssetAdmin permissions, which is acceptable. The McpTest_ prefix lets
+        // AgentSimulationFixture's startup sweep reclaim it if cleanup is missed.
+        var testName = $"McpTest_Asset_{Guid.NewGuid().ToString("N")[..8]}";
         var createBody = $$"""
         {
             "Name": "{{testName}}",
@@ -124,27 +125,39 @@ public class DiscoverExecuteTests
         }
         """;
 
+        string assetId = null;
         try
         {
             var createResponse = await _fixture.ConnectionManager.InvokeAsync(
                 _fixture.Host, Service.Core, "POST", "Assets", body: createBody);
 
-            // If we get here, creation succeeded — clean up
             if ((int)createResponse.StatusCode == 201)
             {
                 var idStart = createResponse.Body.IndexOf("\"Id\":") + 5;
                 var idEnd = createResponse.Body.IndexOf(",", idStart);
                 if (idEnd < 0) idEnd = createResponse.Body.IndexOf("}", idStart);
-                var id = createResponse.Body[idStart..idEnd].Trim();
-
-                await _fixture.ConnectionManager.InvokeAsync(
-                    _fixture.Host, Service.Core, "DELETE", $"Assets/{id}");
+                assetId = createResponse.Body[idStart..idEnd].Trim();
             }
         }
         catch (ModelContextProtocol.McpException ex) when (ex.Message.Contains("403") || ex.Message.Contains("Forbidden"))
         {
             // Expected when test user lacks asset management permissions — test passes
             // because we verified the schema lookup and the pipeline didn't crash
+        }
+        finally
+        {
+            if (assetId != null)
+            {
+                try
+                {
+                    await _fixture.ConnectionManager.InvokeAsync(
+                        _fixture.Host, Service.Core, "DELETE", $"Assets/{assetId}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Cleanup] Failed to delete test asset {assetId}: {ex.Message}");
+                }
+            }
         }
     }
 }
