@@ -1,3 +1,7 @@
+[![npm](https://img.shields.io/npm/v/@oneidentity/safeguard-mcp.svg)](https://www.npmjs.com/package/@oneidentity/safeguard-mcp)
+[![Docker Hub](https://img.shields.io/badge/docker-oneidentity%2Fsafeguard--mcp-blue.svg)](https://hub.docker.com/r/oneidentity/safeguard-mcp/)
+[![GitHub](https://img.shields.io/github/license/OneIdentity/safeguard-mcp.svg)](https://github.com/OneIdentity/safeguard-mcp/blob/main/LICENSE)
+
 # Safeguard MCP Server
 
 An [MCP](https://modelcontextprotocol.io/) server that enables AI agents to interact with
