@@ -648,7 +648,12 @@ jobs:
             --build-arg IMAGE_VERSION=smoke \
             .
 
-          CID=$(docker run -d --rm -p 18080:8080 safeguard-mcp:smoke)
+          # --http mode requires SAFEGUARD_HOST; use a non-resolvable
+          # placeholder (catalog warm-up is fire-and-forget, so the bogus
+          # host never blocks startup or the /mcp initialize handshake).
+          # No --rm: keep the container so the trap can dump logs if it
+          # exits early.
+          CID=$(docker run -d -e SAFEGUARD_HOST=safeguard.invalid -p 18080:8080 safeguard-mcp:smoke)
           trap 'echo "--- container logs ---"; docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 
           OK=0
