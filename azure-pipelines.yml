@@ -334,6 +334,21 @@ jobs:
           SecretsFilter: 'AppleCertificate-Application-Cert,AppleCertificate-Installer-Password,Apple-App-Specific-Password'
         condition: and(succeeded(), eq(variables.isRelease, true))
 
+      - powershell: |
+          # The Apple Application cert is stored in Key Vault as a
+          # password-less PKCS#12. macOS `security import` cannot consume
+          # it directly, so re-protect it with the Installer password via
+          # .NET before importing (mirrors the SCALUS pipeline).
+          $kvSecretBytes = [System.Convert]::FromBase64String("$(AppleCertificate-Application-Cert)")
+          $certCollection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+          $certCollection.Import($kvSecretBytes, $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+          $protectedCertificateBytes = $certCollection.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, "$(AppleCertificate-Installer-Password)")
+          $certPath = "$(Agent.TempDirectory)/AppleCertificate-Application.p12"
+          [System.IO.File]::WriteAllBytes($certPath, $protectedCertificateBytes)
+          Write-Host "Re-protected Apple cert written to $certPath"
+        displayName: 'Re-protect Apple cert for keychain import'
+        condition: and(succeeded(), eq(variables.isRelease, true))
+
       - bash: |
           set -euo pipefail
           # Isolate the signing identity in a temporary keychain so we
@@ -354,8 +369,7 @@ jobs:
           ORIGINAL_LIST=$(security list-keychains -d user | sed -e 's/[\"]//g' | tr -d '\n ')
           security list-keychains -d user -s "$KEYCHAIN_PATH" $ORIGINAL_LIST
 
-          # Decode the base64 PFX from Key Vault and import.
-          { echo "$(AppleCertificate-Application-Cert)" | base64 --decode > "$CERT_PATH"; } 2>/dev/null
+          # The re-protected PKCS#12 was written by the previous step.
           security import "$CERT_PATH" \
             -k "$KEYCHAIN_PATH" \
             -P "$(AppleCertificate-Installer-Password)" \
