@@ -10,7 +10,6 @@ import { join } from "node:path";
 
 const PLATFORM_PACKAGES = {
   "linux-x64": { pkg: "@oneidentity/safeguard-mcp-linux-x64", bin: "safeguard-mcp" },
-  "linux-arm64": { pkg: "@oneidentity/safeguard-mcp-linux-arm64", bin: "safeguard-mcp" },
   "win32-x64": { pkg: "@oneidentity/safeguard-mcp-win-x64", bin: "safeguard-mcp.exe" },
   "darwin-arm64": { pkg: "@oneidentity/safeguard-mcp-darwin-arm64", bin: "safeguard-mcp" },
 };

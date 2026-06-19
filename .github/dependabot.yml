@@ -47,17 +47,6 @@ updates:
           - patch
 
   - package-ecosystem: npm
-    directory: "/npm/safeguard-mcp-linux-arm64"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      npm-linux-arm64-minor-patch:
-        update-types:
-          - minor
-          - patch
-
-  - package-ecosystem: npm
     directory: "/npm/safeguard-mcp-win-x64"
     schedule:
       interval: weekly
