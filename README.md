@@ -35,7 +35,7 @@ docker run -d --rm \
   -p 8080:8080 \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
   -e SAFEGUARD_IGNORE_SSL=true \
-  ghcr.io/oneidentity/safeguard-mcp
+  docker.io/oneidentity/safeguard-mcp
 ```
 
 The container's `ENTRYPOINT` is pinned to `--http`; to run it in
@@ -47,7 +47,7 @@ attached:
 docker run -i --rm \
   --entrypoint /app/SafeguardMcp \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
-  ghcr.io/oneidentity/safeguard-mcp
+  docker.io/oneidentity/safeguard-mcp
 ```
 
 The container runs as a built-in nonroot user (`app`, UID 1654).
@@ -80,7 +80,7 @@ held in an Azure Key Vault HSM. Download `cosign.pub` from the Release
 assets and verify the image digest:
 
 ```bash
-cosign verify --key cosign.pub ghcr.io/oneidentity/safeguard-mcp:<tag>
+cosign verify --key cosign.pub docker.io/oneidentity/safeguard-mcp:<tag>
 ```
 
 ## Quick Start

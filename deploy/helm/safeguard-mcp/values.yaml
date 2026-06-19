@@ -50,7 +50,7 @@ bridgeTrustedProxies: ""
 # BRIDGE_DISABLED=true.
 # ------------------------------------------------------------------
 image:
-  repository: ghcr.io/oneidentity/safeguard-mcp
+  repository: docker.io/oneidentity/safeguard-mcp
   # Defaults to .Chart.AppVersion when empty.
   tag: ""
   pullPolicy: IfNotPresent
