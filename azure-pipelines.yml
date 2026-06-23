@@ -633,28 +633,32 @@ jobs:
           }
           EOF
 
-          # Retry to absorb registry signature propagation lag after publish.
+          # Retry to absorb registry propagation lag after publish. The exact
+          # version pin returns ETARGET until npm's read replicas catch up with
+          # the publish write, which can take a few minutes. --prefer-online
+          # forces fresh metadata so a stale cached packument is never reused.
           attempt=1
-          max=6
-          until npm install --force --no-audit --ignore-scripts; do
+          max=20
+          until npm install --force --no-audit --ignore-scripts --prefer-online; do
             if [ "$attempt" -ge "$max" ]; then
               echo "ERROR: npm install of published packages failed after $max attempts."
               exit 1
             fi
-            echo "npm install attempt $attempt failed; retrying in 10s (registry propagation)..."
+            echo "npm install attempt $attempt failed; retrying in 15s (registry propagation)..."
             attempt=$((attempt + 1))
-            sleep 10
+            sleep 15
           done
 
           attempt=1
+          max_audit=12
           until npm audit signatures; do
-            if [ "$attempt" -ge "$max" ]; then
-              echo "ERROR: npm audit signatures failed after $max attempts; a published package is unsigned or tampered."
+            if [ "$attempt" -ge "$max_audit" ]; then
+              echo "ERROR: npm audit signatures failed after $max_audit attempts; a published package is unsigned or tampered."
               exit 1
             fi
-            echo "npm audit signatures attempt $attempt failed; retrying in 10s (signature propagation)..."
+            echo "npm audit signatures attempt $attempt failed; retrying in 15s (signature propagation)..."
             attempt=$((attempt + 1))
-            sleep 10
+            sleep 15
           done
           echo "Verified: all published npm packages have valid registry signatures."
         displayName: 'Verify npm registry signatures (post-publish)'
