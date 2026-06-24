@@ -38,9 +38,13 @@ prefer the npm package or the standalone binary instead.
 docker run -d --rm \
   -p 8080:8080 \
   -e SAFEGUARD_HOST=safeguard.corp.example.com \
-  -e SAFEGUARD_IGNORE_SSL=true \
   docker.io/oneidentity/safeguard-mcp
 ```
+
+TLS certificate validation is **on by default**. If your appliance
+presents a self-signed or internal-CA certificate, see
+[SSL Certificate Validation](#ssl-certificate-validation) for the
+opt-out — prefer trusting the issuing CA over disabling validation.
 
 The container's `ENTRYPOINT` is pinned to `--http`; to run it in
 stdio mode (e.g. wired into an MCP client that launches its own
@@ -201,27 +205,44 @@ above for the paste-bearer and OAuth-bridge flows.
 
 ### Typical Setup
 
-Most stdio users simply set `SAFEGUARD_HOST` to tell the server which appliance to
-connect to. On first use, the server displays a verification URL and code — no
-passwords stored in config files:
+Set `SAFEGUARD_HOST` to tell the server which appliance to connect to. On
+first use, the server displays a verification URL and code — no passwords
+stored in config files. A complete stdio server entry looks like:
 
 ```json
 {
-  "env": {
-    "SAFEGUARD_HOST": "safeguard.corp.example.com"
+  "mcpServers": {
+    "safeguard": {
+      "command": "npx",
+      "args": ["-y", "@oneidentity/safeguard-mcp"],
+      "env": {
+        "SAFEGUARD_HOST": "safeguard.corp.example.com"
+      }
+    }
   }
 }
 ```
 
-In stdio mode you can omit `SAFEGUARD_HOST` if your MCP client supports
-elicitation forms; on the first `Safeguard_Connect` call the server will pop
-a form asking for the appliance address. Without elicitation support, the
+See [`docs/CLIENT-SETUP.md`](docs/CLIENT-SETUP.md) for the exact file and
+top-level key for each client (Claude Desktop, Claude Code, VS Code Copilot,
+GitHub Copilot CLI) — VS Code uses `servers` instead of `mcpServers`, and the
+Copilot CLI adds a `"type": "local"` field.
+
+Setting `SAFEGUARD_HOST` is recommended for every deployment. **HTTP mode
+requires it at startup.** In stdio mode you *may* omit it if your MCP client
+supports elicitation forms — on the first `Safeguard_Connect` call the server
+pops a form asking for the appliance address. Without elicitation support, the
 server returns an error telling you to set `SAFEGUARD_HOST` and restart.
-HTTP mode always requires `SAFEGUARD_HOST` at startup.
 
 ### SSL Certificate Validation
 
-For appliances using self-signed or internal CA certificates, set `SAFEGUARD_IGNORE_SSL`:
+TLS certificate validation is **enabled by default** and is the recommended
+posture for production. If your appliance presents a self-signed or internal-CA
+certificate, the right fix is to **trust the issuing CA** on the host running
+the server, not to disable validation.
+
+Only as a last resort (e.g. a throwaway lab appliance), set
+`SAFEGUARD_IGNORE_SSL=true` to skip validation:
 
 ```json
 {
@@ -236,7 +257,8 @@ For appliances using self-signed or internal CA certificates, set `SAFEGUARD_IGN
 TLS verification failure during connect and `SAFEGUARD_IGNORE_SSL` is not
 set, stdio mode will offer an elicitation prompt asking whether to disable
 TLS verification for the lifetime of the current session; accepting flips
-the policy in-memory only. HTTP mode does not prompt — set the env var.
+the policy in-memory only. HTTP mode does not prompt — fix the trust chain,
+or set the env var if you must.
 
 ## Threat Model
 
@@ -748,8 +770,10 @@ from another.
 
 #### Stdio config without a pre-configured host
 
-If your MCP client supports elicitation forms, you can omit `SAFEGUARD_HOST`
-and let the server prompt for the appliance on first connect:
+Setting `SAFEGUARD_HOST` (as in [Typical Setup](#typical-setup)) is the
+recommended form. As an exception, if your MCP client supports elicitation
+forms you can omit it and let the server prompt for the appliance on first
+connect:
 
 ```json
 {
