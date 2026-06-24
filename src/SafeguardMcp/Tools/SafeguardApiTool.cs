@@ -907,6 +907,14 @@ internal sealed class SafeguardApiTool
         var safeBody = body ?? string.Empty;
         var notices = new List<Notice>();
 
+        // count=true returns a bare scalar count from the appliance (controllers do
+        // `return Ok(countResult)` where countResult is an int). Surface that value in
+        // meta.count instead of overloading data with a raw integer, and skip the
+        // auto_limit / paging notices that don't apply to a scalar count.
+        var countEnvelope = TryBuildCountOnlyEnvelope(format, safeBody, parameters);
+        if (countEnvelope != null)
+            return countEnvelope;
+
         if (injectedLimit > 0)
         {
             notices.Add(new Notice(
@@ -1088,6 +1096,61 @@ internal sealed class SafeguardApiTool
             notices.Add(emptyAuditNotice);
 
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
+    }
+
+    /// <summary>
+    /// When a <c>count=true</c> request returns a bare scalar count, build a clean envelope that
+    /// surfaces the value in <c>meta.count</c> with <c>data</c> left null — and without the
+    /// auto-limit / paging notices, which are meaningless for a scalar count. Returns null for
+    /// non-count requests, CSV, or when the body is not a bare integer, so the caller falls
+    /// through to normal formatting.
+    /// </summary>
+    internal static string TryBuildCountOnlyEnvelope(
+        string format, string body, IDictionary<string, string> parameters)
+    {
+        if (format == "csv")
+            return null;
+        if (!IsCountRequested(parameters))
+            return null;
+        if (!TryParseScalarCount(body, out var count))
+            return null;
+
+        var notices = new List<Notice>
+        {
+            new Notice(
+                NoticeKinds.CountOnlyResponse,
+                "count=true returns only a row count; the value is in meta.count and data is null.")
+        };
+        return ResponseEnvelopeBuilder.BuildJsonEnvelope(
+            body: null, notices: notices, paging: null, truncation: null, count: count);
+    }
+
+    private static bool IsCountRequested(IDictionary<string, string> parameters)
+    {
+        return parameters != null
+            && parameters.TryGetValue("count", out var value)
+            && string.Equals(value?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseScalarCount(string body, out long count)
+    {
+        count = 0;
+        if (string.IsNullOrWhiteSpace(body))
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Number
+                && doc.RootElement.TryGetInt64(out var parsed))
+            {
+                count = parsed;
+                return true;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return false;
     }
 
     /// <summary>

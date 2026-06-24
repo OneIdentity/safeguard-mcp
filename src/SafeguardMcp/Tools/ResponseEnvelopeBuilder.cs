@@ -87,13 +87,16 @@ internal static class ResponseEnvelopeBuilder
 {
     /// <summary>
     /// Wrap a JSON response body in the standard envelope:
-    ///   { "data": &lt;body&gt;, "meta": { "notices": [...], "paging": {...}?, "truncation": {...}? } }
+    ///   { "data": &lt;body&gt;, "meta": { "count": N?, "notices": [...], "paging": {...}?, "truncation": {...}? } }
+    /// When <paramref name="count"/> is supplied (a count=true response), the value is surfaced in
+    /// meta.count and data is left null rather than overloading data with a bare integer.
     /// </summary>
     internal static string BuildJsonEnvelope(
         string body,
         IReadOnlyList<Notice> notices,
         PagingInfo paging,
-        TruncationInfo truncation)
+        TruncationInfo truncation,
+        long? count = null)
     {
         using var buffer = new MemoryStream();
         using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = false }))
@@ -105,6 +108,9 @@ internal static class ResponseEnvelopeBuilder
 
             writer.WritePropertyName("meta");
             writer.WriteStartObject();
+
+            if (count.HasValue)
+                writer.WriteNumber("count", count.Value);
 
             writer.WritePropertyName("notices");
             writer.WriteStartArray();

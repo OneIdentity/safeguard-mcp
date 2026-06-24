@@ -150,8 +150,10 @@ Prefer the dedicated scoping params (`startDate`, `endDate`, `userId`, and on
 
 ## Aggregation and Summarization
 
-- `count=true` returns just the row count for any collection endpoint — the response body is a bare
-  JSON integer (e.g. `52`), not an object or array. Pair with `filter=` for scoped counts (per
+- `count=true` returns just the row count for any collection endpoint. The appliance returns a
+  bare integer; the MCP surfaces it as `meta.count` (e.g. `{"data":null,"meta":{"count":52,...}}`),
+  leaving `data` null — read the number from `meta.count`, not `data`. The irrelevant auto-limit /
+  paging notices are suppressed for count calls. Pair with `filter=` for scoped counts (per
   partition, per requester, per time window). See workflow recipe `count-with-filter`.
 - There is **no server-side group-by / distinct**: no `groupBy=`, no `distinct=`, no `aggregate=`
   parameter exists. For per-group counts, page filtered rows and tally in agent context (recipe
