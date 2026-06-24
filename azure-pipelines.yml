@@ -842,18 +842,18 @@ jobs:
           IMAGE="$(containerRegistry)/$(imageName):$(PackageVersion)"
           OUT="$(Build.ArtifactStagingDirectory)/release"
           mkdir -p "$OUT"
-          # Extract per-platform SPDX SBOMs that buildx attached via
-          # --sbom=true. `imagetools inspect` reads the in-toto
-          # attestation envelope and returns the embedded SPDX doc.
-          for platform in linux/amd64; do
-            slug=$(echo "$platform" | tr '/' '-')
-            docker buildx imagetools inspect "$IMAGE" \
-              --format "{{ json (index .SBOM \"${platform}\").SPDX }}" \
-              | jq . > "$OUT/sbom-${slug}.spdx.json"
-            test -s "$OUT/sbom-${slug}.spdx.json"
-            echo "Wrote $OUT/sbom-${slug}.spdx.json ($(wc -c < "$OUT/sbom-${slug}.spdx.json") bytes)"
-          done
-        displayName: 'Extract per-platform SBOMs from pushed image'
+          # Extract the SPDX SBOM that buildx attached via --sbom=true.
+          # The image is single-platform (linux/amd64), so `imagetools
+          # inspect` exposes .SBOM as a single stub: read .SBOM.SPDX
+          # directly. (The per-platform `index .SBOM "<platform>"` form
+          # only applies to multi-platform manifest lists.)
+          slug=linux-amd64
+          docker buildx imagetools inspect "$IMAGE" \
+            --format '{{ json .SBOM.SPDX }}' \
+            | jq . > "$OUT/sbom-${slug}.spdx.json"
+          test -s "$OUT/sbom-${slug}.spdx.json"
+          echo "Wrote $OUT/sbom-${slug}.spdx.json ($(wc -c < "$OUT/sbom-${slug}.spdx.json") bytes)"
+        displayName: 'Extract SBOM from pushed image'
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Stage release artifacts
