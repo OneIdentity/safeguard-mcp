@@ -102,6 +102,24 @@ Run `Safeguard_Schema` on a path to see the nested shape — complex properties 
 
 Rule of thumb: if the schema shows a property as `array<Type>` it's to-many — use a child endpoint. If it shows `object<Type>` it's to-one — dot into it freely.
 
+### Audit-log endpoints (`/v4/AuditLog/*`)
+
+The audit collections (`/v4/AuditLog/Logins`, `/Search`, `/ObjectChanges`) follow the
+same nested-property rule, and they trip agents up the most. The actor is the nested
+**`UserProperties`** object — there is **no flat `UserName` column and no `ModifiedByUserId`**:
+
+- `filter=UserProperties.UserName eq 'jsmith'` ✅ (who performed the action)
+- `filter=UserName eq 'jsmith'` ❌ — not a property (HTTP 400, Code 70002).
+- `filter=ModifiedByUserId eq 5` ❌ — does not exist; use `UserId eq 5` or `UserProperties.UserName`.
+
+The only orderable **time field is `LogTime`** on all three endpoints:
+
+- `orderby=-LogTime` ✅ (newest-first; the MCP auto-applies this when you omit `orderby`)
+- `orderby=-Timestamp` ❌ and `DateInfo` ❌ — not valid (HTTP 400, Code 70001).
+
+Prefer the dedicated scoping params (`startDate`, `endDate`, `userId`, and on
+`/ObjectChanges` also `assetId`, `accountId`) over `filter` when they cover your need.
+
 ## Field Selection
 
 - Include specific fields: `fields=Id,Name,Description`

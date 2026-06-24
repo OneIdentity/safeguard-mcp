@@ -679,6 +679,10 @@ internal sealed class SafeguardApiTool
             }
         }
 
+        var auditBlock = BuildAuditQuerySyntaxReference(path);
+        if (auditBlock != null)
+            sb.AppendLine().AppendLine(auditBlock);
+
         sb.AppendLine()
             .Append("For filter/field/order/paging rules call Safeguard_Reference topic=query-syntax search=\"<keyword>\".");
         return sb.ToString().TrimEnd();
@@ -1768,6 +1772,72 @@ internal sealed class SafeguardApiTool
             return AuditDefaultOrderbyByEndpoint.TryGetValue(segments[i + 1], out orderby);
         }
         return false;
+    }
+
+    // Per-audit-endpoint canonical FILTERABLE property names (with nested forms
+    // spelled out). The audit collections validate filter/orderby/fields against
+    // their DTO property graph (PangaeaAppliance ApiQueryOptions.Validate<T> over
+    // LoginActivityLog / AuditSearchLog / ObjectChangeLog), so the user fields are
+    // the nested UserProperties.* object, NOT flat columns like UserName or
+    // ModifiedByUserId. LogTime is the only orderable time field on all three.
+    private static readonly Dictionary<string, string[]> AuditFilterableByEndpoint =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Logins"] = new[]
+            {
+                "UserProperties.UserName", "UserProperties.DomainName", "UserId",
+                "EventName", "ApplianceName", "ErrorType", "LogTime",
+            },
+            ["Search"] = new[]
+            {
+                "UserProperties.UserName", "UserId", "EventName", "ObjectName",
+                "AccountName", "AssetName", "RequesterName", "LogTime",
+            },
+            ["ObjectChanges"] = new[]
+            {
+                "UserProperties.UserName", "UserId", "ObjectName", "ObjectType",
+                "EventName", "OperationType", "AssetPartitionName", "LogTime",
+            },
+        };
+
+    // Builds the proactive query-syntax guidance shown for an audit collection path
+    // (/v4/AuditLog/Logins|Search|ObjectChanges). It spells out the canonical
+    // filterable property names (nested UserProperties.* forms), names LogTime as
+    // the orderby time field, and calls out the traps the agent otherwise only hits
+    // after a failed call: there is no ModifiedByUserId / flat UserName column, and
+    // -Timestamp / DateInfo are not valid time fields. Returns null for non-audit
+    // paths so callers can skip the block.
+    internal static string BuildAuditQuerySyntaxReference(string path)
+    {
+        var segments = GetPathSegments(path);
+        string endpoint = null;
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            if (segments[i].Equals("AuditLog", StringComparison.OrdinalIgnoreCase)
+                && AuditFilterableByEndpoint.ContainsKey(segments[i + 1]))
+            {
+                endpoint = segments[i + 1];
+                break;
+            }
+        }
+        if (endpoint == null)
+            return null;
+
+        var fields = AuditFilterableByEndpoint[endpoint];
+        var sb = new StringBuilder();
+        sb.Append("Audit query reference for /v4/AuditLog/").Append(endpoint).AppendLine(":");
+        sb.Append("  Filterable property names: ").AppendLine(string.Join(", ", fields));
+        sb.AppendLine("  Time field: LogTime. Use orderby=-LogTime for newest-first "
+            + "(the MCP auto-applies this when you omit orderby).");
+        sb.AppendLine("  Nested user fields are dotted, NOT flat: filter the actor with "
+            + "UserProperties.UserName eq '<name>' (UserName on its own is not a property).");
+        sb.AppendLine("  Not filterable: ModifiedByUserId and DateInfo do not exist on audit "
+            + "records, and -Timestamp is not a valid time field. Use UserId or "
+            + "UserProperties.UserName for the actor, and LogTime for time.");
+        sb.Append("  Prefer the dedicated scoping params (startDate, endDate, userId"
+            + (endpoint.Equals("ObjectChanges", StringComparison.OrdinalIgnoreCase) ? ", assetId, accountId" : string.Empty)
+            + ") over filter where they cover your need.");
+        return sb.ToString();
     }
 
     private IDictionary<string, string> MaybeInjectLimit(
