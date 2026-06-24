@@ -1068,7 +1068,149 @@ internal sealed class SafeguardApiTool
             }
         }
 
+        // Empty audit-log result: disambiguate "no matches" from "looked too
+        // narrowly" by echoing the effective filter and time window the server
+        // applied. Only fires for an empty data array on an audit path.
+        var emptyAuditNotice = BuildEmptyAuditResultNotice(method, path, safeBody, parameters);
+        if (emptyAuditNotice != null)
+            notices.Add(emptyAuditNotice);
+
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
+    }
+
+    /// <summary>
+    /// When a GET against an audit-log path (/v4/AuditLog/*) returns an empty JSON
+    /// array, emit a structured notice that disambiguates "0 rows match &lt;filter&gt; in
+    /// window &lt;start&gt;..&lt;end&gt;" from "no filter applied" and "default 1-day window".
+    /// The notice echoes the effective server-side filter and the effective time
+    /// window, spelling out the default-window bounds when the agent supplied no
+    /// startDate/endDate, so the agent can tell "nothing exists" apart from "looked
+    /// too narrowly." Non-empty results and non-audit paths get no notice.
+    /// </summary>
+    internal static Notice BuildEmptyAuditResultNotice(
+        string method, string path, string body, IDictionary<string, string> parameters)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        var verb = string.IsNullOrWhiteSpace(method) ? "GET" : method.ToUpperInvariant();
+        if (verb != "GET")
+            return null;
+        if (!IsAuditLogPath(path))
+            return null;
+        if (!IsEmptyJsonArray(body))
+            return null;
+
+        // Effective time window. The audit endpoints (Logins / ObjectChanges /
+        // Search) share one default in PangaeaAppliance's ProcessCassandraDateFilter:
+        // endDate defaults to now, startDate defaults to one day before the
+        // effective endDate.
+        var startDate = GetParam(parameters, "startDate");
+        var endDate = GetParam(parameters, "endDate");
+        var startSupplied = !string.IsNullOrWhiteSpace(startDate);
+        var endSupplied = !string.IsNullOrWhiteSpace(endDate);
+        var defaultWindow = !startSupplied && !endSupplied;
+
+        string windowText;
+        if (defaultWindow)
+        {
+            windowText = "default 1-day window (the last 24h: now-1day..now)";
+        }
+        else
+        {
+            var startText = startSupplied
+                ? startDate
+                : (endSupplied ? $"{endDate} minus 1 day" : "now minus 1 day");
+            var endText = endSupplied ? endDate : "now";
+            windowText = $"{startText}..{endText}";
+        }
+
+        var filterText = BuildEffectiveFilterText(parameters);
+        var hasFilter = filterText != null;
+
+        var message = hasFilter
+            ? $"0 rows match {filterText} in window {windowText}."
+            : $"0 rows in window {windowText}; no filter applied.";
+
+        string suggestion;
+        if (defaultWindow)
+        {
+            suggestion = "This is the default 1-day look-back — pass startDate/endDate "
+                + "(ISO 8601) to widen the time window"
+                + (hasFilter
+                    ? ", and re-check the filter property names/values if you expected matches."
+                    : ".");
+        }
+        else
+        {
+            suggestion = hasFilter
+                ? "Widen startDate/endDate or relax the filter; verify the property "
+                    + "names/values match the endpoint's schema."
+                : "Widen startDate/endDate to broaden the time window.";
+        }
+
+        return new Notice(NoticeKinds.EmptyAuditResult, message, suggestion);
+    }
+
+    private static bool IsAuditLogPath(string path)
+    {
+        foreach (var segment in GetPathSegments(path))
+        {
+            if (segment.Equals("AuditLog", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsEmptyJsonArray(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return false;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                && document.RootElement.GetArrayLength() == 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetParam(IDictionary<string, string> parameters, string key)
+        => parameters != null && parameters.TryGetValue(key, out var value) ? value : null;
+
+    // Query keys that scope/shape a response but are NOT server-side filters: paging,
+    // projection, ordering, count, and the time-window bounds (echoed separately).
+    private static readonly HashSet<string> NonFilterQueryKeys =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "page", "limit", "fields", "orderby", "count", "startDate", "endDate"
+        };
+
+    // The effective server-side filter the agent expressed: the OData filter= plus any
+    // scoping params (userId, assetId, accountId, systemId, objectType, category, ...).
+    private static string BuildEffectiveFilterText(IDictionary<string, string> parameters)
+    {
+        if (parameters == null || parameters.Count == 0)
+            return null;
+
+        var parts = new List<string>();
+        if (parameters.TryGetValue("filter", out var filter) && !string.IsNullOrWhiteSpace(filter))
+            parts.Add($"filter='{filter}'");
+
+        foreach (var kv in parameters)
+        {
+            if (kv.Key.Equals("filter", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (NonFilterQueryKeys.Contains(kv.Key))
+                continue;
+            if (string.IsNullOrWhiteSpace(kv.Value))
+                continue;
+            parts.Add($"{kv.Key}={kv.Value}");
+        }
+
+        return parts.Count == 0 ? null : string.Join(", ", parts);
     }
 
     internal static Notice BuildRecipeCrossLinkNotice(string method, string path)
