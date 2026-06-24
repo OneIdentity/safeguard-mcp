@@ -105,7 +105,7 @@ public class MisplacedQueryOptionsTests
     [Fact]
     public void Allows_NullOrEmptyArguments()
     {
-        SafeguardApiTool.RejectMisplacedQueryOptions((IDictionary<string, JsonElement>)null);
+        SafeguardApiTool.RejectMisplacedQueryOptions((IDictionary<string, JsonElement>)null!);
         SafeguardApiTool.RejectMisplacedQueryOptions(new Dictionary<string, JsonElement>());
     }
 

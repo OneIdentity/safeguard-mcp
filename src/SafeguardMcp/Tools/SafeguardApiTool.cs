@@ -449,7 +449,7 @@ internal sealed class SafeguardApiTool
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
-        [Description("All query options as a single URL-encoded string passed here (e.g. 'fields=Id,Name&filter=Name eq \"x\"&orderby=-CreatedDate'). There is no separate parameters object: filter, orderby, fields, count, page, and limit all ride this one string. Omit if none.")] string query = null,
+        [Description("All query options ride this single string (e.g. 'filter=Name eq \"x\"&orderby=-CreatedDate'); there is no separate parameters object. See Safeguard_Reference topic=query-syntax. Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
         [Description("Response format: 'json' (default) or 'csv' (GET-only, tabular).")]
         string format = "json",
