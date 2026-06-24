@@ -1,6 +1,6 @@
 variables:
   - name: semanticVersion
-    value: '0.1.0'
+    value: '0.2.0'
   - name: isTagBuild
     value: ${{ startsWith(variables['Build.SourceBranch'], 'refs/tags/') }}
   # Gate for code-signing and other steps that need access to release
