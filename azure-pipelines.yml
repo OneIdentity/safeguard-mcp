@@ -592,15 +592,17 @@ jobs:
           npm config set //registry.npmjs.org/:_authToken=$(NpmOrgApiKey)
 
           # Publish platform packages first
-          cd npm/safeguard-mcp-linux-x64 && npm publish --access public && cd ../..
-          cd npm/safeguard-mcp-win-x64 && npm publish --access public && cd ../..
-          cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public && cd ../..
+          cd npm/safeguard-mcp-linux-x64 && npm publish --access public --tag $(NpmDistTag) && cd ../..
+          cd npm/safeguard-mcp-win-x64 && npm publish --access public --tag $(NpmDistTag) && cd ../..
+          cd npm/safeguard-mcp-darwin-arm64 && npm publish --access public --tag $(NpmDistTag) && cd ../..
 
           # Publish root package
-          cd npm/safeguard-mcp && npm publish --access public && cd ../..
+          cd npm/safeguard-mcp && npm publish --access public --tag $(NpmDistTag) && cd ../..
         displayName: 'npm publish (release)'
         # Tag-only: a non-tag main build must never push to npm. Only
-        # refs/tags/v* publishes, selecting the release dist-tag.
+        # refs/tags/v* publishes. NpmDistTag is `latest` for final tags and
+        # `next` for pre-release tags (e.g. v0.2.0-rc.1), so an rc never
+        # clobbers the GA `latest` dist-tag.
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
 
       # Post-publish guardrail: install the four packages we just published
@@ -756,13 +758,19 @@ jobs:
           fi
         displayName: 'Smoke: docker image under 80 MB budget'
 
-      # Tag build: push :version and :latest in one shot.
+      # Tag build: push :version always; :latest only for final (non-pre) tags.
       - script: |
           set -euo pipefail
+          # Always tag the immutable version. Add :latest only for final
+          # releases ($(PushLatest)=true); pre-release tags (e.g. v0.2.0-rc.1)
+          # publish :version but leave Docker Hub :latest pointing at GA.
+          TAGS="--tag $(containerRegistry)/$(imageName):$(PackageVersion)"
+          if [ "$(PushLatest)" = "true" ]; then
+            TAGS="$TAGS --tag $(containerRegistry)/$(imageName):latest"
+          fi
           docker buildx build \
             --platform linux/amd64 \
-            --tag $(containerRegistry)/$(imageName):$(PackageVersion) \
-            --tag $(containerRegistry)/$(imageName):latest \
+            $TAGS \
             --build-arg IMAGE_VERSION=$(PackageVersion) \
             --provenance=mode=max \
             --sbom=true \

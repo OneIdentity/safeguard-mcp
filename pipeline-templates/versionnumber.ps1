@@ -15,7 +15,9 @@ if ($IsTagBuild -eq 'true') {
     # Tag build: use the tag as the version (strip leading 'v')
     $version = $TagName -replace '^v', ''
     $releaseTag = "v$version"
-    $isPreRelease = $false
+    # A SemVer pre-release suffix (e.g. -rc.1, -beta.2) marks this as a
+    # pre-release so rc/beta tags never take over the GA `latest` channels.
+    $isPreRelease = $version -match '-'
 }
 else {
     # Non-tag build: append pre-release suffix
@@ -36,10 +38,23 @@ Write-Host "Version: $version"
 Write-Host "Release Tag: $releaseTag"
 Write-Host "Is Pre-Release: $isPreRelease"
 
+# Pre-release artifacts go to side channels so a GA `latest` is never
+# clobbered by an rc/beta: npm publishes under the `next` dist-tag and the
+# Docker `:latest` tag is withheld. Normalize the bool to a lowercase string
+# so the GitHubRelease@1 `isPreRelease` input parses it cleanly.
+$isPreReleaseStr = if ($isPreRelease) { 'true' } else { 'false' }
+$npmDistTag      = if ($isPreRelease) { 'next' } else { 'latest' }
+$pushLatest      = if ($isPreRelease) { 'false' } else { 'true' }
+
+Write-Host "npm dist-tag: $npmDistTag"
+Write-Host "Push Docker :latest: $pushLatest"
+
 # Set ADO pipeline variables
 Write-Host "##vso[task.setvariable variable=PackageVersion]$version"
 Write-Host "##vso[task.setvariable variable=ReleaseTag]$releaseTag"
-Write-Host "##vso[task.setvariable variable=IsPreRelease]$isPreRelease"
+Write-Host "##vso[task.setvariable variable=IsPreRelease]$isPreReleaseStr"
+Write-Host "##vso[task.setvariable variable=NpmDistTag]$npmDistTag"
+Write-Host "##vso[task.setvariable variable=PushLatest]$pushLatest"
 
 $repoRoot = if ($env:BUILD_SOURCESDIRECTORY) { $env:BUILD_SOURCESDIRECTORY } else { (Get-Location).Path }
 
