@@ -2,6 +2,28 @@
 
 All GET collection endpoints support these query parameters passed via the `query` parameter in Safeguard_Execute.
 
+## Passing query options
+
+**Every query option rides the single `query` string.** Filtering, ordering, field selection, counting, and paging are all combined into one URL-encoded string and passed as the `query` argument of `Safeguard_Execute`. There is **no** `parameters`, `params`, `queryParameters`, or `odata` object, and there are no top-level `filter`/`orderby`/`fields`/`count` arguments. The tool accepts only `method`, `path`, `query`, `body`, and `format`; anything else is dropped before the call runs and your options are silently lost.
+
+**Right — options in the `query` string:**
+
+```
+method: GET
+path:   /v4/AuditLog/Logins
+query:  filter=UserProperties.UserName eq 'Alice'&orderby=-LogTime&fields=Id,LogTime&limit=50
+```
+
+**Wrong — options in a separate object (rejected):**
+
+```
+method: GET
+path:   /v4/AuditLog/Logins
+parameters: { "filter": "UserProperties.UserName eq 'Alice'", "orderby": "-LogTime" }
+```
+
+A call shaped like the wrong example is rejected with an error naming the offending field; move every option into the `query` string and retry.
+
 ## Filter Operators
 
 | Operator | Meaning | Example |

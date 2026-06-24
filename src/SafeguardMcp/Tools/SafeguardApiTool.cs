@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
 using SafeguardMcp.Catalog;
@@ -448,12 +449,16 @@ internal sealed class SafeguardApiTool
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
-        [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
+        [Description("All query options as a single URL-encoded string passed here (e.g. 'fields=Id,Name&filter=Name eq \"x\"&orderby=-CreatedDate'). There is no separate parameters object: filter, orderby, fields, count, page, and limit all ride this one string. Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
         [Description("Response format: 'json' (default) or 'csv' (GET-only, tabular).")]
         string format = "json",
+        RequestContext<CallToolRequestParams> context = null,
         CancellationToken ct = default)
-        => await DispatchAsync(server, method, path, query, body, format, ct);
+    {
+        RejectMisplacedQueryOptions(context?.Params?.Arguments);
+        return await DispatchAsync(server, method, path, query, body, format, ct);
+    }
 
     [McpServerTool(Name = "Safeguard_Schema", Title = "Get API Schema",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -733,6 +738,68 @@ internal sealed class SafeguardApiTool
             sb.Append("  ... showing ").Append(shown.Length).Append(" of ").Append(matched.Length).AppendLine(".");
         return sb.ToString().TrimEnd();
     }
+
+    // Containers the SDK silently drops because they are not declared tool
+    // parameters. An agent that nests query options inside one of these gets an
+    // empty query string and unfiltered results, so we reject the call outright.
+    private static readonly string[] MisplacedQueryOptionContainers =
+        { "parameters", "params", "queryParameters", "odata" };
+
+    // Top-level keys that only make sense inside the single query string. None of
+    // these are declared parameters of Safeguard_Execute, so their presence at the
+    // top level is always a mistake.
+    private static readonly string[] MisplacedTopLevelQueryKeys =
+        { "filter", "orderby", "fields", "count" };
+
+    /// <summary>
+    /// Rejects calls that put Safeguard query options in a separate object/key
+    /// instead of the single <c>query</c> string. The MCP SDK binds only declared
+    /// parameters, so these extra fields are dropped before the method runs — the
+    /// raw argument map (read here) is the only place they remain visible.
+    /// </summary>
+    internal static void RejectMisplacedQueryOptions(IDictionary<string, JsonElement> arguments)
+    {
+        if (arguments is null || arguments.Count == 0)
+            return;
+
+        foreach (var container in MisplacedQueryOptionContainers)
+        {
+            if (TryGetArgument(arguments, container, out var value)
+                && value.ValueKind == JsonValueKind.Object)
+            {
+                throw new McpException(BuildMisplacedQueryOptionsError(container));
+            }
+        }
+
+        foreach (var key in MisplacedTopLevelQueryKeys)
+        {
+            if (TryGetArgument(arguments, key, out _))
+                throw new McpException(BuildMisplacedQueryOptionsError(key));
+        }
+    }
+
+    private static bool TryGetArgument(
+        IDictionary<string, JsonElement> arguments, string key, out JsonElement value)
+    {
+        foreach (var pair in arguments)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string BuildMisplacedQueryOptionsError(string offendingKey)
+        => $"Query options were passed in a '{offendingKey}' field, which Safeguard_Execute ignores. "
+            + "All query options (filter, orderby, fields, count, page, limit) must be combined into the "
+            + "single 'query' string argument — there is no separate parameters object. "
+            + "CORRECT: query=\"filter=Name eq 'TestAdmin'&orderby=-LogTime\". "
+            + "See Safeguard_Reference topic=query-syntax for the full query syntax.";
 
     private async Task<string> DispatchAsync(
         McpServer server,
