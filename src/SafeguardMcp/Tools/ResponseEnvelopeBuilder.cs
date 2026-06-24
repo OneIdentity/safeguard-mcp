@@ -14,6 +14,7 @@ internal static class NoticeKinds
 {
     internal const string AutoLimitApplied = "auto_limit_applied";
     internal const string DefaultFieldsApplied = "default_fields_applied";
+    internal const string DefaultOrderbyApplied = "default_orderby_applied";
     internal const string AutoWindowApplied = "auto_window_applied";
     internal const string EmptyAuditResult = "empty_audit_result";
     internal const string CountOnlyResponse = "count_only_response";

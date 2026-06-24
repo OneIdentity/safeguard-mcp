@@ -857,6 +857,7 @@ internal sealed class SafeguardApiTool
         var parameters = ParseQueryParameters(query);
         parameters = MaybeInjectLimit(normalizedMethod, normalizedPath, service, parameters, out var injectedLimit);
         parameters = MaybeInjectDefaultFields(normalizedMethod, normalizedPath, parameters, out var injectedDefaultFields);
+        parameters = MaybeInjectDefaultOrderby(normalizedMethod, normalizedPath, parameters, out var injectedDefaultOrderby);
 
         try
         {
@@ -874,7 +875,7 @@ internal sealed class SafeguardApiTool
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, injectedDefaultOrderby, parameters, normalizedMethod, normalizedPath);
             }
 
             FullResponse response;
@@ -889,7 +890,7 @@ internal sealed class SafeguardApiTool
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, injectedDefaultOrderby, parameters, normalizedMethod, normalizedPath);
         }
         catch (McpException ex)
         {
@@ -897,7 +898,7 @@ internal sealed class SafeguardApiTool
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit, bool injectedDefaultFields, IDictionary<string, string> parameters, string method = null, string path = null)
+    private string FormatResponse(string body, string format, int injectedLimit, bool injectedDefaultFields, string injectedDefaultOrderby, IDictionary<string, string> parameters, string method = null, string path = null)
     {
         var safeBody = body ?? string.Empty;
         var notices = new List<Notice>();
@@ -918,6 +919,13 @@ internal sealed class SafeguardApiTool
                 + "The structured per-property diff in Changes[] is retained.",
                 "Add 'OldValue' or 'NewValue' to your own fields= list to include the snapshots; "
                 + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view."));
+        }
+
+        if (!string.IsNullOrEmpty(injectedDefaultOrderby))
+        {
+            var orderbyNotice = BuildDefaultOrderbyNotice(injectedDefaultOrderby);
+            if (orderbyNotice != null)
+                notices.Add(orderbyNotice);
         }
 
         var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
@@ -1682,6 +1690,84 @@ internal sealed class SafeguardApiTool
         updated["fields"] = defaultFields;
         injected = true;
         return updated;
+    }
+
+    // Per-audit-endpoint canonical newest-first orderby, keyed on the path segment
+    // immediately after "AuditLog". Verified against the appliance: LogTime is the
+    // orderable time field for Logins, Search, and ObjectChanges (-Timestamp is
+    // rejected with code 70001). Audit endpoints not listed here get no default.
+    private static readonly Dictionary<string, string> AuditDefaultOrderbyByEndpoint =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Logins"] = "-LogTime",
+            ["Search"] = "-LogTime",
+            ["ObjectChanges"] = "-LogTime",
+        };
+
+    // Injects a newest-first default orderby on the canonical time field when a GET
+    // targets a known audit collection path and the caller supplied no orderby of
+    // their own. Without this the "latest" row depends on whatever order the
+    // appliance happens to return. injectedOrderby names the applied value (null
+    // when nothing was injected) so the notice can echo it and the agent can override.
+    internal static IDictionary<string, string> MaybeInjectDefaultOrderby(
+        string method,
+        string normalizedPath,
+        IDictionary<string, string> parameters,
+        out string injectedOrderby)
+    {
+        injectedOrderby = null;
+
+        if (string.IsNullOrWhiteSpace(method) || !method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+            return parameters;
+        if (parameters != null && parameters.ContainsKey("orderby"))
+            return parameters;
+        if (!TryGetAuditDefaultOrderby(normalizedPath, out var orderby))
+            return parameters;
+
+        var updated = parameters == null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(parameters, StringComparer.OrdinalIgnoreCase);
+
+        updated["orderby"] = orderby;
+        injectedOrderby = orderby;
+        return updated;
+    }
+
+    // Builds the default_orderby_applied notice so the agent knows the ordering was
+    // MCP-applied (not server-default) and can override it. Returns null when no
+    // default orderby was injected.
+    internal static Notice BuildDefaultOrderbyNotice(string injectedOrderby)
+    {
+        if (string.IsNullOrEmpty(injectedOrderby))
+            return null;
+
+        return new Notice(
+            NoticeKinds.DefaultOrderbyApplied,
+            $"Auto-applied orderby={injectedOrderby} so audit rows are returned newest-first "
+            + "(the first row is the most recent).",
+            "Specify your own 'orderby' in the query to override this default ordering.");
+    }
+
+    // Resolves the canonical newest-first orderby for an audit collection path.
+    // Matches only the collection form (e.g. /v4/AuditLog/Logins); singleton and
+    // sub-resource forms (/v4/AuditLog/Logins/{id},
+    // /v4/AuditLog/ObjectChanges/{type}/{id}/{logId}) get no default so a
+    // single-record lookup is never reordered.
+    private static bool TryGetAuditDefaultOrderby(string path, out string orderby)
+    {
+        orderby = null;
+        var segments = GetPathSegments(path);
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (!segments[i].Equals("AuditLog", StringComparison.OrdinalIgnoreCase))
+                continue;
+            // The audit endpoint name must be the immediate next segment AND the
+            // last segment; anything further is a singleton / sub-resource.
+            if (i + 1 != segments.Length - 1)
+                return false;
+            return AuditDefaultOrderbyByEndpoint.TryGetValue(segments[i + 1], out orderby);
+        }
+        return false;
     }
 
     private IDictionary<string, string> MaybeInjectLimit(
