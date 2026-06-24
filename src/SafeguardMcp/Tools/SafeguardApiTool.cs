@@ -456,7 +456,7 @@ internal sealed class SafeguardApiTool
         RequestContext<CallToolRequestParams> context = null,
         CancellationToken ct = default)
     {
-        RejectMisplacedQueryOptions(context?.Params?.Arguments);
+        RejectMisplacedQueryOptions(context?.Params);
         return await DispatchAsync(server, method, path, query, body, format, ct);
     }
 
@@ -750,6 +750,14 @@ internal sealed class SafeguardApiTool
     // top level is always a mistake.
     private static readonly string[] MisplacedTopLevelQueryKeys =
         { "filter", "orderby", "fields", "count" };
+
+    /// <summary>
+    /// Overload that reads the raw argument map off the incoming tool-call
+    /// parameters. Kept separate from the request context so the extraction can be
+    /// exercised without constructing an <see cref="McpServer"/>.
+    /// </summary>
+    internal static void RejectMisplacedQueryOptions(CallToolRequestParams parameters)
+        => RejectMisplacedQueryOptions(parameters?.Arguments);
 
     /// <summary>
     /// Rejects calls that put Safeguard query options in a separate object/key

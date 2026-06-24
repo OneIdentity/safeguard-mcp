@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using SafeguardMcp.Tools;
 
 namespace SafeguardMcp.Tests;
@@ -104,7 +105,57 @@ public class MisplacedQueryOptionsTests
     [Fact]
     public void Allows_NullOrEmptyArguments()
     {
-        SafeguardApiTool.RejectMisplacedQueryOptions(null);
+        SafeguardApiTool.RejectMisplacedQueryOptions((IDictionary<string, JsonElement>)null);
         SafeguardApiTool.RejectMisplacedQueryOptions(new Dictionary<string, JsonElement>());
+    }
+
+    // Wiring: proves the raw tool-call parameters object is read and rejected via
+    // the same path Safeguard_Execute uses (context.Params -> Arguments -> guard).
+    [Fact]
+    public void RejectMisplacedQueryOptions_FromCallToolParams_RejectsNestedObject()
+    {
+        var parameters = new CallToolRequestParams
+        {
+            Name = "Safeguard_Execute",
+            Arguments = Args("""
+            {
+              "method": "GET",
+              "path": "/v4/AuditLog/Logins",
+              "parameters": { "filter": "Name eq 'TestAdmin'", "orderby": "-LogTime" }
+            }
+            """),
+        };
+
+        var ex = Assert.Throws<McpException>(
+            () => SafeguardApiTool.RejectMisplacedQueryOptions(parameters));
+
+        Assert.Contains("parameters", ex.Message);
+        Assert.Contains("query=\"filter=Name eq 'TestAdmin'&orderby=-LogTime\"", ex.Message);
+        Assert.Contains("Safeguard_Reference topic=query-syntax", ex.Message);
+    }
+
+    [Fact]
+    public void RejectMisplacedQueryOptions_FromCallToolParams_AllowsCorrectQuery()
+    {
+        var parameters = new CallToolRequestParams
+        {
+            Name = "Safeguard_Execute",
+            Arguments = Args("""
+            {
+              "method": "GET",
+              "path": "/v4/AuditLog/Logins",
+              "query": "filter=Name eq 'TestAdmin'&orderby=-LogTime"
+            }
+            """),
+        };
+
+        SafeguardApiTool.RejectMisplacedQueryOptions(parameters);
+    }
+
+    [Fact]
+    public void RejectMisplacedQueryOptions_FromCallToolParams_AllowsNullParamsOrArguments()
+    {
+        SafeguardApiTool.RejectMisplacedQueryOptions(default(CallToolRequestParams));
+        SafeguardApiTool.RejectMisplacedQueryOptions(new CallToolRequestParams { Name = "Safeguard_Execute" });
     }
 }
