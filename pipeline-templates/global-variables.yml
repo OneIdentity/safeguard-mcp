@@ -21,3 +21,11 @@ variables:
     value: 'docker.io/oneidentity'
   - name: imageName
     value: 'safeguard-mcp'
+  # Quiet Node-based pipeline tasks (AzureKeyVault@2, npm). Hosted agents
+  # are IPv4-only, but Azure/npm endpoints publish AAAA records, so Node's
+  # dual-stack connect logs IPv6 ENETUNREACH noise; ipv4first makes Node
+  # prefer IPv4 and skip the IPv6 leg. --no-deprecation suppresses the
+  # tasks' DEP0169 url.parse deprecation warning. ADO exposes this variable
+  # as an env var to every step's Node process.
+  - name: NODE_OPTIONS
+    value: '--dns-result-order=ipv4first --no-deprecation'
