@@ -2,6 +2,28 @@
 
 All GET collection endpoints support these query parameters passed via the `query` parameter in Safeguard_Execute.
 
+## Passing query options
+
+**Every query option rides the single `query` string.** Filtering, ordering, field selection, counting, and paging are all combined into one URL-encoded string and passed as the `query` argument of `Safeguard_Execute`. There is **no** `parameters`, `params`, `queryParameters`, or `odata` object, and there are no top-level `filter`/`orderby`/`fields`/`count` arguments. The tool accepts only `method`, `path`, `query`, `body`, and `format`; anything else is dropped before the call runs and your options are silently lost.
+
+**Right — options in the `query` string:**
+
+```
+method: GET
+path:   /v4/AuditLog/Logins
+query:  filter=UserProperties.UserName eq 'Alice'&orderby=-LogTime&fields=Id,LogTime&limit=50
+```
+
+**Wrong — options in a separate object (rejected):**
+
+```
+method: GET
+path:   /v4/AuditLog/Logins
+parameters: { "filter": "UserProperties.UserName eq 'Alice'", "orderby": "-LogTime" }
+```
+
+A call shaped like the wrong example is rejected with an error naming the offending field; move every option into the `query` string and retry.
+
 ## Filter Operators
 
 | Operator | Meaning | Example |
@@ -80,6 +102,24 @@ Run `Safeguard_Schema` on a path to see the nested shape — complex properties 
 
 Rule of thumb: if the schema shows a property as `array<Type>` it's to-many — use a child endpoint. If it shows `object<Type>` it's to-one — dot into it freely.
 
+### Audit-log endpoints (`/v4/AuditLog/*`)
+
+The audit collections (`/v4/AuditLog/Logins`, `/Search`, `/ObjectChanges`) follow the
+same nested-property rule, and they trip agents up the most. The actor is the nested
+**`UserProperties`** object — there is **no flat `UserName` column and no `ModifiedByUserId`**:
+
+- `filter=UserProperties.UserName eq 'jsmith'` ✅ (who performed the action)
+- `filter=UserName eq 'jsmith'` ❌ — not a property (HTTP 400, Code 70002).
+- `filter=ModifiedByUserId eq 5` ❌ — does not exist; use `UserId eq 5` or `UserProperties.UserName`.
+
+The only orderable **time field is `LogTime`** on all three endpoints:
+
+- `orderby=-LogTime` ✅ (newest-first; the MCP auto-applies this when you omit `orderby`)
+- `orderby=-Timestamp` ❌ and `DateInfo` ❌ — not valid (HTTP 400, Code 70001).
+
+Prefer the dedicated scoping params (`startDate`, `endDate`, `userId`, and on
+`/ObjectChanges` also `assetId`, `accountId`) over `filter` when they cover your need.
+
 ## Field Selection
 
 - Include specific fields: `fields=Id,Name,Description`
@@ -110,8 +150,10 @@ Rule of thumb: if the schema shows a property as `array<Type>` it's to-many — 
 
 ## Aggregation and Summarization
 
-- `count=true` returns just the row count for any collection endpoint — the response body is a bare
-  JSON integer (e.g. `52`), not an object or array. Pair with `filter=` for scoped counts (per
+- `count=true` returns just the row count for any collection endpoint. The appliance returns a
+  bare integer; the MCP surfaces it as `meta.count` (e.g. `{"data":null,"meta":{"count":52,...}}`),
+  leaving `data` null — read the number from `meta.count`, not `data`. The irrelevant auto-limit /
+  paging notices are suppressed for count calls. Pair with `filter=` for scoped counts (per
   partition, per requester, per time window). See workflow recipe `count-with-filter`.
 - There is **no server-side group-by / distinct**: no `groupBy=`, no `distinct=`, no `aggregate=`
   parameter exists. For per-group counts, page filtered rows and tally in agent context (recipe

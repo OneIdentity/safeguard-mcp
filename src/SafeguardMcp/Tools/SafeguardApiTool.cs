@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OneIdentity.SafeguardDotNet;
 using SafeguardMcp.Catalog;
@@ -448,12 +449,16 @@ internal sealed class SafeguardApiTool
     public async Task<string> Safeguard_Execute(McpServer server,
         [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
         [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
-        [Description("Query parameters (e.g. 'fields=Id,Name&filter=Name eq \"x\"'). Omit if none.")] string query = null,
+        [Description("All query options ride this single string (e.g. 'filter=Name eq \"x\"&orderby=-CreatedDate'); there is no separate parameters object. See Safeguard_Reference topic=query-syntax. Omit if none.")] string query = null,
         [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
         [Description("Response format: 'json' (default) or 'csv' (GET-only, tabular).")]
         string format = "json",
+        RequestContext<CallToolRequestParams> context = null,
         CancellationToken ct = default)
-        => await DispatchAsync(server, method, path, query, body, format, ct);
+    {
+        RejectMisplacedQueryOptions(context?.Params);
+        return await DispatchAsync(server, method, path, query, body, format, ct);
+    }
 
     [McpServerTool(Name = "Safeguard_Schema", Title = "Get API Schema",
         ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -674,6 +679,10 @@ internal sealed class SafeguardApiTool
             }
         }
 
+        var auditBlock = BuildAuditQuerySyntaxReference(path);
+        if (auditBlock != null)
+            sb.AppendLine().AppendLine(auditBlock);
+
         sb.AppendLine()
             .Append("For filter/field/order/paging rules call Safeguard_Reference topic=query-syntax search=\"<keyword>\".");
         return sb.ToString().TrimEnd();
@@ -734,6 +743,76 @@ internal sealed class SafeguardApiTool
         return sb.ToString().TrimEnd();
     }
 
+    // Containers the SDK silently drops because they are not declared tool
+    // parameters. An agent that nests query options inside one of these gets an
+    // empty query string and unfiltered results, so we reject the call outright.
+    private static readonly string[] MisplacedQueryOptionContainers =
+        { "parameters", "params", "queryParameters", "odata" };
+
+    // Top-level keys that only make sense inside the single query string. None of
+    // these are declared parameters of Safeguard_Execute, so their presence at the
+    // top level is always a mistake.
+    private static readonly string[] MisplacedTopLevelQueryKeys =
+        { "filter", "orderby", "fields", "count" };
+
+    /// <summary>
+    /// Overload that reads the raw argument map off the incoming tool-call
+    /// parameters. Kept separate from the request context so the extraction can be
+    /// exercised without constructing an <see cref="McpServer"/>.
+    /// </summary>
+    internal static void RejectMisplacedQueryOptions(CallToolRequestParams parameters)
+        => RejectMisplacedQueryOptions(parameters?.Arguments);
+
+    /// <summary>
+    /// Rejects calls that put Safeguard query options in a separate object/key
+    /// instead of the single <c>query</c> string. The MCP SDK binds only declared
+    /// parameters, so these extra fields are dropped before the method runs — the
+    /// raw argument map (read here) is the only place they remain visible.
+    /// </summary>
+    internal static void RejectMisplacedQueryOptions(IDictionary<string, JsonElement> arguments)
+    {
+        if (arguments is null || arguments.Count == 0)
+            return;
+
+        foreach (var container in MisplacedQueryOptionContainers)
+        {
+            if (TryGetArgument(arguments, container, out var value)
+                && value.ValueKind == JsonValueKind.Object)
+            {
+                throw new McpException(BuildMisplacedQueryOptionsError(container));
+            }
+        }
+
+        foreach (var key in MisplacedTopLevelQueryKeys)
+        {
+            if (TryGetArgument(arguments, key, out _))
+                throw new McpException(BuildMisplacedQueryOptionsError(key));
+        }
+    }
+
+    private static bool TryGetArgument(
+        IDictionary<string, JsonElement> arguments, string key, out JsonElement value)
+    {
+        foreach (var pair in arguments)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string BuildMisplacedQueryOptionsError(string offendingKey)
+        => $"Query options were passed in a '{offendingKey}' field, which Safeguard_Execute ignores. "
+            + "All query options (filter, orderby, fields, count, page, limit) must be combined into the "
+            + "single 'query' string argument — there is no separate parameters object. "
+            + "CORRECT: query=\"filter=Name eq 'TestAdmin'&orderby=-LogTime\". "
+            + "See Safeguard_Reference topic=query-syntax for the full query syntax.";
+
     private async Task<string> DispatchAsync(
         McpServer server,
         string method,
@@ -782,6 +861,7 @@ internal sealed class SafeguardApiTool
         var parameters = ParseQueryParameters(query);
         parameters = MaybeInjectLimit(normalizedMethod, normalizedPath, service, parameters, out var injectedLimit);
         parameters = MaybeInjectDefaultFields(normalizedMethod, normalizedPath, parameters, out var injectedDefaultFields);
+        parameters = MaybeInjectDefaultOrderby(normalizedMethod, normalizedPath, parameters, out var injectedDefaultOrderby);
 
         try
         {
@@ -799,7 +879,7 @@ internal sealed class SafeguardApiTool
             if (requestedFormat == "csv")
             {
                 var csv = await SafeguardInvoker.InvokeCsvAsync(session, service, relativeUrl, parameters, ct);
-                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
+                return FormatResponse(csv ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, injectedDefaultOrderby, parameters, normalizedMethod, normalizedPath);
             }
 
             FullResponse response;
@@ -814,7 +894,7 @@ internal sealed class SafeguardApiTool
                     session, service, normalizedMethod, relativeUrl, body, parameters, ct);
             }
 
-            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, parameters, normalizedMethod, normalizedPath);
+            return FormatResponse(response.Body ?? string.Empty, requestedFormat, injectedLimit, injectedDefaultFields, injectedDefaultOrderby, parameters, normalizedMethod, normalizedPath);
         }
         catch (McpException ex)
         {
@@ -822,10 +902,18 @@ internal sealed class SafeguardApiTool
         }
     }
 
-    private string FormatResponse(string body, string format, int injectedLimit, bool injectedDefaultFields, IDictionary<string, string> parameters, string method = null, string path = null)
+    private string FormatResponse(string body, string format, int injectedLimit, bool injectedDefaultFields, string injectedDefaultOrderby, IDictionary<string, string> parameters, string method = null, string path = null)
     {
         var safeBody = body ?? string.Empty;
         var notices = new List<Notice>();
+
+        // count=true returns a bare scalar count from the appliance (controllers do
+        // `return Ok(countResult)` where countResult is an int). Surface that value in
+        // meta.count instead of overloading data with a raw integer, and skip the
+        // auto_limit / paging notices that don't apply to a scalar count.
+        var countEnvelope = TryBuildCountOnlyEnvelope(format, safeBody, parameters);
+        if (countEnvelope != null)
+            return countEnvelope;
 
         if (injectedLimit > 0)
         {
@@ -843,6 +931,13 @@ internal sealed class SafeguardApiTool
                 + "The structured per-property diff in Changes[] is retained.",
                 "Add 'OldValue' or 'NewValue' to your own fields= list to include the snapshots; "
                 + "or fetch /v4/AuditLog/ObjectChanges/{objectType}/{objectId}/{logId} for the singleton view."));
+        }
+
+        if (!string.IsNullOrEmpty(injectedDefaultOrderby))
+        {
+            var orderbyNotice = BuildDefaultOrderbyNotice(injectedDefaultOrderby);
+            if (orderbyNotice != null)
+                notices.Add(orderbyNotice);
         }
 
         var recipeNotice = BuildRecipeCrossLinkNotice(method, path);
@@ -993,7 +1088,204 @@ internal sealed class SafeguardApiTool
             }
         }
 
+        // Empty audit-log result: disambiguate "no matches" from "looked too
+        // narrowly" by echoing the effective filter and time window the server
+        // applied. Only fires for an empty data array on an audit path.
+        var emptyAuditNotice = BuildEmptyAuditResultNotice(method, path, safeBody, parameters);
+        if (emptyAuditNotice != null)
+            notices.Add(emptyAuditNotice);
+
         return ResponseEnvelopeBuilder.BuildJsonEnvelope(dataBody, notices, paging, truncationInfo);
+    }
+
+    /// <summary>
+    /// When a <c>count=true</c> request returns a bare scalar count, build a clean envelope that
+    /// surfaces the value in <c>meta.count</c> with <c>data</c> left null — and without the
+    /// auto-limit / paging notices, which are meaningless for a scalar count. Returns null for
+    /// non-count requests, CSV, or when the body is not a bare integer, so the caller falls
+    /// through to normal formatting.
+    /// </summary>
+    internal static string TryBuildCountOnlyEnvelope(
+        string format, string body, IDictionary<string, string> parameters)
+    {
+        if (format == "csv")
+            return null;
+        if (!IsCountRequested(parameters))
+            return null;
+        if (!TryParseScalarCount(body, out var count))
+            return null;
+
+        var notices = new List<Notice>
+        {
+            new Notice(
+                NoticeKinds.CountOnlyResponse,
+                "count=true returns only a row count; the value is in meta.count and data is null.")
+        };
+        return ResponseEnvelopeBuilder.BuildJsonEnvelope(
+            body: null, notices: notices, paging: null, truncation: null, count: count);
+    }
+
+    private static bool IsCountRequested(IDictionary<string, string> parameters)
+    {
+        return parameters != null
+            && parameters.TryGetValue("count", out var value)
+            && string.Equals(value?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseScalarCount(string body, out long count)
+    {
+        count = 0;
+        if (string.IsNullOrWhiteSpace(body))
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Number
+                && doc.RootElement.TryGetInt64(out var parsed))
+            {
+                count = parsed;
+                return true;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// When a GET against an audit-log path (/v4/AuditLog/*) returns an empty JSON
+    /// array, emit a structured notice that disambiguates "0 rows match &lt;filter&gt; in
+    /// window &lt;start&gt;..&lt;end&gt;" from "no filter applied" and "default 1-day window".
+    /// The notice echoes the effective server-side filter and the effective time
+    /// window, spelling out the default-window bounds when the agent supplied no
+    /// startDate/endDate, so the agent can tell "nothing exists" apart from "looked
+    /// too narrowly." Non-empty results and non-audit paths get no notice.
+    /// </summary>
+    internal static Notice BuildEmptyAuditResultNotice(
+        string method, string path, string body, IDictionary<string, string> parameters)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        var verb = string.IsNullOrWhiteSpace(method) ? "GET" : method.ToUpperInvariant();
+        if (verb != "GET")
+            return null;
+        if (!IsAuditLogPath(path))
+            return null;
+        if (!IsEmptyJsonArray(body))
+            return null;
+
+        // Effective time window. The audit endpoints (Logins / ObjectChanges /
+        // Search) share one default in PangaeaAppliance's ProcessCassandraDateFilter:
+        // endDate defaults to now, startDate defaults to one day before the
+        // effective endDate.
+        var startDate = GetParam(parameters, "startDate");
+        var endDate = GetParam(parameters, "endDate");
+        var startSupplied = !string.IsNullOrWhiteSpace(startDate);
+        var endSupplied = !string.IsNullOrWhiteSpace(endDate);
+        var defaultWindow = !startSupplied && !endSupplied;
+
+        string windowText;
+        if (defaultWindow)
+        {
+            windowText = "default 1-day window (the last 24h: now-1day..now)";
+        }
+        else
+        {
+            var startText = startSupplied
+                ? startDate
+                : (endSupplied ? $"{endDate} minus 1 day" : "now minus 1 day");
+            var endText = endSupplied ? endDate : "now";
+            windowText = $"{startText}..{endText}";
+        }
+
+        var filterText = BuildEffectiveFilterText(parameters);
+        var hasFilter = filterText != null;
+
+        var message = hasFilter
+            ? $"0 rows match {filterText} in window {windowText}."
+            : $"0 rows in window {windowText}; no filter applied.";
+
+        string suggestion;
+        if (defaultWindow)
+        {
+            suggestion = "This is the default 1-day look-back — pass startDate/endDate "
+                + "(ISO 8601) to widen the time window"
+                + (hasFilter
+                    ? ", and re-check the filter property names/values if you expected matches."
+                    : ".");
+        }
+        else
+        {
+            suggestion = hasFilter
+                ? "Widen startDate/endDate or relax the filter; verify the property "
+                    + "names/values match the endpoint's schema."
+                : "Widen startDate/endDate to broaden the time window.";
+        }
+
+        return new Notice(NoticeKinds.EmptyAuditResult, message, suggestion);
+    }
+
+    private static bool IsAuditLogPath(string path)
+    {
+        foreach (var segment in GetPathSegments(path))
+        {
+            if (segment.Equals("AuditLog", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsEmptyJsonArray(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return false;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                && document.RootElement.GetArrayLength() == 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetParam(IDictionary<string, string> parameters, string key)
+        => parameters != null && parameters.TryGetValue(key, out var value) ? value : null;
+
+    // Query keys that scope/shape a response but are NOT server-side filters: paging,
+    // projection, ordering, count, and the time-window bounds (echoed separately).
+    private static readonly HashSet<string> NonFilterQueryKeys =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "page", "limit", "fields", "orderby", "count", "startDate", "endDate"
+        };
+
+    // The effective server-side filter the agent expressed: the OData filter= plus any
+    // scoping params (userId, assetId, accountId, systemId, objectType, category, ...).
+    private static string BuildEffectiveFilterText(IDictionary<string, string> parameters)
+    {
+        if (parameters == null || parameters.Count == 0)
+            return null;
+
+        var parts = new List<string>();
+        if (parameters.TryGetValue("filter", out var filter) && !string.IsNullOrWhiteSpace(filter))
+            parts.Add($"filter='{filter}'");
+
+        foreach (var kv in parameters)
+        {
+            if (kv.Key.Equals("filter", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (NonFilterQueryKeys.Contains(kv.Key))
+                continue;
+            if (string.IsNullOrWhiteSpace(kv.Value))
+                continue;
+            parts.Add($"{kv.Key}={kv.Value}");
+        }
+
+        return parts.Count == 0 ? null : string.Join(", ", parts);
     }
 
     internal static Notice BuildRecipeCrossLinkNotice(string method, string path)
@@ -1465,6 +1757,150 @@ internal sealed class SafeguardApiTool
         updated["fields"] = defaultFields;
         injected = true;
         return updated;
+    }
+
+    // Per-audit-endpoint canonical newest-first orderby, keyed on the path segment
+    // immediately after "AuditLog". Verified against the appliance: LogTime is the
+    // orderable time field for Logins, Search, and ObjectChanges (-Timestamp is
+    // rejected with code 70001). Audit endpoints not listed here get no default.
+    private static readonly Dictionary<string, string> AuditDefaultOrderbyByEndpoint =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Logins"] = "-LogTime",
+            ["Search"] = "-LogTime",
+            ["ObjectChanges"] = "-LogTime",
+        };
+
+    // Injects a newest-first default orderby on the canonical time field when a GET
+    // targets a known audit collection path and the caller supplied no orderby of
+    // their own. Without this the "latest" row depends on whatever order the
+    // appliance happens to return. injectedOrderby names the applied value (null
+    // when nothing was injected) so the notice can echo it and the agent can override.
+    internal static IDictionary<string, string> MaybeInjectDefaultOrderby(
+        string method,
+        string normalizedPath,
+        IDictionary<string, string> parameters,
+        out string injectedOrderby)
+    {
+        injectedOrderby = null;
+
+        if (string.IsNullOrWhiteSpace(method) || !method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+            return parameters;
+        if (parameters != null && parameters.ContainsKey("orderby"))
+            return parameters;
+        if (!TryGetAuditDefaultOrderby(normalizedPath, out var orderby))
+            return parameters;
+
+        var updated = parameters == null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(parameters, StringComparer.OrdinalIgnoreCase);
+
+        updated["orderby"] = orderby;
+        injectedOrderby = orderby;
+        return updated;
+    }
+
+    // Builds the default_orderby_applied notice so the agent knows the ordering was
+    // MCP-applied (not server-default) and can override it. Returns null when no
+    // default orderby was injected.
+    internal static Notice BuildDefaultOrderbyNotice(string injectedOrderby)
+    {
+        if (string.IsNullOrEmpty(injectedOrderby))
+            return null;
+
+        return new Notice(
+            NoticeKinds.DefaultOrderbyApplied,
+            $"Auto-applied orderby={injectedOrderby} so audit rows are returned newest-first "
+            + "(the first row is the most recent).",
+            "Specify your own 'orderby' in the query to override this default ordering.");
+    }
+
+    // Resolves the canonical newest-first orderby for an audit collection path.
+    // Matches only the collection form (e.g. /v4/AuditLog/Logins); singleton and
+    // sub-resource forms (/v4/AuditLog/Logins/{id},
+    // /v4/AuditLog/ObjectChanges/{type}/{id}/{logId}) get no default so a
+    // single-record lookup is never reordered.
+    private static bool TryGetAuditDefaultOrderby(string path, out string orderby)
+    {
+        orderby = null;
+        var segments = GetPathSegments(path);
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (!segments[i].Equals("AuditLog", StringComparison.OrdinalIgnoreCase))
+                continue;
+            // The audit endpoint name must be the immediate next segment AND the
+            // last segment; anything further is a singleton / sub-resource.
+            if (i + 1 != segments.Length - 1)
+                return false;
+            return AuditDefaultOrderbyByEndpoint.TryGetValue(segments[i + 1], out orderby);
+        }
+        return false;
+    }
+
+    // Per-audit-endpoint canonical FILTERABLE property names (with nested forms
+    // spelled out). The audit collections validate filter/orderby/fields against
+    // their DTO property graph (PangaeaAppliance ApiQueryOptions.Validate<T> over
+    // LoginActivityLog / AuditSearchLog / ObjectChangeLog), so the user fields are
+    // the nested UserProperties.* object, NOT flat columns like UserName or
+    // ModifiedByUserId. LogTime is the only orderable time field on all three.
+    private static readonly Dictionary<string, string[]> AuditFilterableByEndpoint =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Logins"] = new[]
+            {
+                "UserProperties.UserName", "UserProperties.DomainName", "UserId",
+                "EventName", "ApplianceName", "ErrorType", "LogTime",
+            },
+            ["Search"] = new[]
+            {
+                "UserProperties.UserName", "UserId", "EventName", "ObjectName",
+                "AccountName", "AssetName", "RequesterName", "LogTime",
+            },
+            ["ObjectChanges"] = new[]
+            {
+                "UserProperties.UserName", "UserId", "ObjectName", "ObjectType",
+                "EventName", "OperationType", "AssetPartitionName", "LogTime",
+            },
+        };
+
+    // Builds the proactive query-syntax guidance shown for an audit collection path
+    // (/v4/AuditLog/Logins|Search|ObjectChanges). It spells out the canonical
+    // filterable property names (nested UserProperties.* forms), names LogTime as
+    // the orderby time field, and calls out the traps the agent otherwise only hits
+    // after a failed call: there is no ModifiedByUserId / flat UserName column, and
+    // -Timestamp / DateInfo are not valid time fields. Returns null for non-audit
+    // paths so callers can skip the block.
+    internal static string BuildAuditQuerySyntaxReference(string path)
+    {
+        var segments = GetPathSegments(path);
+        string endpoint = null;
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            if (segments[i].Equals("AuditLog", StringComparison.OrdinalIgnoreCase)
+                && AuditFilterableByEndpoint.ContainsKey(segments[i + 1]))
+            {
+                endpoint = segments[i + 1];
+                break;
+            }
+        }
+        if (endpoint == null)
+            return null;
+
+        var fields = AuditFilterableByEndpoint[endpoint];
+        var sb = new StringBuilder();
+        sb.Append("Audit query reference for /v4/AuditLog/").Append(endpoint).AppendLine(":");
+        sb.Append("  Filterable property names: ").AppendLine(string.Join(", ", fields));
+        sb.AppendLine("  Time field: LogTime. Use orderby=-LogTime for newest-first "
+            + "(the MCP auto-applies this when you omit orderby).");
+        sb.AppendLine("  Nested user fields are dotted, NOT flat: filter the actor with "
+            + "UserProperties.UserName eq '<name>' (UserName on its own is not a property).");
+        sb.AppendLine("  Not filterable: ModifiedByUserId and DateInfo do not exist on audit "
+            + "records, and -Timestamp is not a valid time field. Use UserId or "
+            + "UserProperties.UserName for the actor, and LogTime for time.");
+        sb.Append("  Prefer the dedicated scoping params (startDate, endDate, userId"
+            + (endpoint.Equals("ObjectChanges", StringComparison.OrdinalIgnoreCase) ? ", assetId, accountId" : string.Empty)
+            + ") over filter where they cover your need.");
+        return sb.ToString();
     }
 
     private IDictionary<string, string> MaybeInjectLimit(
