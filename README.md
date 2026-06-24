@@ -80,11 +80,14 @@ The `SHA256SUMS` file covers the release archives, the per-platform SPDX
 SBOM (`sbom-linux-amd64.spdx.json`), and the `cosign.pub` key itself.
 
 **Container image signature** — the image is signed with a key
-held in an Azure Key Vault HSM. Download `cosign.pub` from the Release
-assets and verify the image digest:
+held in an Azure Key Vault HSM. The public verification key is
+committed to this repo at [`docs/cosign.pub`](docs/cosign.pub) and is
+also attached to each GitHub Release as `cosign.pub`. For the strongest
+guarantee, use the committed key (pinned in git history, out-of-band
+from the release artifacts) to verify the image digest:
 
 ```bash
-cosign verify --key cosign.pub docker.io/oneidentity/safeguard-mcp:<tag>
+cosign verify --key docs/cosign.pub docker.io/oneidentity/safeguard-mcp:<tag>
 ```
 
 ## Quick Start

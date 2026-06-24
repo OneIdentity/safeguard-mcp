@@ -829,13 +829,21 @@ jobs:
 
             mkdir -p "$(Build.ArtifactStagingDirectory)/release"
             # Export the public half so users can verify with
-            # `cosign verify --key cosign.pub <image>`. Until a static
-            # cosign.pub is committed to the repo, this Release-asset
-            # copy is the primary distribution channel; after commit,
-            # this file should match `docs/cosign.pub` in the repo.
+            # `cosign verify --key cosign.pub <image>`. The committed
+            # docs/cosign.pub is the out-of-band, version-controlled key
+            # of record; the Release asset is a per-release convenience
+            # copy. Fail the build if the HSM key ever drifts from the
+            # committed key so a key rotation can't ship silently.
             cosign public-key --key "$KEY_REF" \
               > "$(Build.ArtifactStagingDirectory)/release/cosign.pub"
             cat "$(Build.ArtifactStagingDirectory)/release/cosign.pub"
+            if ! diff -u --strip-trailing-cr \
+                 "$(Build.SourcesDirectory)/docs/cosign.pub" \
+                 "$(Build.ArtifactStagingDirectory)/release/cosign.pub"; then
+              echo "##vso[task.logissue type=error]Exported cosign public key does not match committed docs/cosign.pub. If the signing key was rotated, update docs/cosign.pub in the repo."
+              exit 1
+            fi
+            echo "Exported cosign public key matches committed docs/cosign.pub."
 
       - script: |
           set -euo pipefail
