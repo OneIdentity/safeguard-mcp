@@ -17,9 +17,9 @@
     "bin/"
   ],
   "optionalDependencies": {
-    "@oneidentity/safeguard-mcp-linux-x64": "0.1.0",
-    "@oneidentity/safeguard-mcp-win-x64": "0.1.0",
-    "@oneidentity/safeguard-mcp-darwin-arm64": "0.1.0"
+    "@oneidentity/safeguard-mcp-linux-x64": "0.2.0",
+    "@oneidentity/safeguard-mcp-win-x64": "0.2.0",
+    "@oneidentity/safeguard-mcp-darwin-arm64": "0.2.0"
   },
   "engines": {
     "node": ">=18"
