@@ -32,6 +32,37 @@ public class ToolRegistrationTests
     }
 
     [Fact]
+    public void SafeguardApiTool_RegistersSafeguardQuery_AsReadOnly()
+    {
+        var query = typeof(SafeguardApiTool)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Select(m => m.GetCustomAttribute<McpServerToolAttribute>())
+            .FirstOrDefault(a => a?.Name == "Safeguard_Query");
+
+        Assert.NotNull(query);
+        // Read-only so hosts can safely "always allow" GET traffic while still
+        // prompting on every Safeguard_Execute write.
+        Assert.True(query!.ReadOnly);
+        Assert.False(query.Destructive);
+    }
+
+    [Fact]
+    public void SafeguardExecute_IsMarkedDestructive_AndDirectsGetToQuery()
+    {
+        var method = typeof(SafeguardApiTool).GetMethod(
+            "Safeguard_Execute",
+            BindingFlags.Public | BindingFlags.Instance)!;
+        var attr = method.GetCustomAttribute<McpServerToolAttribute>();
+        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.NotNull(attr);
+        Assert.False(attr!.ReadOnly);
+        Assert.True(attr.Destructive);
+        Assert.NotNull(description);
+        Assert.Contains("Safeguard_Query", description);
+    }
+
+    [Fact]
     public void SafeguardExecute_Description_PointsToBatchGuidance()
     {
         var method = typeof(SafeguardApiTool).GetMethod(

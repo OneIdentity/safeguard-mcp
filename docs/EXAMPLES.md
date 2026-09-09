@@ -151,7 +151,7 @@ details, verify connectivity, and inspect profile configuration.
 > Tell me about the Safeguard instance I'm connected to — version, uptime, identities, systems
 
 The agent uses `Safeguard_Discover service="Appliance"` to find status/time/version/health
-endpoints, then `Safeguard_Execute` against `/v4/ApplianceStatus`, `/v4/ApplianceStatus/Health`,
+endpoints, then `Safeguard_Query` against `/v4/ApplianceStatus`, `/v4/ApplianceStatus/Health`,
 `/v4/Version`, and `/v4/SystemTime`. Vague words like "uptime" or "boot time" expand via
 the terminology map onto the same endpoints.
 

@@ -32,7 +32,7 @@ published. Use the version spec to say explicitly what each launch should run:
 
 - `@oneidentity/safeguard-mcp@latest` — re-check the registry and fetch the
   newest published release each launch, so it picks up updates between sessions.
-- `@oneidentity/safeguard-mcp@0.3.1` — pin an exact version (fully reproducible;
+- `@oneidentity/safeguard-mcp@0.4.0` — pin an exact version (fully reproducible;
   you bump the number yourself to upgrade).
 - a bare name (no `@...`) — reuses whatever is cached and won't reliably pull new
   releases; prefer `@latest` or a pinned version instead.
@@ -315,8 +315,8 @@ The HTTP relay was designed around a few hard invariants worth stating explicitl
   optional hint the spec does not require hosts to honor, so treat block 2 as
   potentially visible to the model unless you have verified your host filters
   on it; the separation is in place so any host that adds the filter gets the
-  routing automatically. `Safeguard_Execute` refuses every sensitive path and
-  redirects the caller to the matching `Safeguard_RetrieveCredential` kind.
+  routing automatically. `Safeguard_Query` and `Safeguard_Execute` refuse every sensitive path and
+  redirect the caller to the matching `Safeguard_RetrieveCredential` kind.
   See [Sensitive credential delivery](#sensitive-credential-delivery) below.
 - **Forwarded-headers trust is bounded.** The bridge derives its public URL from
   each incoming request, with `UseForwardedHeaders` enabled but configured to
@@ -474,17 +474,18 @@ values are `\"user\"` and `\"assistant\"`."). Annotations apply to
 resources, resource templates, and content blocks, which is the path
 this tool uses.
 
-#### Refuse-and-redirect on `Safeguard_Execute`
+#### Refuse-and-redirect on `Safeguard_Query` / `Safeguard_Execute`
 
 The dynamic catalog flags every Safeguard API path that returns plaintext
-credential material as sensitive. When `Safeguard_Execute` is called
+credential material as sensitive. When `Safeguard_Query` or
+`Safeguard_Execute` is called
 against any of those paths, the appliance is **not** contacted — the
 server returns a structured `sensitive_endpoint_redirected` envelope
 naming the matching `Safeguard_RetrieveCredential` kind and the
 arguments to pass. The agent lifts `data.next_call` into a follow-up
 tool invocation, which routes through the two-block response above.
 This makes the audience split the **only** path the plaintext can take
-out of the server: there is no Execute escape hatch that returns a raw
+out of the server: there is no read/execute escape hatch that returns a raw
 secret in a single block addressed to the assistant.
 
 A heuristic backstop covers any future sensitive path that hasn't been
@@ -493,7 +494,7 @@ matching), tuned to not fire on audit-log payloads. If a future build
 adds a sensitive endpoint and the catalog hasn't been updated, the
 heuristic still steers the agent toward
 `Safeguard_RetrieveCredential` instead of returning the secret through
-`Safeguard_Execute`.
+`Safeguard_Query` / `Safeguard_Execute`.
 
 #### Supported kinds
 
@@ -549,7 +550,8 @@ The complete tool surface is **11 tools**:
 | `Safeguard_Discover` | Search the API catalog by keyword, service, or HTTP method (at least one narrower required) |
 | `Safeguard_Schema` | Get the request/response shape for a specific endpoint |
 | `Safeguard_Reference` | On-demand reference: query syntax, workflow recipes, enum values, terminology, overview, and common patterns (`topic=` selects the source; `search=` returns just one section) |
-| `Safeguard_Execute` | Call any endpoint on any service (auto-routes from the bare /v4/... path) |
+| `Safeguard_Query` | Read (GET) any endpoint on any service (auto-routes from the bare /v4/... path). Read-only, so it is safe to always-allow |
+| `Safeguard_Execute` | Perform a state-changing (POST/PUT/PATCH/DELETE) call on any endpoint. GET reads are rejected — use `Safeguard_Query` |
 | `Safeguard_OpenAccessRequest` | One-call composite that pre-checks entitlements and submits an access request |
 | `Safeguard_CloseAccessRequest` | State-aware close: dispatches to Cancel / CheckIn / Close / Acknowledge based on the request's current state |
 | `Safeguard_RetrieveCredential` | Returns plaintext credential material (passwords, SSH keys, API secrets, TOTP codes, files) in a two-block response that splits metadata from plaintext by MCP audience — see [Sensitive credential delivery](#sensitive-credential-delivery) |
@@ -559,7 +561,7 @@ An agent working through a task follows this pattern:
 1. **Discover** — "find me endpoints related to password change failures"
 2. **Schema** — "what fields does a POST to /v4/AssetAccounts require?"
 3. **QueryHelp** — "how do I filter by name and sort by date?"
-4. **Execute** — call the endpoint with the correct parameters and body
+4. **Query / Execute** — read with `Safeguard_Query`, or perform a write (POST/PUT/PATCH/DELETE) with `Safeguard_Execute`
 
 For a small number of end-to-end flows where the multi-step path has well-known
 pitfalls — opening an access request is the first example — a single composite tool
@@ -667,7 +669,7 @@ parameters to use, how to interpret results, and what to do next. Pre-built reci
 - Personal password vault configuration
 
 Recipes are reachable directly via `Safeguard_Reference topic=workflows`, and also surface
-inline whenever `Safeguard_Discover` or `Safeguard_Execute` touches an endpoint family
+inline whenever `Safeguard_Discover`, `Safeguard_Query`, or `Safeguard_Execute` touches an endpoint family
 a recipe covers — so an agent that started in the raw API can find the higher-level
 path mid-task without having to think to ask for it.
 
@@ -820,8 +822,8 @@ always requires `SAFEGUARD_HOST` at startup.
 
 Safeguard's three services (Core, Appliance, Notification) each handle different endpoint
 families. Agents and users often don't know — or shouldn't need to know — which service owns
-a given endpoint. The unified `Safeguard_Execute` tool resolves the correct service
-automatically by looking up the path in the API catalog. One tool handles everything.
+a given endpoint. The `Safeguard_Query` / `Safeguard_Execute` tools resolve the correct service
+automatically by looking up the path in the API catalog. One dispatcher handles everything.
 
 #### Path format contract
 
@@ -831,12 +833,12 @@ dispatcher prepends `/service/{Name}/` for you. Paths that already include the
 `/service/{name}/` prefix are rejected at pre-flight with a directive that
 names the corrected `/v4/...` form — they would otherwise hit the wire as
 `/service/{name}/service/{name}/v4/...` and 404. This contract applies to
-`Safeguard_Execute` and `Safeguard_Schema`; `Safeguard_Reference topic=query-syntax` surfaces
+`Safeguard_Query`, `Safeguard_Execute`, and `Safeguard_Schema`; `Safeguard_Reference topic=query-syntax` surfaces
 the same directive as a notice but still returns the general syntax help.
 
 #### Service resolution
 
-When you call `Safeguard_Execute` with a path like `/v4/AssetAccounts`, the dispatcher:
+When you call `Safeguard_Query` (or `Safeguard_Execute` for a write) with a path like `/v4/AssetAccounts`, the dispatcher:
 
 1. **Catalog lookup** — scans the dynamic catalog for an endpoint whose path template
    matches the request path, accounting for `{id}` placeholders. If found, uses that

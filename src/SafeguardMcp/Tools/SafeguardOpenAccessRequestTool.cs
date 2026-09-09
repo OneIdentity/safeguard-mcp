@@ -131,7 +131,7 @@ internal sealed class SafeguardOpenAccessRequestTool(ISafeguardSession session)
             // the user can act on it.
             throw new McpException("Access request submission failed: " + ex.Message
                 + "\nThe pre-flight entitlement check passed but the appliance rejected the request. "
-                + "Use Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements to re-check the live state.");
+                + "Use Safeguard_Query path=/v4/Me/RequestEntitlements to re-check the live state.");
         }
 
         var (initialId, initialState) = OpenAccessRequestPlanner.ExtractIdAndState(postResponse.Body);

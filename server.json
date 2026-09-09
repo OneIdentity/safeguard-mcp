@@ -3,7 +3,7 @@
   "name": "oneidentity/safeguard-mcp",
   "displayName": "Safeguard MCP Server",
   "description": "Official One Identity Safeguard for Privileged Passwords MCP server with dynamic API discovery.",
-    "version": "0.3.1",
+    "version": "0.4.0",
   "publisher": {
     "name": "One Identity",
     "url": "https://www.oneidentity.com"
@@ -16,7 +16,7 @@
     {
       "registryType": "npm",
       "identifier": "@oneidentity/safeguard-mcp",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "runtime": "node",
       "transport": {
         "type": "stdio"
@@ -52,7 +52,7 @@
     {
       "registryType": "docker",
       "identifier": "docker.io/oneidentity/safeguard-mcp",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:8080/"

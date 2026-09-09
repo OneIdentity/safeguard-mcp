@@ -1,10 +1,10 @@
 # Safeguard API Query Syntax Reference
 
-All GET collection endpoints support these query parameters passed via the `query` parameter in Safeguard_Execute.
+All GET collection endpoints support these query parameters passed via the `query` parameter of `Safeguard_Query` (GET reads route through `Safeguard_Query`; `Safeguard_Execute` handles POST/PUT/PATCH/DELETE).
 
 ## Passing query options
 
-**Every query option rides the single `query` string.** Filtering, ordering, field selection, counting, and paging are all combined into one URL-encoded string and passed as the `query` argument of `Safeguard_Execute`. There is **no** `parameters`, `params`, `queryParameters`, or `odata` object, and there are no top-level `filter`/`orderby`/`fields`/`count` arguments. The tool accepts only `method`, `path`, `query`, `body`, and `format`; anything else is dropped before the call runs and your options are silently lost.
+**Every query option rides the single `query` string.** Filtering, ordering, field selection, counting, and paging are all combined into one URL-encoded string and passed as the `query` argument of `Safeguard_Query` (or `Safeguard_Execute` for writes). There is **no** `parameters`, `params`, `queryParameters`, or `odata` object, and there are no top-level `filter`/`orderby`/`fields`/`count` arguments. `Safeguard_Query` accepts only `path`, `query`, and `format`; `Safeguard_Execute` accepts only `method`, `path`, `query`, `body`, and `format`; anything else is dropped before the call runs and your options are silently lost.
 
 **Right — options in the `query` string:**
 
