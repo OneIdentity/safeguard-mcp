@@ -189,7 +189,7 @@ public class Suite6_EdgeCasesTests
             var tool = new SafeguardMcp.Tools.SafeguardApiTool(disconnectedMgr, catalogProvider, config);
 
             var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(
-                () => tool.Safeguard_Execute(null, method: "GET", path: "/v4/Users"));
+                () => tool.Safeguard_Query(null, path: "/v4/Users"));
 
             Assert.Contains("authenticated", ex.Message, StringComparison.OrdinalIgnoreCase);
         }

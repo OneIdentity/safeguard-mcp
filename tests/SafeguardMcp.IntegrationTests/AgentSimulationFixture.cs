@@ -178,25 +178,28 @@ public class AgentSimulationFixture : IAsyncLifetime
     public string Schema(string path, string method = "POST")
         => ApiTool.Safeguard_Schema(path: path, method: method);
 
-    /// <summary>Calls Safeguard_Execute — executes an API call.</summary>
     /// <summary>
-    /// Calls <c>Safeguard_Execute</c> and returns the raw API body (peeled out of the
-    /// response envelope when one is present). Tests that need to assert against the
-    /// envelope itself should call <c>ApiTool.Safeguard_Execute</c> directly.
+    /// Calls the read/write API tools and returns the raw API body (peeled out of the
+    /// response envelope when one is present). GET routes through <c>Safeguard_Query</c>
+    /// (the read-only tool); other methods route through <c>Safeguard_Execute</c>. Tests
+    /// that need to assert against the envelope itself should call the tool directly.
     /// </summary>
     public async Task<string> ExecuteAsync(string method, string path, string query = null, string body = null, string format = "json")
     {
-        var raw = await ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
+        var raw = await ExecuteRawAsync(method, path, query, body, format);
         return EnvelopeTestHelpers.UnwrapData(raw);
     }
 
     /// <summary>
-    /// Calls <c>Safeguard_Execute</c> and returns the full response envelope without
+    /// Calls the read/write API tools and returns the full response envelope without
     /// peeling <c>data</c> off. Use this when a test needs to assert on <c>meta</c> —
     /// e.g. <c>meta.count</c> for a <c>count=true</c> request, where <c>data</c> is null.
+    /// GET routes through <c>Safeguard_Query</c>; other methods through <c>Safeguard_Execute</c>.
     /// </summary>
     public Task<string> ExecuteRawAsync(string method, string path, string query = null, string body = null, string format = "json")
-        => ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
+        => !string.IsNullOrWhiteSpace(method) && method.Trim().Equals("GET", StringComparison.OrdinalIgnoreCase)
+            ? ApiTool.Safeguard_Query(null, path: path, query: query, format: format)
+            : ApiTool.Safeguard_Execute(null, method: method, path: path, query: query, body: body, format: format);
 
     /// <summary>
     /// Retrieves an access-request password via Safeguard_RetrieveCredential

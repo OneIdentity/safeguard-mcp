@@ -28,8 +28,8 @@ internal sealed class SafeguardCloseAccessRequestTool(ISafeguardSession session)
         + "else a compact field set. See safeguard://common-patterns for the full state->action table.")]
     public async Task<string> Safeguard_CloseAccessRequest(
         McpServer server,
-        [Description("Database id of the AccessRequest to close. Required. Use Safeguard_Execute "
-            + "method=GET path=/v4/AccessRequests to find pending requests.")]
+        [Description("Database id of the AccessRequest to close. Required. Use Safeguard_Query "
+            + "path=/v4/AccessRequests to find pending requests.")]
         string requestId,
         [Description("Free-text comment attached to Cancel / Close / Acknowledge. Ignored for CheckIn. "
             + "Truncated to 255 characters with a notice when longer.")]

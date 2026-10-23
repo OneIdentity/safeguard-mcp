@@ -270,7 +270,7 @@ internal static class OpenAccessRequestPlanner
             {
                 Ok = false,
                 ErrorMessage = $"Account {accountId} has 0 '{accessRequestType}' entitlements for you. "
-                    + "Run Safeguard_Execute method=GET path=/v4/Me/RequestEntitlements "
+                    + "Run Safeguard_Query path=/v4/Me/RequestEntitlements "
                     + $"query=accountIds={accountId} to see what access types this account has for you. "
                     + "If the list is empty, request the entitlement from your Safeguard administrator."
             };
@@ -545,7 +545,7 @@ internal static class OpenAccessRequestPlanner
                     "Request " + id + " was submitted but requires human approval, "
                         + "which can take hours. The tool did not keep waiting; the request "
                         + "stays open on the appliance.",
-                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id
+                    "Check back via Safeguard_Query path=/v4/AccessRequests/" + id
                         + ". You can also call Safeguard_RetrieveCredential directly when you "
                         + "believe the request is ready — it returns a clear error if not.");
 
@@ -569,7 +569,7 @@ internal static class OpenAccessRequestPlanner
                 return new Notice(
                     NoticeKinds.PendingScheduled,
                     message,
-                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id
+                    "Check back via Safeguard_Query path=/v4/AccessRequests/" + id
                         + " once the scheduled time has passed.");
             }
 
@@ -581,7 +581,7 @@ internal static class OpenAccessRequestPlanner
                     NoticeKinds.PendingAccountAction,
                     "Request " + id + " is waiting for the appliance to " + verb
                         + " the account. This usually completes in well under a minute.",
-                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id + ".");
+                    "Check back via Safeguard_Query path=/v4/AccessRequests/" + id + ".");
             }
 
             case "Terminated":
@@ -603,7 +603,7 @@ internal static class OpenAccessRequestPlanner
                     NoticeKinds.PendingApprovalCheckBack,
                     "Request " + id + " is in state " + (state ?? "<unknown>")
                         + " and did not reach RequestAvailable within the auto-approve wait.",
-                    "Check back via Safeguard_Execute method=GET path=/v4/AccessRequests/" + id + ".");
+                    "Check back via Safeguard_Query path=/v4/AccessRequests/" + id + ".");
         }
     }
 

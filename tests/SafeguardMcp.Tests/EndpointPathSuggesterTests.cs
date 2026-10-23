@@ -48,6 +48,64 @@ public class EndpointPathSuggesterTests
     }
 
     [Fact]
+    public void Suggest_ConceptSynonym_EntitlementsResolvesToRoles()
+    {
+        var catalog = new[]
+        {
+            Ep("GET", "/v4/Roles"),
+            Ep("GET", "/v4/Me/RequestEntitlements"),
+            Ep("GET", "/v4/Users")
+        };
+        // "Entitlements" is a domain synonym for the Roles resource; edit distance
+        // alone would never surface it. Both the synonym (Roles) and the substring
+        // match (RequestEntitlements) should appear, with the synonym ranked first.
+        var suggestions = EndpointPathSuggester.Suggest("GET", "/v4/Entitlements", catalog);
+        Assert.Equal("/v4/Roles", suggestions[0]);
+        Assert.Contains("/v4/Me/RequestEntitlements", suggestions);
+    }
+
+    [Fact]
+    public void Suggest_Containment_LongResourceNameSurfacesForShortGuess()
+    {
+        var catalog = new[]
+        {
+            Ep("GET", "/v4/Me/RequestEntitlements"),
+            Ep("GET", "/v4/Users")
+        };
+        // No synonym target present; the substring fallback still finds the
+        // longer canonical path whose leaf contains the guessed leaf.
+        var suggestions = EndpointPathSuggester.Suggest("GET", "/v4/Entitlements", catalog);
+        Assert.Contains("/v4/Me/RequestEntitlements", suggestions);
+    }
+
+    [Fact]
+    public void Suggest_Containment_IgnoresShortLeavesToAvoidNoise()
+    {
+        var catalog = new[]
+        {
+            Ep("GET", "/v4/UserGroups"),
+            Ep("GET", "/v4/Assets")
+        };
+        // A 3-char guess must not substring-match every "...User..." path.
+        var suggestions = EndpointPathSuggester.Suggest("GET", "/v4/Use", catalog);
+        Assert.DoesNotContain("/v4/UserGroups", suggestions);
+    }
+
+    [Fact]
+    public void Suggest_ConceptSynonym_RespectsMethodFilter()
+    {
+        var catalog = new[]
+        {
+            Ep("POST", "/v4/Roles"),
+            Ep("GET", "/v4/Roles")
+        };
+        // A GET 404 for /v4/Entitlements must not suggest a POST-only Roles route.
+        var suggestions = EndpointPathSuggester.Suggest("GET", "/v4/Entitlements", catalog);
+        Assert.Single(suggestions);
+        Assert.Equal("/v4/Roles", suggestions[0]);
+    }
+
+    [Fact]
     public void Suggest_MethodAware_PostTagsSkipsGetOnlyPaths()
     {
         var catalog = new[]

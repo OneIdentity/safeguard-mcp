@@ -122,7 +122,7 @@ GET /v4/Me/PersonalPasswords      → personal vault entries
 
 ## Response Envelope, Paging & Formats
 
-`Safeguard_Execute` returns JSON as a `{ data, meta }` envelope:
+`Safeguard_Query` and `Safeguard_Execute` return JSON as a `{ data, meta }` envelope:
 
 - `data` — the actual API payload (read this, not the envelope root).
 - `meta.notices[]` — applied auto-limit, paging hints, truncation events, workflow suggestions.
@@ -174,8 +174,8 @@ appliance body verbatim.
 ## Sensitive Credential Material
 
 Passwords, SSH private keys, API client/secret history, TOTP codes, generated passwords,
-personal-account passwords/history, and secure-file content are **not** callable via `Safeguard_Execute`
-— it refuses and redirects (a `sensitive_endpoint_redirected` envelope naming the matching kind).
+personal-account passwords/history, and secure-file content are **not** callable via `Safeguard_Query` or `Safeguard_Execute`
+— they refuse and redirect (a `sensitive_endpoint_redirected` envelope naming the matching kind).
 Use `Safeguard_RetrieveCredential` (kinds: access-request-password, access-request-ssh-key,
 access-request-api-key, access-request-totp, access-request-file, personal-account-password,
 personal-account-password-history, personal-account-totp, generated-password,

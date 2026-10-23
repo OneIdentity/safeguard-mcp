@@ -439,29 +439,64 @@ internal sealed class SafeguardApiTool
         sb.AppendLine();
     }
 
-    [McpServerTool(Name = "Safeguard_Execute", Title = "Execute Safeguard API",
-        ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("Call any Safeguard API endpoint. Path must start with /v4/...; the service "
-        + "(Core/Appliance/Notification) is auto-detected — do not add a /service/{name}/ prefix. "
-        + "Use Safeguard_Discover to find endpoints and Safeguard_Schema for request-body shape. "
-        + "Build fields=/filter=/orderby= property names and request bodies from Safeguard_Schema or a "
-        + "prior response — do not guess them. "
+    [McpServerTool(Name = "Safeguard_Query", Title = "Query Safeguard API (read-only)",
+        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("Read (GET) any Safeguard API endpoint. This tool never mutates state, so it is safe to "
+        + "always-allow; use Safeguard_Execute for POST/PUT/PATCH/DELETE. "
+        + "Path must start with /v4/...; the service (Core/Appliance/Notification) is auto-detected — do "
+        + "not add a /service/{name}/ prefix. "
+        + "Use Safeguard_Discover to find endpoints and Safeguard_Schema for response shape. "
+        + "Build fields=/filter=/orderby= property names from Safeguard_Schema or a prior response — do "
+        + "not guess them. "
         + "JSON responses are a { data, meta } envelope (meta carries notices, paging, truncation); "
         + "responses are capped (~30 KB), so project with fields= or page via meta.paging.next. "
-        + "For repeated writes to one collection, check for a Batch* sibling (Discover search='Batch'). "
         + "Sensitive credential endpoints are not callable here — they refuse-and-redirect to "
         + "Safeguard_RetrieveCredential.")]
-    public async Task<string> Safeguard_Execute(McpServer server,
-        [Description("HTTP method: GET, POST, PUT, PATCH, or DELETE.")] string method,
+    public async Task<string> Safeguard_Query(McpServer server,
         [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
         [Description("All query options ride this single string (e.g. 'filter=Name eq \"x\"&orderby=-CreatedDate'); there is no separate parameters object. See Safeguard_Reference topic=query-syntax. Omit if none.")] string query = null,
-        [Description("JSON request body for POST/PUT/PATCH. Omit for GET/DELETE.")] string body = null,
-        [Description("Response format: 'json' (default) or 'csv' (GET-only, tabular).")]
+        [Description("Response format: 'json' (default) or 'csv' (tabular).")]
         string format = "json",
         RequestContext<CallToolRequestParams> context = null,
         CancellationToken ct = default)
     {
         RejectMisplacedQueryOptions(context?.Params);
+        return await DispatchAsync(server, "GET", path, query, null, format, ct);
+    }
+
+    [McpServerTool(Name = "Safeguard_Execute", Title = "Execute Safeguard API (writes)",
+        ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
+    [Description("Perform a state-changing (POST/PUT/PATCH/DELETE) call against any Safeguard API endpoint. "
+        + "GET reads are not handled here — call Safeguard_Query instead. "
+        + "Path must start with /v4/...; the service (Core/Appliance/Notification) is auto-detected — do "
+        + "not add a /service/{name}/ prefix. "
+        + "Use Safeguard_Discover to find endpoints and Safeguard_Schema for request-body shape. "
+        + "Build request bodies from Safeguard_Schema or a prior response — do not guess them. "
+        + "JSON responses are a { data, meta } envelope (meta carries notices, paging, truncation); "
+        + "responses are capped (~30 KB). "
+        + "For repeated writes to one collection, check for a Batch* sibling (Discover search='Batch'). "
+        + "Sensitive credential endpoints are not callable here — they refuse-and-redirect to "
+        + "Safeguard_RetrieveCredential.")]
+    public async Task<string> Safeguard_Execute(McpServer server,
+        [Description("HTTP method: POST, PUT, PATCH, or DELETE. For GET reads use Safeguard_Query.")] string method,
+        [Description("API path, e.g. '/v4/Users'. Must start with /v4/...; service auto-detected (no /service/{name}/ prefix).")] string path,
+        [Description("All query options ride this single string (e.g. 'filter=Name eq \"x\"'); there is no separate parameters object. See Safeguard_Reference topic=query-syntax. Omit if none.")] string query = null,
+        [Description("JSON request body for POST/PUT/PATCH. Omit for DELETE.")] string body = null,
+        [Description("Response format: 'json' (default). CSV is read-only; use Safeguard_Query for tabular output.")]
+        string format = "json",
+        RequestContext<CallToolRequestParams> context = null,
+        CancellationToken ct = default)
+    {
+        RejectMisplacedQueryOptions(context?.Params);
+        if (!string.IsNullOrWhiteSpace(method)
+            && method.Trim().Equals("GET", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new McpException(
+                "Safeguard_Execute performs writes (POST/PUT/PATCH/DELETE) only. "
+                + "For a GET read, call Safeguard_Query path=" + (path ?? "/v4/...")
+                + (string.IsNullOrWhiteSpace(query) ? string.Empty : " query=" + query)
+                + " — it is read-only and can be safely always-allowed.");
+        }
         return await DispatchAsync(server, method, path, query, body, format, ct);
     }
 

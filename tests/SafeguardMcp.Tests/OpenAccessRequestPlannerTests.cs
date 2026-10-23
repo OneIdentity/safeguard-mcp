@@ -351,7 +351,7 @@ public class OpenAccessRequestPlannerTests
         Assert.Contains("human approval", notice.Message);
         Assert.Contains("can take hours", notice.Message);
         Assert.Contains("/v4/AccessRequests/55", notice.Suggestion);
-        Assert.Contains("Safeguard_Execute", notice.Suggestion);
+        Assert.Contains("Safeguard_Query", notice.Suggestion);
     }
 
     [Fact]
